@@ -1061,6 +1061,29 @@ test("applySet stops on mid-apply failure, leaving later targets untouched", asy
   assert.equal(codex, undefined, "codex-global should not have been processed after failure");
 });
 
+test("snapshotSet captures current managed symlinks and re-applies as a no-op", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+  await writeSkill(path.join(env.vault, "beta"), "beta", "beta desc");
+
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+  await manager.toggleSkill({ projectPath: env.project, targetId: "claude-global", skillId: "alpha", enabled: true });
+  await manager.toggleSkill({ projectPath: env.project, targetId: "codex-global", skillId: "beta",  enabled: true });
+
+  const snap = await manager.snapshotSet({
+    name: "Snapshot",
+    scope: "global",
+    targetKeys: ["claude-global", "codex-global"],
+    projectPath: env.project,
+  });
+  const names = snap.set.entries.map((e) => `${e.skillName}@${e.targetKey}`).sort();
+  assert.deepEqual(names, ["alpha@claude-global", "beta@codex-global"]);
+
+  const re = await manager.applySet(snap.set.id, { projectPath: env.project });
+  for (const t of re.perTargetResult) assert.equal(t.status, "applied");
+  assert.deepEqual(re.warnings, []);
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");

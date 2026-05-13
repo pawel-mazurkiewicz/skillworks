@@ -1163,6 +1163,34 @@ function createManager(options = {}) {
     };
   }
 
+  async function snapshotSet({ name, scope, projectPath, targetKeys }) {
+    if (!Array.isArray(targetKeys) || targetKeys.length === 0) {
+      throw new Error("targetKeys must be a non-empty array");
+    }
+    const config = await readConfig();
+    const skills = await discoverSkills(config.vaultRoot);
+    const skillsById = new Map(skills.map((s) => [s.id, s]));
+    const targets = buildTargets(
+      normalizeProjectPath(projectPath || process.cwd()),
+      homeDir,
+      config.customTargets,
+    );
+    const targetsById = new Map(targets.map((t) => [t.id, t]));
+
+    const entries = [];
+    for (const targetKey of targetKeys) {
+      const target = targetsById.get(targetKey);
+      if (!target) continue;
+      const manifest = await readManifest(target.path);
+      for (const skillId of Object.keys(manifest.managedLinks || {})) {
+        const s = skillsById.get(skillId);
+        if (s) entries.push({ skillName: s.name, targetKey });
+      }
+    }
+
+    return createSet({ name, scope, projectPath, entries });
+  }
+
   return {
     appHome,
     readConfig,
@@ -1174,6 +1202,7 @@ function createManager(options = {}) {
     deleteSet,
     planApplySet,
     applySet,
+    snapshotSet,
     addProject,
     scanProjects,
     getState,
