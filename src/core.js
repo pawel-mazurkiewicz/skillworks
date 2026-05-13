@@ -988,6 +988,70 @@ function createManager(options = {}) {
     return match;
   }
 
+  function nextTimestamp(previous) {
+    const t = Date.now();
+    const candidate = new Date(t).toISOString();
+    if (candidate !== previous) return candidate;
+    return new Date(t + 1).toISOString();
+  }
+
+  async function updateSet(id, patch, { projectPath } = {}) {
+    const config = await readConfig();
+    const globalIdx = config.sets.findIndex((s) => s.id === id);
+    if (globalIdx !== -1) {
+      const existing = config.sets[globalIdx];
+      const next = {
+        ...existing,
+        ...(patch.name !== undefined ? { name: String(patch.name).trim() } : {}),
+        ...(patch.entries !== undefined ? { entries: setsModule.normalizeEntries(patch.entries) } : {}),
+        updatedAt: nextTimestamp(existing.updatedAt),
+      };
+      const nextSets = [...config.sets];
+      nextSets[globalIdx] = next;
+      await writeConfig({ ...config, sets: nextSets });
+      return { set: next, state: await getState(projectPath || process.cwd()) };
+    }
+
+    if (projectPath) {
+      const projectSets = await setsModule.readProjectSets(projectPath);
+      const idx = projectSets.findIndex((s) => s.id === id);
+      if (idx !== -1) {
+        const existing = projectSets[idx];
+        const next = {
+          ...existing,
+          ...(patch.name !== undefined ? { name: String(patch.name).trim() } : {}),
+          ...(patch.entries !== undefined ? { entries: setsModule.normalizeEntries(patch.entries) } : {}),
+          updatedAt: nextTimestamp(existing.updatedAt),
+        };
+        const nextSets = [...projectSets];
+        nextSets[idx] = next;
+        await setsModule.writeProjectSets(projectPath, nextSets);
+        return { set: next, state: await getState(projectPath) };
+      }
+    }
+
+    throw new Error(`Unknown set: ${id}`);
+  }
+
+  async function deleteSet(id, { projectPath } = {}) {
+    const config = await readConfig();
+    if (config.sets.some((s) => s.id === id)) {
+      const nextSets = config.sets.filter((s) => s.id !== id);
+      await writeConfig({ ...config, sets: nextSets });
+      return { deletedId: id, state: await getState(projectPath || process.cwd()) };
+    }
+
+    if (projectPath) {
+      const projectSets = await setsModule.readProjectSets(projectPath);
+      if (projectSets.some((s) => s.id === id)) {
+        await setsModule.writeProjectSets(projectPath, projectSets.filter((s) => s.id !== id));
+        return { deletedId: id, state: await getState(projectPath) };
+      }
+    }
+
+    throw new Error(`Unknown set: ${id}`);
+  }
+
   return {
     appHome,
     readConfig,
@@ -995,6 +1059,8 @@ function createManager(options = {}) {
     listSets,
     createSet,
     getSet,
+    updateSet,
+    deleteSet,
     addProject,
     scanProjects,
     getState,
