@@ -1,0 +1,15 @@
+{
+  "name": "agent-skill-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project-aware skill portfolio manager for local coding agents.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "static": "node src/server.js --host 127.0.0.1 --port 5179",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

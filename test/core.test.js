@@ -1,0 +1,441 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+const {
+  createManager,
+  discoverSkills,
+  discoverSources,
+  findImportCandidates,
+  parseFrontmatter,
+  safeSegment,
+} = require("../src/core");
+
+test("parses simple skill frontmatter", () => {
+  const metadata = parseFrontmatter(`---\nname: Swift Tools\ndescription: Use for Swift apps\n---\n\n# Body\n`);
+  assert.deepEqual(metadata, {
+    name: "Swift Tools",
+    description: "Use for Swift apps",
+  });
+});
+
+test("creates portable link names", () => {
+  assert.equal(safeSegment("build-ios-apps:swiftui-ui-patterns"), "build-ios-apps-swiftui-ui-patterns");
+  assert.equal(safeSegment("  ///  "), "skill");
+});
+
+test("discovers skills inside a vault", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-discover-"));
+  const vault = path.join(root, "vault");
+  await writeSkill(path.join(vault, "ios", "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const skills = await discoverSkills(vault);
+  assert.equal(skills.length, 1);
+  assert.equal(skills[0].id, "ios/swiftui");
+  assert.equal(skills[0].name, "SwiftUI Patterns");
+  assert.deepEqual(skills[0].tags, ["iOS"]);
+});
+
+test("discovers global directories, plugin caches, single-file configs, and project skill folders", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-source-discovery-"));
+  const home = path.join(root, "home");
+  const project = path.join(root, "project");
+  const appHome = path.join(home, ".agent-skill-manager");
+  const vaultRoot = path.join(appHome, "vault");
+
+  await writeSkill(path.join(home, ".codex", "skills", "global-web"), "Global Web", "Use for frontend work.");
+  await writeSkill(path.join(home, ".codex", "plugins", "cache", "plugin-a", "skills", "plugin-ios"), "Plugin iOS", "Use for SwiftUI.");
+  await writeSkill(path.join(project, ".agents", "skills", "project-api"), "Project API", "Use for backend APIs.");
+  await fs.mkdir(project, { recursive: true });
+  await fs.writeFile(path.join(project, "AGENTS.md"), "Project instructions", "utf8");
+
+  const discovery = await discoverSources(project, { homeDir: home, appHome, vaultRoot });
+  const byId = new Map(discovery.sources.map((source) => [source.id, source]));
+
+  assert.equal(byId.get("codex-global-skills").skillCount, 1);
+  assert.equal(byId.get("codex-global-skills").importable, true);
+  assert.equal(byId.get("codex-plugin-cache").skillCount, 1);
+  assert.equal(byId.get("codex-plugin-cache").importable, false);
+  assert.equal(byId.get("project-agents-skills").skillCount, 1);
+  assert.equal(byId.get("project-config-agents.md").configFileCount, 1);
+  assert.equal(discovery.summary.skillCount, 3);
+  assert.equal(discovery.summary.configFileCount, 1);
+
+  const manager = createManager({ homeDir: home, appHome });
+  const state = await manager.getState(project);
+  assert.ok(state.suggestedImports.includes(path.join(home, ".codex", "skills")));
+  assert.ok(state.suggestedImports.includes(path.join(project, ".agents", "skills")));
+  assert.ok(!state.suggestedImports.includes(path.join(home, ".codex", "plugins", "cache")));
+  assert.ok(!state.suggestedImports.includes(path.join(project, "AGENTS.md")));
+});
+
+test("adds projects manually and scans project roots with skill directories", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-project-scan-"));
+  const home = path.join(root, "home");
+  const appHome = path.join(home, ".agent-skill-manager");
+  const projectA = path.join(root, "workspace", "app-a");
+  const projectB = path.join(root, "workspace", "app-b");
+  const globalSkills = path.join(home, ".agents", "skills");
+  const pluginCache = path.join(home, ".codex", "plugins", "cache", "plugin-a", "skills");
+
+  await writeSkill(path.join(projectA, ".agents", "skills", "agent-skill"), "Agent Skill", "Use in app A.");
+  await writeSkill(path.join(projectB, "skills", "plain-skill"), "Plain Skill", "Use in app B.");
+  await writeSkill(path.join(globalSkills, "global-skill"), "Global Skill", "Global only.");
+  await writeSkill(path.join(pluginCache, "plugin-skill"), "Plugin Skill", "Plugin owned.");
+
+  const manager = createManager({ homeDir: home, appHome });
+  await manager.addProject(projectA);
+  let state = await manager.getState(projectA);
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.projects[0].path, projectA);
+  assert.equal(state.projects[0].source, "manual");
+
+  const result = await manager.scanProjects({
+    roots: [root],
+    maxDepth: 8,
+    projectPath: projectA,
+  });
+
+  const projectPaths = result.state.projects.map((project) => project.path).sort();
+  assert.deepEqual(projectPaths, [projectA, projectB].sort());
+  assert.ok(!projectPaths.includes(home));
+  assert.ok(!projectPaths.includes(path.dirname(path.dirname(pluginCache))));
+  assert.equal(result.state.projects.find((project) => project.path === projectA).source, "manual");
+  assert.equal(result.state.projects.find((project) => project.path === projectB).source, "scan");
+});
+
+test("enables and disables a project skill through a managed symlink", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-toggle-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "swiftui-patterns"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await fs.mkdir(project, { recursive: true });
+
+  let state = await manager.getState(project);
+  const skill = state.skills[0];
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: skill.id,
+    enabled: true,
+  });
+
+  const linkPath = path.join(project, ".agents", "skills", skill.linkName);
+  const linkStat = await fs.lstat(linkPath);
+  assert.equal(linkStat.isSymbolicLink(), true);
+
+  state = await manager.getState(project);
+  assert.equal(state.targets.find((target) => target.id === "agents-project").skillStatuses[skill.id].enabled, true);
+
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: skill.id,
+    enabled: false,
+  });
+  await assert.rejects(fs.lstat(linkPath), /ENOENT/);
+});
+
+test("refuses to replace unmanaged target directories", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-conflict-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "frontend"), "Frontend Design", "Use for React frontend work.");
+
+  const state = await manager.getState(project);
+  const skill = state.skills[0];
+  await fs.mkdir(path.join(project, ".agents", "skills", skill.linkName), { recursive: true });
+
+  await assert.rejects(
+    manager.toggleSkill({
+      projectPath: project,
+      targetId: "agents-project",
+      skillId: skill.id,
+      enabled: true,
+    }),
+    /already exists/,
+  );
+});
+
+test("finds symlinked skills as import candidates", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-symlink-candidate-"));
+  const source = path.join(root, "source", "adapt");
+  const target = path.join(root, "target", "adapt");
+  await writeSkill(source, "Adapt", "Use to adapt output.");
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.symlink(source, target, "dir");
+
+  const candidates = await findImportCandidates(path.dirname(target));
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].kind, "symlink");
+  assert.equal(candidates[0].entryPath, target);
+  assert.equal(candidates[0].realPath, await fs.realpath(source));
+});
+
+test("imports by moving directories into the vault", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-move-dir-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "source", "swiftui");
+  const project = path.join(root, "project");
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(source, "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const result = await manager.importSkills(path.join(root, "source"), project);
+
+  assert.equal(result.imported.length, 1);
+  await assert.rejects(fs.lstat(source), /ENOENT/);
+  const state = await manager.getState(project);
+  assert.equal(state.skills.length, 1);
+  assert.equal(state.skills[0].name, "SwiftUI Patterns");
+});
+
+test("imports symlinked skills by moving the real source and unlinking target links", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-move-symlink-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+  const source = path.join(root, "source", "adapt");
+  const projectTarget = path.join(project, ".agents", "skills");
+  const projectLink = path.join(projectTarget, "adapt");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(source, "Adapt", "Use to adapt output.");
+  await fs.mkdir(projectTarget, { recursive: true });
+  await fs.symlink(source, projectLink, "dir");
+
+  const result = await manager.importSkills(projectTarget, project);
+
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.imported[0].kind, "symlink");
+  await assert.rejects(fs.lstat(source), /ENOENT/);
+  await assert.rejects(fs.lstat(projectLink), /ENOENT/);
+  const state = await manager.getState(project);
+  assert.equal(state.summary.skillCount, 1);
+  assert.equal(state.targets.find((target) => target.id === "agents-project").unmanaged.length, 0);
+});
+
+test("dedupes imports when an identical skill is already in the vault", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-dedupe-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "source", "adapt");
+  const existing = path.join(vault, "adapt");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(source, "Adapt", "Use to adapt output.");
+  await writeSkill(existing, "Adapt", "Use to adapt output.");
+
+  const result = await manager.importSkills(source, project);
+
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.imported[0].deduped, true);
+  assert.equal(result.imported[0].to, existing);
+  await assert.rejects(fs.lstat(source), /ENOENT/);
+  const state = await manager.getState(project);
+  assert.equal(state.skills.filter((skill) => skill.name === "Adapt").length, 1);
+});
+
+test("deduped symlink imports clear conflicts so the vault skill can be enabled", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-dedupe-enable-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "source", "adapt");
+  const existing = path.join(vault, "adapt");
+  const project = path.join(root, "project");
+  const projectTarget = path.join(project, ".agents", "skills");
+  const projectLink = path.join(projectTarget, "adapt");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(source, "Adapt", "Use to adapt output.");
+  await writeSkill(existing, "Adapt", "Use to adapt output.");
+  await fs.mkdir(projectTarget, { recursive: true });
+  await fs.symlink(source, projectLink, "dir");
+
+  await manager.importSkills(projectTarget, project);
+  let state = await manager.getState(project);
+  const skill = state.skills.find((item) => item.name === "Adapt");
+  assert.equal(state.targets.find((target) => target.id === "agents-project").skillStatuses[skill.id].conflict, false);
+
+  state = await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: skill.id,
+    enabled: true,
+  });
+
+  const status = state.targets.find((target) => target.id === "agents-project").skillStatuses[skill.id];
+  assert.equal(status.enabled, true);
+  assert.equal(await fs.realpath(projectLink), await fs.realpath(existing));
+});
+
+test("batch import skips missing paths and imports every suggested source once", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-batch-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const sourceA = path.join(root, "source-a");
+  const sourceB = path.join(root, "source-b");
+  const missing = path.join(root, "missing");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(sourceA, "adapt"), "Adapt", "Use to adapt output.");
+  await writeSkill(path.join(sourceB, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const result = await manager.importPaths([missing, sourceA, sourceA, sourceB], project);
+
+  assert.equal(result.imported.length, 2);
+  assert.equal(result.skipped.filter((item) => item.reason === "Path does not exist").length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.state.summary.skillCount, 2);
+  await assert.rejects(fs.lstat(path.join(sourceA, "adapt")), /ENOENT/);
+  await assert.rejects(fs.lstat(path.join(sourceB, "swiftui")), /ENOENT/);
+});
+
+test("installing from a source can link imported skills to a preferred target", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-install-target-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const result = await manager.installSkills(source, project, "agents-project");
+
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.enabled.length, 1);
+  const state = await manager.getState(project);
+  const skill = state.skills[0];
+  const target = state.targets.find((item) => item.id === "agents-project");
+  assert.equal(target.skillStatuses[skill.id].enabled, true);
+  assert.equal(await fs.realpath(path.join(project, ".agents", "skills", skill.linkName)), skill.realPath);
+});
+
+test("bulk toggles selected skills in a target", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-bulk-toggle-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "adapt"), "Adapt", "Use to adapt output.");
+  await writeSkill(path.join(vault, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  let state = await manager.getState(project);
+  const skillIds = state.skills.map((skill) => skill.id);
+  const result = await manager.bulkToggleSkills({
+    projectPath: project,
+    targetId: "agents-project",
+    skillIds,
+    mode: "enable",
+  });
+
+  assert.equal(result.changed.length, 2);
+  state = await manager.getState(project);
+  const target = state.targets.find((item) => item.id === "agents-project");
+  assert.equal(target.enabledSkillIds.length, 2);
+});
+
+test("bulk copies selected skills without removing vault originals", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-bulk-copy-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const destination = path.join(root, "export");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "adapt"), "Adapt", "Use to adapt output.");
+
+  const state = await manager.getState(root);
+  const result = await manager.bulkCopySkills({
+    skillIds: [state.skills[0].id],
+    destinationPath: destination,
+    projectPath: root,
+  });
+
+  assert.equal(result.copied.length, 1);
+  assert.equal(await fileExists(path.join(vault, "adapt", "SKILL.md")), true);
+  assert.equal(await fileExists(path.join(destination, "adapt", "SKILL.md")), true);
+});
+
+test("bulk moves selected skills out of vault and removes managed links", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-bulk-move-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const destination = path.join(root, "archive");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "adapt"), "Adapt", "Use to adapt output.");
+  let state = await manager.getState(project);
+  const skill = state.skills[0];
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: skill.id,
+    enabled: true,
+  });
+
+  const result = await manager.bulkMoveSkills({
+    skillIds: [skill.id],
+    destinationPath: destination,
+    projectPath: project,
+  });
+
+  assert.equal(result.moved.length, 1);
+  assert.equal(await fileExists(path.join(vault, "adapt", "SKILL.md")), false);
+  assert.equal(await fileExists(path.join(destination, "adapt", "SKILL.md")), true);
+  state = await manager.getState(project);
+  assert.equal(state.summary.skillCount, 0);
+  assert.equal(state.targets.find((item) => item.id === "agents-project").enabledSkillIds.length, 0);
+});
+
+test("bulk deletes selected skills from vault and removes managed links", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-bulk-delete-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "adapt"), "Adapt", "Use to adapt output.");
+  let state = await manager.getState(project);
+  const skill = state.skills[0];
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: skill.id,
+    enabled: true,
+  });
+
+  const result = await manager.bulkDeleteSkills({
+    skillIds: [skill.id],
+    projectPath: project,
+  });
+
+  assert.equal(result.deleted.length, 1);
+  assert.equal(await fileExists(path.join(vault, "adapt", "SKILL.md")), false);
+  state = await manager.getState(project);
+  assert.equal(state.summary.skillCount, 0);
+  assert.equal(state.targets.find((item) => item.id === "agents-project").enabledSkillIds.length, 0);
+});
+
+async function writeSkill(dir, name, description) {
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");
+}
+
+async function fileExists(filePath) {
+  return fs
+    .access(filePath)
+    .then(() => true)
+    .catch(() => false);
+}

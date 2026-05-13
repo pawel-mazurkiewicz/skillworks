@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Skill Manager</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Skill portfolio</p>
+          <h1>Agent Skill Manager</h1>
+        </div>
+        <form class="path-form" id="pathForm">
+          <label>
+            <span>Project</span>
+            <input id="projectInput" name="project" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="button-row no-wrap">
+            <button class="button" id="browseProjectButton" type="button">Browse</button>
+            <button class="button primary" type="submit">Load</button>
+          </div>
+        </form>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar">
+          <section class="panel compact">
+            <div class="field-stack">
+              <label>
+                <span>Vault</span>
+                <input id="vaultInput" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="button-row">
+                <button class="button" id="browseVaultButton" type="button">Browse</button>
+                <button class="button" id="saveVaultButton" type="button">Save</button>
+                <button class="button ghost" id="refreshButton" type="button">Refresh</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel summary-panel" aria-label="Summary">
+            <div>
+              <strong id="skillCount">0</strong>
+              <span>Vault skills</span>
+            </div>
+            <div>
+              <strong id="enabledCount">0</strong>
+              <span>Links</span>
+            </div>
+            <div>
+              <strong id="unmanagedCount">0</strong>
+              <span>Unmanaged</span>
+            </div>
+          </section>
+
+          <nav class="side-tabs" aria-label="Skill workflows">
+            <button class="side-tab active" data-side-tab="manage" type="button">Manage</button>
+            <button class="side-tab" data-side-tab="install" type="button">Install</button>
+          </nav>
+
+          <div class="tab-panel" id="managePanel">
+            <section class="panel">
+              <div class="section-head">
+                <h2>Projects</h2>
+              </div>
+              <div class="field-stack">
+                <input id="projectAddInput" placeholder="/path/to/project" autocomplete="off" spellcheck="false" />
+                <div class="button-row">
+                  <button class="button" id="browseProjectAddButton" type="button">Browse</button>
+                  <button class="button" id="addProjectButton" type="button">Add</button>
+                  <button class="button primary" id="scanProjectsButton" type="button">Scan system</button>
+                </div>
+              </div>
+              <div class="project-list" id="projectList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <h2>Unmanaged</h2>
+              </div>
+              <div class="unmanaged-list" id="unmanagedList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <h2>Create</h2>
+              </div>
+              <form class="field-stack" id="createSkillForm">
+                <input id="newSkillName" placeholder="Skill name" autocomplete="off" />
+                <textarea id="newSkillDescription" placeholder="Trigger description"></textarea>
+                <button class="button" type="submit">Create skill</button>
+              </form>
+            </section>
+          </div>
+
+          <div class="tab-panel hidden" id="installPanel">
+            <section class="panel">
+              <div class="section-head">
+                <h2>Local</h2>
+              </div>
+              <div class="field-stack">
+                <select id="importSelect"></select>
+                <input id="importInput" placeholder="~/path/to/skills" autocomplete="off" spellcheck="false" />
+                <div class="button-row">
+                  <button class="button" id="browseImportButton" type="button">Browse</button>
+                  <button class="button" id="importButton" type="button">Move to vault</button>
+                  <button class="button primary" id="importSuggestedButton" type="button">Move suggested</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <h2>Discovery</h2>
+              </div>
+              <div class="discovery-summary" id="discoverySummary"></div>
+              <div class="discovery-list" id="discoveryList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <h2>Install from Git</h2>
+              </div>
+              <form class="field-stack" id="gitInstallForm">
+                <input id="gitRepoInput" placeholder="https://github.com/org/repo.git" autocomplete="off" spellcheck="false" />
+                <input id="gitRefInput" placeholder="branch or tag (optional)" autocomplete="off" spellcheck="false" />
+                <select id="gitTargetSelect"></select>
+                <button class="button primary" type="submit">Clone and install</button>
+              </form>
+            </section>
+          </div>
+        </aside>
+
+        <section class="main-surface">
+          <div class="toolbar">
+            <div class="search-wrap">
+              <input id="searchInput" placeholder="Search skills, tags, descriptions" autocomplete="off" />
+            </div>
+            <div class="segments" id="tagFilters" aria-label="Tag filters"></div>
+          </div>
+
+          <section class="bulk-bar" aria-label="Bulk actions">
+            <div class="bulk-count">
+              <strong id="bulkSelectedCount">0 selected</strong>
+              <button class="button ghost" id="clearSelectionButton" type="button">Clear</button>
+            </div>
+            <div class="bulk-controls">
+              <select id="bulkTargetSelect"></select>
+              <button class="button" id="bulkEnableButton" type="button">Enable</button>
+              <button class="button" id="bulkDisableButton" type="button">Disable</button>
+              <button class="button" id="bulkToggleButton" type="button">Toggle</button>
+            </div>
+            <div class="bulk-controls">
+              <input id="bulkDestinationInput" placeholder="Destination folder" autocomplete="off" spellcheck="false" />
+              <button class="button" id="browseBulkDestinationButton" type="button">Browse</button>
+              <button class="button" id="bulkCopyButton" type="button">Copy</button>
+              <button class="button" id="bulkMoveButton" type="button">Move</button>
+              <button class="button danger" id="bulkDeleteButton" type="button">Delete</button>
+            </div>
+          </section>
+
+          <div class="target-strip" id="targetStrip"></div>
+
+          <div class="matrix-wrap">
+            <table class="skill-matrix">
+              <thead id="matrixHead"></thead>
+              <tbody id="matrixBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="detail-pane">
+          <section class="panel detail-card">
+            <div class="empty-detail" id="emptyDetail">
+              <h2>No skill selected</h2>
+              <p>Select a row to inspect its paths and active links.</p>
+            </div>
+            <div class="skill-detail hidden" id="skillDetail">
+              <div class="detail-title-row">
+                <div>
+                  <p class="eyebrow" id="detailTags"></p>
+                  <h2 id="detailName"></h2>
+                </div>
+                <button class="button ghost" id="copyPathButton" type="button">Copy path</button>
+              </div>
+              <p id="detailDescription" class="description"></p>
+              <dl class="path-list">
+                <div>
+                  <dt>Vault path</dt>
+                  <dd id="detailPath"></dd>
+                </div>
+                <div>
+                  <dt>Relative id</dt>
+                  <dd id="detailId"></dd>
+                </div>
+              </dl>
+              <div class="detail-links" id="detailLinks"></div>
+              <pre class="skill-preview" id="skillPreview"></pre>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
