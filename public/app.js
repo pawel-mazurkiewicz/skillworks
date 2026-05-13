@@ -37,7 +37,7 @@ const elements = {
   gitInstallForm: document.querySelector("#gitInstallForm"),
   gitRepoInput: document.querySelector("#gitRepoInput"),
   gitRefInput: document.querySelector("#gitRefInput"),
-  gitTargetSelect: document.querySelector("#gitTargetSelect"),
+  gitTargetCheckboxes: document.querySelector("#gitTargetCheckboxes"),
   searchInput: document.querySelector("#searchInput"),
   bulkSelectedCount: document.querySelector("#bulkSelectedCount"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
@@ -184,12 +184,15 @@ async function bootstrap() {
         showToast("Git URL is required");
         return;
       }
+      const targetIds = Array.from(
+        elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+      ).map((input) => input.value);
       const result = await api("/api/install-git", {
         method: "POST",
         body: {
           repoUrl,
           ref: elements.gitRefInput.value.trim(),
-          targetId: elements.gitTargetSelect.value,
+          targetIds,
           projectPath: elements.projectInput.value,
         },
       });
@@ -529,13 +532,29 @@ function renderDiscovery() {
 }
 
 function renderInstallTargets() {
-  const targetOptions = state.data.targets
-    .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.label)}</option>`)
+  const targets = state.data.targets || [];
+  if (!targets.length) {
+    elements.gitTargetCheckboxes.innerHTML =
+      `<legend>Install to (vault by default; pick any extra targets)</legend>` +
+      `<p class="empty-copy">No targets available.</p>`;
+    return;
+  }
+  const previouslyChecked = new Set(
+    Array.from(elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
+  );
+  const items = targets
+    .map((target) => {
+      const checked = previouslyChecked.has(target.id) ? "checked" : "";
+      return `
+        <label class="target-checkbox">
+          <input type="checkbox" value="${escapeHtml(target.id)}" ${checked} />
+          <span>${escapeHtml(target.label)}</span>
+        </label>
+      `;
+    })
     .join("");
-  elements.gitTargetSelect.innerHTML = [
-    `<option value="vault">Vault only</option>`,
-    targetOptions,
-  ].join("");
+  elements.gitTargetCheckboxes.innerHTML =
+    `<legend>Install to (vault by default; pick any extra targets)</legend>${items}`;
 }
 
 function renderBulkTargets() {

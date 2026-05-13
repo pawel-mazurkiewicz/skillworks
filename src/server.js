@@ -139,7 +139,8 @@ async function handleApi(request, response, url) {
     const result = await installFromGit({
       repoUrl: body.repoUrl,
       ref: body.ref,
-      targetId: body.targetId || "vault",
+      targetIds: Array.isArray(body.targetIds) ? body.targetIds : undefined,
+      targetId: typeof body.targetId === "string" ? body.targetId : undefined,
       projectPath,
     });
     sendJson(response, 200, result);
@@ -267,7 +268,7 @@ async function pickDirectory() {
   }
 }
 
-async function installFromGit({ repoUrl, ref, targetId, projectPath }) {
+async function installFromGit({ repoUrl, ref, targetIds, targetId, projectPath }) {
   const source = parseGitSource(repoUrl, ref);
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-skill-manager-git-"));
   const clonePath = path.join(tempRoot, "repo");
@@ -281,7 +282,12 @@ async function installFromGit({ repoUrl, ref, targetId, projectPath }) {
     await execFileAsync("git", cloneArgs, { timeout: 120000 });
 
     const installRoot = source.subdir ? path.join(clonePath, source.subdir) : clonePath;
-    const result = await manager.installSkills(installRoot, projectPath, targetId);
+    const selector = Array.isArray(targetIds)
+      ? { targetIds }
+      : targetId !== undefined
+        ? { targetId }
+        : "vault";
+    const result = await manager.installSkills(installRoot, projectPath, selector);
     return {
       state: result.state,
       report: {

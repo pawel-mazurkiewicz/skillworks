@@ -563,6 +563,76 @@ test("rejects custom targets with invalid scope/path combinations", async () => 
   );
 });
 
+test("installing from a source links imported skills to every requested target in one pass", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-install-multi-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+  const cursorRules = path.join(root, "cursor-rules");
+
+  await manager.writeConfig({
+    vaultRoot: vault,
+    recentProjects: [],
+    customTargets: [
+      {
+        id: "cursor-global",
+        label: "Cursor global",
+        scope: "global",
+        path: cursorRules,
+      },
+    ],
+  });
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const result = await manager.installSkills(source, project, {
+    targetIds: ["agents-project", "cursor-global"],
+  });
+
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.enabled.length, 2);
+  const targetIds = result.enabled.map((entry) => entry.targetId).sort();
+  assert.deepEqual(targetIds, ["agents-project", "cursor-global"]);
+
+  const state = await manager.getState(project);
+  const skill = state.skills[0];
+  const agentsProjectLink = path.join(project, ".agents", "skills", skill.linkName);
+  const cursorLink = path.join(cursorRules, skill.linkName);
+  assert.equal(await fs.realpath(agentsProjectLink), skill.realPath);
+  assert.equal(await fs.realpath(cursorLink), skill.realPath);
+});
+
+test("install accepts legacy single targetId for backward compatibility", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-install-legacy-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const result = await manager.installSkills(source, project, "agents-project");
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.enabled.length, 1);
+  assert.equal(result.enabled[0].targetId, "agents-project");
+});
+
+test("install with no targets is vault-only", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-install-vault-only-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const vaultOnly = await manager.installSkills(source, project, { targetIds: [] });
+  assert.equal(vaultOnly.imported.length, 1);
+  assert.equal(vaultOnly.enabled.length, 0);
+});
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");

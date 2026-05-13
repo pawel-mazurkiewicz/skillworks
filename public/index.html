@@ -145,7 +145,9 @@
               <form class="field-stack" id="gitInstallForm">
                 <input id="gitRepoInput" placeholder="https://github.com/org/repo.git" autocomplete="off" spellcheck="false" />
                 <input id="gitRefInput" placeholder="branch or tag (optional)" autocomplete="off" spellcheck="false" />
-                <select id="gitTargetSelect"></select>
+                <fieldset class="target-checkboxes" id="gitTargetCheckboxes">
+                  <legend>Install to (vault by default; pick any extra targets)</legend>
+                </fieldset>
                 <button class="button primary" type="submit">Clone and install</button>
               </form>
             </section>

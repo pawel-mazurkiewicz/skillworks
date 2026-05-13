@@ -832,3 +832,38 @@ dd {
     transition: none !important;
   }
 }
+
+.target-checkboxes {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--panel-border, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.target-checkboxes legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.target-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.target-checkbox span {
+  color: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.custom-target-list {
+  display: grid;
+  gap: 8px;
+}

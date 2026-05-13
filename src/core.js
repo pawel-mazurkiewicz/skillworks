@@ -149,6 +149,27 @@ function normalizeCustomTargets(input) {
   return normalized;
 }
 
+function resolveInstallTargetIds(selector) {
+  if (selector === undefined || selector === null) {
+    return [];
+  }
+  if (Array.isArray(selector)) {
+    return selector.filter((id) => typeof id === "string" && id && id !== "vault");
+  }
+  if (typeof selector === "string") {
+    return selector && selector !== "vault" ? [selector] : [];
+  }
+  if (typeof selector === "object") {
+    if (Array.isArray(selector.targetIds)) {
+      return selector.targetIds.filter((id) => typeof id === "string" && id && id !== "vault");
+    }
+    if (typeof selector.targetId === "string") {
+      return selector.targetId && selector.targetId !== "vault" ? [selector.targetId] : [];
+    }
+  }
+  return [];
+}
+
 function createManager(options = {}) {
   const homeDir = path.resolve(expandHome(options.homeDir || os.homedir()));
   const appHome = path.resolve(
@@ -460,11 +481,12 @@ function createManager(options = {}) {
     return { ...report, state: await getState(projectPath) };
   }
 
-  async function installSkills(sourcePath, projectPath = process.cwd(), targetId = "vault") {
+  async function installSkills(sourcePath, projectPath = process.cwd(), targetSelector = "vault") {
     const config = await readConfig();
     await ensureDir(config.vaultRoot);
     const result = await importSource(config, sourcePath, projectPath, { requireExists: true });
-    const enableResult = await enableImportedSkills(config.vaultRoot, result.imported, projectPath, targetId, homeDir, config.customTargets);
+    const targetIds = resolveInstallTargetIds(targetSelector);
+    const enableResult = await enableImportedSkills(config.vaultRoot, result.imported, projectPath, targetIds, homeDir, config.customTargets);
     return {
       ...result,
       enabled: enableResult.enabled,
@@ -545,14 +567,21 @@ function createManager(options = {}) {
     return { imported, skipped };
   }
 
-  async function enableImportedSkills(vaultRoot, imported, projectPath, targetId, targetHomeDir = os.homedir(), customTargets = []) {
-    if (!targetId || targetId === "vault") {
+  async function enableImportedSkills(vaultRoot, imported, projectPath, targetIds, targetHomeDir = os.homedir(), customTargets = []) {
+    const ids = Array.isArray(targetIds) ? targetIds.filter((id) => id && id !== "vault") : [];
+    if (ids.length === 0) {
       return { enabled: [], errors: [] };
     }
 
-    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), targetHomeDir, customTargets).find((item) => item.id === targetId);
-    if (!target) {
-      throw new Error(`Unknown target: ${targetId}`);
+    const allTargets = buildTargets(normalizeProjectPath(projectPath || process.cwd()), targetHomeDir, customTargets);
+    const targetsById = new Map(allTargets.map((target) => [target.id, target]));
+    const targets = [];
+    for (const id of ids) {
+      const target = targetsById.get(id);
+      if (!target) {
+        throw new Error(`Unknown target: ${id}`);
+      }
+      targets.push(target);
     }
 
     const skills = await discoverSkills(vaultRoot);
@@ -563,40 +592,46 @@ function createManager(options = {}) {
 
     const enabled = [];
     const errors = [];
-    const seen = new Set();
+    const seenSkillDestinations = new Set();
+    const resolvedSkillDestinations = [];
 
     for (const item of imported) {
       const destination = await realPath(item.to).catch(() => "");
-      if (!destination || seen.has(destination)) {
+      if (!destination || seenSkillDestinations.has(destination)) {
         continue;
       }
-      seen.add(destination);
+      seenSkillDestinations.add(destination);
+      resolvedSkillDestinations.push(destination);
+    }
 
+    for (const destination of resolvedSkillDestinations) {
       const skill = skillsByRealPath.get(destination);
       if (!skill) {
         errors.push({
-          path: item.to,
+          path: destination,
           reason: "Installed skill was not discoverable in the vault",
         });
         continue;
       }
 
-      try {
-        await enableSkill(target, skill);
-        enabled.push({
-          id: skill.id,
-          name: skill.name,
-          targetId: target.id,
-          targetLabel: target.label,
-          linkPath: path.join(target.path, skill.linkName),
-        });
-      } catch (error) {
-        errors.push({
-          id: skill.id,
-          name: skill.name,
-          targetId: target.id,
-          reason: error.message || "Enable failed",
-        });
+      for (const target of targets) {
+        try {
+          await enableSkill(target, skill);
+          enabled.push({
+            id: skill.id,
+            name: skill.name,
+            targetId: target.id,
+            targetLabel: target.label,
+            linkPath: path.join(target.path, skill.linkName),
+          });
+        } catch (error) {
+          errors.push({
+            id: skill.id,
+            name: skill.name,
+            targetId: target.id,
+            reason: error.message || "Enable failed",
+          });
+        }
       }
     }
 
