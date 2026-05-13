@@ -484,13 +484,46 @@ function createManager(options = {}) {
   async function installSkills(sourcePath, projectPath = process.cwd(), targetSelector = "vault") {
     const config = await readConfig();
     await ensureDir(config.vaultRoot);
+    const sourceRoot = path.resolve(expandHome(sourcePath));
     const result = await importSource(config, sourcePath, projectPath, { requireExists: true });
-    const targetIds = resolveInstallTargetIds(targetSelector);
-    const enableResult = await enableImportedSkills(config.vaultRoot, result.imported, projectPath, targetIds, homeDir, config.customTargets);
+    const defaultTargetIds = resolveInstallTargetIds(targetSelector);
+    const perSkillTargets = (targetSelector && typeof targetSelector === "object" && !Array.isArray(targetSelector)
+      ? targetSelector.perSkillTargets
+      : null) || {};
+
+    const groups = new Map();
+    for (const item of result.imported) {
+      const relative = path.relative(sourceRoot, item.from);
+      const override = perSkillTargets[relative];
+      const ids = Array.isArray(override)
+        ? override.filter((id) => typeof id === "string" && id && id !== "vault")
+        : defaultTargetIds;
+      const key = [...ids].sort().join("|");
+      if (!groups.has(key)) {
+        groups.set(key, { ids, items: [] });
+      }
+      groups.get(key).items.push(item);
+    }
+
+    const enabled = [];
+    const errors = [];
+    for (const { ids, items } of groups.values()) {
+      const groupResult = await enableImportedSkills(
+        config.vaultRoot,
+        items,
+        projectPath,
+        ids,
+        homeDir,
+        config.customTargets,
+      );
+      enabled.push(...groupResult.enabled);
+      errors.push(...groupResult.errors);
+    }
+
     return {
       ...result,
-      enabled: enableResult.enabled,
-      errors: enableResult.errors,
+      enabled,
+      errors,
       state: await getState(projectPath),
     };
   }
@@ -575,6 +608,7 @@ function createManager(options = {}) {
         name: desiredName,
         sourcePath: candidate.entryPath,
         realSourcePath: candidate.realPath,
+        sourceKey: path.relative(source, candidate.entryPath),
         kind: candidate.kind,
         action,
         skipReason,

@@ -689,6 +689,77 @@ test("previewInstall marks duplicate skills as dedupe and points to the existing
   assert.equal(candidate.vaultDestination, path.join(vault, "swiftui-patterns"));
 });
 
+test("previewInstall returns a sourceKey usable to override per-skill targets on install", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-preview-sourcekey-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(source, "ios", "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await writeSkill(path.join(source, "web", "react"), "React UI", "Use for React.");
+
+  const plan = await manager.previewInstall(source, project, { targetIds: ["agents-project"] });
+  const swiftui = plan.candidates.find((c) => c.name === "SwiftUI Patterns");
+  const react = plan.candidates.find((c) => c.name === "React UI");
+  assert.equal(swiftui.sourceKey, path.join("ios", "swiftui"));
+  assert.equal(react.sourceKey, path.join("web", "react"));
+});
+
+test("installSkills with perSkillTargets routes each skill to its chosen targets", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-install-per-skill-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(source, "ios", "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await writeSkill(path.join(source, "web", "react"), "React UI", "Use for React.");
+
+  const result = await manager.installSkills(source, project, {
+    targetIds: ["agents-project"],
+    perSkillTargets: {
+      [path.join("ios", "swiftui")]: ["claude-project"],
+      [path.join("web", "react")]: ["codex-project", "agents-project"],
+    },
+  });
+
+  assert.equal(result.imported.length, 2);
+  // swiftui only at claude-project; react at both codex-project and agents-project
+  const swiftuiTargets = result.enabled
+    .filter((entry) => entry.name === "SwiftUI Patterns")
+    .map((entry) => entry.targetId)
+    .sort();
+  const reactTargets = result.enabled
+    .filter((entry) => entry.name === "React UI")
+    .map((entry) => entry.targetId)
+    .sort();
+  assert.deepEqual(swiftuiTargets, ["claude-project"]);
+  assert.deepEqual(reactTargets, ["agents-project", "codex-project"]);
+
+  const state = await manager.getState(project);
+  const swiftui = state.skills.find((s) => s.name === "SwiftUI Patterns");
+  const react = state.skills.find((s) => s.name === "React UI");
+  await assert.rejects(
+    fs.lstat(path.join(project, ".agents", "skills", swiftui.linkName)),
+    /ENOENT/,
+  );
+  assert.equal(
+    (await fs.lstat(path.join(project, ".claude", "skills", swiftui.linkName))).isSymbolicLink(),
+    true,
+  );
+  assert.equal(
+    (await fs.lstat(path.join(project, ".agents", "skills", react.linkName))).isSymbolicLink(),
+    true,
+  );
+  assert.equal(
+    (await fs.lstat(path.join(project, ".codex", "skills", react.linkName))).isSymbolicLink(),
+    true,
+  );
+});
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");

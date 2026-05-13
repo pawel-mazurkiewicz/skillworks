@@ -940,3 +940,7 @@ dd {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+.preview-target-grid {
+  margin-top: 6px;
+}

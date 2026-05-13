@@ -7,6 +7,7 @@ const state = {
   activeTag: "All",
   activeSideTab: "manage",
   search: "",
+  preview: null,
 };
 
 const elements = {
@@ -196,7 +197,7 @@ async function bootstrap() {
         projectPath: elements.projectInput.value,
       },
     });
-    renderInstallPreview(plan);
+    renderInstallPreview(plan, { repoUrl });
     showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
   }));
 
@@ -211,16 +212,23 @@ async function bootstrap() {
       const targetIds = Array.from(
         elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
       ).map((input) => input.value);
+      const body = {
+        repoUrl,
+        ref: elements.gitRefInput.value.trim(),
+        targetIds,
+        projectPath: elements.projectInput.value,
+      };
+      if (state.preview && state.preview.repoUrl === repoUrl) {
+        body.perSkillTargets = state.preview.perSkillTargets;
+      }
       const result = await api("/api/install-git", {
         method: "POST",
-        body: {
-          repoUrl,
-          ref: elements.gitRefInput.value.trim(),
-          targetIds,
-          projectPath: elements.projectInput.value,
-        },
+        body,
       });
       applyState(result.state);
+      state.preview = null;
+      elements.gitPreviewResult.hidden = true;
+      elements.gitPreviewResult.innerHTML = "";
       render();
       const report = result.report || { imported: 0, skipped: 0, enabled: 0, errors: 0 };
       showToast(`Installed ${report.imported}, linked ${report.enabled}, errors ${report.errors}`);
@@ -581,14 +589,32 @@ function renderInstallTargets() {
     `<legend>Install to (vault by default; pick any extra targets)</legend>${items}`;
 }
 
-function renderInstallPreview(plan) {
+function renderInstallPreview(plan, options = {}) {
   if (!plan || !Array.isArray(plan.candidates)) {
     elements.gitPreviewResult.hidden = true;
     elements.gitPreviewResult.innerHTML = "";
+    state.preview = null;
     return;
   }
 
+  if (options.resetSelection !== false) {
+    const perSkillTargets = {};
+    for (const candidate of plan.candidates) {
+      if (candidate.action !== "skip") {
+        perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
+      }
+    }
+    state.preview = {
+      repoUrl: options.repoUrl || "",
+      plan,
+      perSkillTargets,
+    };
+  } else if (state.preview) {
+    state.preview.plan = plan;
+  }
+
   const summary = plan.summary;
+  const allTargets = (state.data && state.data.targets) || [];
   const rows = plan.candidates
     .map((candidate) => {
       const actionLabel = candidate.action === "move"
@@ -596,18 +622,41 @@ function renderInstallPreview(plan) {
         : candidate.action === "dedupe"
           ? `Dedupe against <code>${escapeHtml(candidate.vaultDestination)}</code>`
           : `Skip: ${escapeHtml(candidate.skipReason || "")}`;
-      const links = candidate.targetLinks
-        .map((link) => `<li>${escapeHtml(link.targetLabel)} &rarr; <code>${escapeHtml(link.linkPath)}</code></li>`)
-        .join("");
+      let targetGrid = "";
+      if (candidate.action !== "skip") {
+        const checked = new Set(
+          (state.preview && state.preview.perSkillTargets[candidate.sourceKey]) || [],
+        );
+        const items = allTargets
+          .map((target) => {
+            const isChecked = checked.has(target.id) ? "checked" : "";
+            return `
+              <label class="target-checkbox">
+                <input
+                  type="checkbox"
+                  value="${escapeHtml(target.id)}"
+                  data-skill-key="${escapeHtml(candidate.sourceKey)}"
+                  ${isChecked}
+                />
+                <span>${escapeHtml(target.label)}</span>
+              </label>
+            `;
+          })
+          .join("");
+        targetGrid = `<fieldset class="target-checkboxes preview-target-grid">
+            <legend>Targets for ${escapeHtml(candidate.name)}</legend>
+            ${items || `<p class="empty-copy">No targets configured.</p>`}
+          </fieldset>`;
+      }
       return `
-        <article class="preview-item">
+        <article class="preview-item" data-source-key="${escapeHtml(candidate.sourceKey)}">
           <header>
             <strong>${escapeHtml(candidate.name)}</strong>
             <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${escapeHtml(candidate.action)}</span>
           </header>
           <div class="preview-detail">${actionLabel}</div>
           <div class="preview-source">From: <code>${escapeHtml(candidate.sourcePath)}</code></div>
-          ${links ? `<ul class="preview-links">${links}</ul>` : `<p class="empty-copy">No target links.</p>`}
+          ${targetGrid}
         </article>
       `;
     })
@@ -621,9 +670,35 @@ function renderInstallPreview(plan) {
       <span>${summary.toMove} move</span>
       <span>${summary.toDedupe} dedupe</span>
       <span>${summary.toSkip} skip</span>
+      <button class="button ghost" type="button" id="clearPreviewButton">Clear preview</button>
     </div>
     <div class="preview-list">${rows || `<p class="empty-copy">No skills discovered.</p>`}</div>
   `;
+
+  elements.gitPreviewResult.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!state.preview) {
+        return;
+      }
+      const key = input.dataset.skillKey;
+      const current = new Set(state.preview.perSkillTargets[key] || []);
+      if (input.checked) {
+        current.add(input.value);
+      } else {
+        current.delete(input.value);
+      }
+      state.preview.perSkillTargets[key] = Array.from(current);
+    });
+  });
+
+  const clearButton = elements.gitPreviewResult.querySelector("#clearPreviewButton");
+  if (clearButton) {
+    clearButton.addEventListener("click", () => {
+      state.preview = null;
+      elements.gitPreviewResult.hidden = true;
+      elements.gitPreviewResult.innerHTML = "";
+    });
+  }
 }
 
 function renderBulkTargets() {
