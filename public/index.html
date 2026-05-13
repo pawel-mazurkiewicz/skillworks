@@ -79,6 +79,24 @@
 
             <section class="panel">
               <div class="section-head">
+                <h2>Custom Targets</h2>
+              </div>
+              <form class="field-stack" id="customTargetForm">
+                <input id="customTargetId" placeholder="ID (e.g. cursor-global)" autocomplete="off" spellcheck="false" />
+                <input id="customTargetLabel" placeholder="Label (e.g. Cursor global)" autocomplete="off" />
+                <input id="customTargetHarness" placeholder="Harness (optional, default: Custom)" autocomplete="off" />
+                <select id="customTargetScope">
+                  <option value="global">Global (absolute path)</option>
+                  <option value="project">Project (relative path)</option>
+                </select>
+                <input id="customTargetPath" placeholder="/abs/path or .relative/path" autocomplete="off" spellcheck="false" />
+                <button class="button primary" type="submit">Add custom target</button>
+              </form>
+              <div class="custom-target-list" id="customTargetList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
                 <h2>Unmanaged</h2>
               </div>
               <div class="unmanaged-list" id="unmanagedList"></div>

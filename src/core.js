@@ -62,6 +62,93 @@ const PROJECT_TARGETS = [
   },
 ];
 
+const BUILT_IN_TARGET_IDS = new Set([...HARNESS_TARGETS, ...PROJECT_TARGETS].map((target) => target.id));
+
+function safeReadCustomTargets(input) {
+  try {
+    return normalizeCustomTargets(input);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeCustomTargets(input) {
+  if (input === undefined || input === null) {
+    return [];
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("customTargets must be an array");
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") {
+      throw new Error("Each custom target must be an object");
+    }
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    if (!id) {
+      throw new Error("Custom target requires an id");
+    }
+    if (BUILT_IN_TARGET_IDS.has(id)) {
+      throw new Error(`Custom target id collides with built-in: ${id}`);
+    }
+    if (seen.has(id)) {
+      throw new Error(`Duplicate custom target id: ${id}`);
+    }
+    seen.add(id);
+
+    const scope = raw.scope === "project" ? "project" : raw.scope === "global" ? "global" : null;
+    if (!scope) {
+      throw new Error(`Custom target ${id} requires scope "global" or "project"`);
+    }
+
+    let resolvedPath = null;
+    let relativePath = null;
+    if (scope === "global") {
+      if (raw.relativePath) {
+        throw new Error(`Global custom target ${id} must not set relativePath; use an absolute path`);
+      }
+      if (typeof raw.path !== "string" || !raw.path.trim()) {
+        throw new Error(`Global custom target ${id} requires an absolute path`);
+      }
+      resolvedPath = path.resolve(expandHome(raw.path.trim()));
+      if (!path.isAbsolute(resolvedPath)) {
+        throw new Error(`Global custom target ${id} requires an absolute path`);
+      }
+    } else {
+      if (raw.path) {
+        throw new Error(`Project custom target ${id} must not set absolute path; use a relative path`);
+      }
+      if (typeof raw.relativePath !== "string" || !raw.relativePath.trim()) {
+        throw new Error(`Project custom target ${id} requires a relative path`);
+      }
+      const candidate = raw.relativePath.trim();
+      if (path.isAbsolute(candidate) || candidate.startsWith("~")) {
+        throw new Error(`Project custom target ${id} requires a relative path`);
+      }
+      relativePath = candidate;
+    }
+
+    const entry = {
+      id,
+      label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : id,
+      harness: typeof raw.harness === "string" && raw.harness.trim() ? raw.harness.trim() : "Custom",
+      scope,
+    };
+    if (typeof raw.shortLabel === "string" && raw.shortLabel.trim()) {
+      entry.shortLabel = raw.shortLabel.trim();
+    }
+    if (resolvedPath !== null) {
+      entry.path = resolvedPath;
+    }
+    if (relativePath !== null) {
+      entry.relativePath = relativePath;
+    }
+    normalized.push(entry);
+  }
+  return normalized;
+}
+
 function createManager(options = {}) {
   const homeDir = path.resolve(expandHome(options.homeDir || os.homedir()));
   const appHome = path.resolve(
@@ -81,6 +168,7 @@ function createManager(options = {}) {
       vaultRoot,
       recentProjects: Array.isArray(config.recentProjects) ? config.recentProjects : [],
       projects: normalizeProjectRecords(config.projects || []),
+      customTargets: safeReadCustomTargets(config.customTargets),
     };
   }
 
@@ -92,6 +180,9 @@ function createManager(options = {}) {
       vaultRoot: nextConfig.vaultRoot ? path.resolve(expandHome(nextConfig.vaultRoot)) : current.vaultRoot,
       recentProjects: Array.isArray(nextConfig.recentProjects) ? nextConfig.recentProjects : current.recentProjects,
       projects: Array.isArray(nextConfig.projects) ? normalizeProjectRecords(nextConfig.projects) : current.projects,
+      customTargets: nextConfig.customTargets !== undefined
+        ? normalizeCustomTargets(nextConfig.customTargets)
+        : current.customTargets,
     };
     await writeJson(configPath, merged);
     return readConfig();
@@ -142,7 +233,7 @@ function createManager(options = {}) {
     await addRecentProject(selectedProject).catch(() => undefined);
 
     const skills = await discoverSkills(config.vaultRoot);
-    const targets = buildTargets(selectedProject, homeDir);
+    const targets = buildTargets(selectedProject, homeDir, config.customTargets);
     const targetStates = await Promise.all(targets.map((target) => inspectTarget(target, skills, config.vaultRoot)));
     const discovery = await discoverSources(selectedProject, {
       homeDir,
@@ -164,6 +255,7 @@ function createManager(options = {}) {
       recentProjects: (await readConfig()).recentProjects,
       projects: (await readConfig()).projects,
       skills,
+      customTargets: config.customTargets,
       targets: targetStates,
       summary: {
         skillCount: skills.length,
@@ -186,7 +278,7 @@ function createManager(options = {}) {
       throw new Error(`Unknown skill: ${skillId}`);
     }
 
-    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), homeDir).find((item) => item.id === targetId);
+    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), homeDir, config.customTargets).find((item) => item.id === targetId);
     if (!target) {
       throw new Error(`Unknown target: ${targetId}`);
     }
@@ -202,7 +294,7 @@ function createManager(options = {}) {
 
   async function bulkToggleSkills({ projectPath, targetId, skillIds, mode }) {
     const config = await readConfig();
-    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), homeDir).find((item) => item.id === targetId);
+    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), homeDir, config.customTargets).find((item) => item.id === targetId);
     if (!target) {
       throw new Error(`Unknown target: ${targetId}`);
     }
@@ -372,7 +464,7 @@ function createManager(options = {}) {
     const config = await readConfig();
     await ensureDir(config.vaultRoot);
     const result = await importSource(config, sourcePath, projectPath, { requireExists: true });
-    const enableResult = await enableImportedSkills(config.vaultRoot, result.imported, projectPath, targetId, homeDir);
+    const enableResult = await enableImportedSkills(config.vaultRoot, result.imported, projectPath, targetId, homeDir, config.customTargets);
     return {
       ...result,
       enabled: enableResult.enabled,
@@ -453,12 +545,12 @@ function createManager(options = {}) {
     return { imported, skipped };
   }
 
-  async function enableImportedSkills(vaultRoot, imported, projectPath, targetId, targetHomeDir = os.homedir()) {
+  async function enableImportedSkills(vaultRoot, imported, projectPath, targetId, targetHomeDir = os.homedir(), customTargets = []) {
     if (!targetId || targetId === "vault") {
       return { enabled: [], errors: [] };
     }
 
-    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), targetHomeDir).find((item) => item.id === targetId);
+    const target = buildTargets(normalizeProjectPath(projectPath || process.cwd()), targetHomeDir, customTargets).find((item) => item.id === targetId);
     if (!target) {
       throw new Error(`Unknown target: ${targetId}`);
     }
@@ -753,19 +845,37 @@ function inferTags(text) {
   return tags.length ? tags.slice(0, 3) : ["General"];
 }
 
-function buildTargets(projectPath, homeDir = os.homedir()) {
+function buildTargets(projectPath, homeDir = os.homedir(), customTargets = []) {
   const home = homeDir;
   const globals = HARNESS_TARGETS.map((target) => ({
     ...target,
     path: path.join(home, ...target.pathParts),
+    custom: false,
   }));
 
   const projectTargets = PROJECT_TARGETS.map((target) => ({
     ...target,
     path: path.join(projectPath, ...target.pathParts),
+    custom: false,
   }));
 
-  return [...globals, ...projectTargets];
+  const customs = (customTargets || []).map((target) => {
+    const resolvedPath = target.scope === "global"
+      ? target.path
+      : path.join(projectPath, target.relativePath);
+    const shortLabel = target.shortLabel || target.label;
+    return {
+      id: target.id,
+      label: target.label,
+      harness: target.harness || "Custom",
+      scope: target.scope,
+      shortLabel,
+      path: resolvedPath,
+      custom: true,
+    };
+  });
+
+  return [...globals, ...projectTargets, ...customs];
 }
 
 async function inspectTarget(target, skills, vaultRoot) {

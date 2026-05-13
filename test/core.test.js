@@ -428,6 +428,141 @@ test("bulk deletes selected skills from vault and removes managed links", async 
   assert.equal(state.targets.find((item) => item.id === "agents-project").enabledSkillIds.length, 0);
 });
 
+test("persists custom targets and resolves global-absolute and project-relative paths", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-custom-targets-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+  const cursorRules = path.join(root, "cursor-rules");
+
+  await manager.writeConfig({
+    vaultRoot: vault,
+    recentProjects: [],
+    customTargets: [
+      {
+        id: "cursor-global",
+        label: "Cursor global",
+        harness: "Cursor",
+        scope: "global",
+        path: cursorRules,
+      },
+      {
+        id: "team-rules",
+        label: "Team rules",
+        harness: "Team",
+        scope: "project",
+        relativePath: ".team/rules",
+      },
+    ],
+  });
+
+  const config = await manager.readConfig();
+  assert.equal(config.customTargets.length, 2);
+  assert.equal(config.customTargets[0].id, "cursor-global");
+
+  await fs.mkdir(project, { recursive: true });
+  const state = await manager.getState(project);
+  const cursorTarget = state.targets.find((target) => target.id === "cursor-global");
+  const teamTarget = state.targets.find((target) => target.id === "team-rules");
+  assert.ok(cursorTarget, "custom global target should be in state.targets");
+  assert.ok(teamTarget, "custom project target should be in state.targets");
+  assert.equal(cursorTarget.path, cursorRules);
+  assert.equal(cursorTarget.scope, "global");
+  assert.equal(cursorTarget.custom, true);
+  assert.equal(teamTarget.path, path.join(project, ".team", "rules"));
+  assert.equal(teamTarget.scope, "project");
+});
+
+test("enables and disables a skill through a custom target at an arbitrary path", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-custom-toggle-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+  const cursorRules = path.join(root, "cursor-rules");
+
+  await manager.writeConfig({
+    vaultRoot: vault,
+    recentProjects: [],
+    customTargets: [
+      {
+        id: "cursor-global",
+        label: "Cursor global",
+        harness: "Cursor",
+        scope: "global",
+        path: cursorRules,
+      },
+      {
+        id: "team-rules",
+        label: "Team rules",
+        harness: "Team",
+        scope: "project",
+        relativePath: ".team/rules",
+      },
+    ],
+  });
+
+  await writeSkill(path.join(vault, "swiftui-patterns"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await fs.mkdir(project, { recursive: true });
+
+  let state = await manager.getState(project);
+  const skill = state.skills[0];
+
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "cursor-global",
+    skillId: skill.id,
+    enabled: true,
+  });
+  const globalLink = path.join(cursorRules, skill.linkName);
+  assert.equal((await fs.lstat(globalLink)).isSymbolicLink(), true);
+  assert.equal(await fs.realpath(globalLink), skill.realPath);
+
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "team-rules",
+    skillId: skill.id,
+    enabled: true,
+  });
+  const projectLink = path.join(project, ".team", "rules", skill.linkName);
+  assert.equal((await fs.lstat(projectLink)).isSymbolicLink(), true);
+
+  state = await manager.getState(project);
+  assert.equal(state.targets.find((t) => t.id === "cursor-global").skillStatuses[skill.id].enabled, true);
+  assert.equal(state.targets.find((t) => t.id === "team-rules").skillStatuses[skill.id].enabled, true);
+
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "cursor-global",
+    skillId: skill.id,
+    enabled: false,
+  });
+  await assert.rejects(fs.lstat(globalLink), /ENOENT/);
+});
+
+test("rejects custom targets with invalid scope/path combinations", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-custom-invalid-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+
+  await assert.rejects(
+    manager.writeConfig({
+      customTargets: [{ id: "bad", label: "Bad", scope: "global", relativePath: "foo" }],
+    }),
+    /global.*absolute|absolute.*path/i,
+  );
+  await assert.rejects(
+    manager.writeConfig({
+      customTargets: [{ id: "bad", label: "Bad", scope: "project", path: "/abs/path" }],
+    }),
+    /project.*relative|relative.*path/i,
+  );
+  await assert.rejects(
+    manager.writeConfig({
+      customTargets: [{ label: "No id", scope: "global", path: "/abs" }],
+    }),
+    /id/i,
+  );
+});
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");

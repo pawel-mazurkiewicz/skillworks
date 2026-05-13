@@ -55,6 +55,13 @@ const elements = {
   addProjectButton: document.querySelector("#addProjectButton"),
   scanProjectsButton: document.querySelector("#scanProjectsButton"),
   projectList: document.querySelector("#projectList"),
+  customTargetForm: document.querySelector("#customTargetForm"),
+  customTargetId: document.querySelector("#customTargetId"),
+  customTargetLabel: document.querySelector("#customTargetLabel"),
+  customTargetHarness: document.querySelector("#customTargetHarness"),
+  customTargetScope: document.querySelector("#customTargetScope"),
+  customTargetPath: document.querySelector("#customTargetPath"),
+  customTargetList: document.querySelector("#customTargetList"),
   tagFilters: document.querySelector("#tagFilters"),
   targetStrip: document.querySelector("#targetStrip"),
   matrixHead: document.querySelector("#matrixHead"),
@@ -214,6 +221,18 @@ async function bootstrap() {
   elements.addProjectButton.addEventListener("click", () => addProject());
   elements.scanProjectsButton.addEventListener("click", () => scanProjects());
 
+  const updateCustomTargetPlaceholder = () => {
+    elements.customTargetPath.placeholder = elements.customTargetScope.value === "global"
+      ? "/abs/path (e.g. ~/.cursor/rules)"
+      : ".relative/path (e.g. .myrules/skills)";
+  };
+  updateCustomTargetPlaceholder();
+  elements.customTargetScope.addEventListener("change", updateCustomTargetPlaceholder);
+  elements.customTargetForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addCustomTarget();
+  });
+
   elements.copyPathButton.addEventListener("click", () => runAction(async () => {
     const skill = selectedSkill();
     if (!skill) {
@@ -318,6 +337,7 @@ function render() {
 
   renderImports();
   renderProjects();
+  renderCustomTargets();
   renderDiscovery();
   renderInstallTargets();
   renderBulkTargets();
@@ -365,6 +385,109 @@ function renderProjects() {
   });
 }
 
+function renderCustomTargets() {
+  const customs = state.data.customTargets || [];
+  if (!customs.length) {
+    elements.customTargetList.innerHTML = `<p class="empty-copy">No custom targets yet.</p>`;
+    return;
+  }
+
+  elements.customTargetList.innerHTML = customs
+    .map((target) => {
+      const locator = target.scope === "global"
+        ? escapeHtml(target.path || "")
+        : escapeHtml(target.relativePath || "");
+      return `
+        <article class="project-item">
+          <div class="project-item-head">
+            <div>
+              <strong>${escapeHtml(target.label)}</strong>
+              <span>${escapeHtml(target.scope)} / ${escapeHtml(target.harness || "Custom")} / id: ${escapeHtml(target.id)}</span>
+            </div>
+            <button class="button ghost" type="button" data-remove-custom-target="${escapeHtml(target.id)}">Remove</button>
+          </div>
+          <div class="project-path">${locator}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  elements.customTargetList.querySelectorAll("[data-remove-custom-target]").forEach((button) => {
+    button.addEventListener("click", () => removeCustomTarget(button.dataset.removeCustomTarget));
+  });
+}
+
+async function addCustomTarget() {
+  await runAction(async () => {
+    const id = elements.customTargetId.value.trim();
+    const label = elements.customTargetLabel.value.trim();
+    const harness = elements.customTargetHarness.value.trim();
+    const scope = elements.customTargetScope.value;
+    const rawPath = elements.customTargetPath.value.trim();
+    if (!id) {
+      showToast("Custom target id is required");
+      return;
+    }
+    if (!rawPath) {
+      showToast(scope === "global" ? "Absolute path is required" : "Relative path is required");
+      return;
+    }
+
+    const existing = state.data?.customTargets || [];
+    if (existing.some((target) => target.id === id)) {
+      showToast(`Custom target id already exists: ${id}`);
+      return;
+    }
+
+    const entry = { id, label: label || id, scope };
+    if (harness) entry.harness = harness;
+    if (scope === "global") {
+      entry.path = rawPath;
+    } else {
+      entry.relativePath = rawPath;
+    }
+
+    const nextCustomTargets = [...existing, entry];
+    const result = await api("/api/config", {
+      method: "POST",
+      body: {
+        vaultRoot: state.data?.vaultRoot,
+        recentProjects: state.data?.recentProjects || [],
+        projects: state.data?.projects || readCachedProjects(),
+        customTargets: nextCustomTargets,
+      },
+    });
+    // /api/config returns the persisted config, not full state. Reload state.
+    void result;
+    elements.customTargetId.value = "";
+    elements.customTargetLabel.value = "";
+    elements.customTargetHarness.value = "";
+    elements.customTargetPath.value = "";
+    await loadState();
+    showToast("Custom target added");
+  });
+}
+
+async function removeCustomTarget(id) {
+  await runAction(async () => {
+    const existing = state.data?.customTargets || [];
+    const nextCustomTargets = existing.filter((target) => target.id !== id);
+    if (nextCustomTargets.length === existing.length) {
+      return;
+    }
+    await api("/api/config", {
+      method: "POST",
+      body: {
+        vaultRoot: state.data?.vaultRoot,
+        recentProjects: state.data?.recentProjects || [],
+        projects: state.data?.projects || readCachedProjects(),
+        customTargets: nextCustomTargets,
+      },
+    });
+    await loadState();
+    showToast("Custom target removed");
+  });
+}
 
 function renderImports() {
   const options = state.data.suggestedImports.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`);
