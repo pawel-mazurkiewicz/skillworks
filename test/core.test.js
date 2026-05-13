@@ -907,6 +907,46 @@ test("creates a global set and a project-local set and getSet returns them", asy
   );
 });
 
+test("updates and deletes sets in both scopes", async () => {
+  const env = await makeEnv();
+  const manager = createManager({ appHome: env.appHome });
+
+  const g = (await manager.createSet({
+    name: "G",
+    scope: "global",
+    entries: [{ skillName: "alpha", targetKey: "claude-global" }],
+  })).set;
+  const p = (await manager.createSet({
+    name: "P",
+    scope: "project",
+    projectPath: env.project,
+    entries: [{ skillName: "beta", targetKey: "claude-project" }],
+  })).set;
+
+  const updated = await manager.updateSet(g.id, {
+    name: "G renamed",
+    entries: [
+      { skillName: "alpha", targetKey: "claude-global" },
+      { skillName: "gamma", targetKey: "codex-global" },
+    ],
+  }, { projectPath: env.project });
+  assert.equal(updated.set.name, "G renamed");
+  assert.equal(updated.set.entries.length, 2);
+  assert.notEqual(updated.set.updatedAt, g.updatedAt);
+  assert.equal(updated.set.createdAt, g.createdAt);
+
+  await manager.deleteSet(p.id, { projectPath: env.project });
+  const after = await manager.listSets({ projectPath: env.project });
+  assert.equal(after.project.length, 0);
+  assert.equal(after.global.length, 1);
+  assert.equal(after.global[0].name, "G renamed");
+
+  await assert.rejects(
+    () => manager.updateSet("set_missing", { name: "x" }, { projectPath: env.project }),
+    /Unknown set/,
+  );
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
