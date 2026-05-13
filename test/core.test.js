@@ -947,6 +947,37 @@ test("updates and deletes sets in both scopes", async () => {
   );
 });
 
+test("planApplySet computes toEnable/toDisable/missing per touched target only", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+  await writeSkill(path.join(env.vault, "beta"), "beta", "beta desc");
+  await writeSkill(path.join(env.vault, "gamma"), "gamma", "gamma desc");
+
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+
+  await manager.toggleSkill({ projectPath: env.project, targetId: "claude-global", skillId: "alpha", enabled: true });
+  await manager.toggleSkill({ projectPath: env.project, targetId: "codex-global", skillId: "gamma", enabled: true });
+
+  const created = await manager.createSet({
+    name: "S",
+    scope: "global",
+    entries: [
+      { skillName: "alpha", targetKey: "claude-global" },     // already enabled
+      { skillName: "beta",  targetKey: "claude-global" },     // toEnable
+      { skillName: "ghost", targetKey: "claude-global" },     // missing
+    ],
+  });
+
+  const plan = await manager.planApplySet(created.set.id, { projectPath: env.project });
+  const claude = plan.targets.find((t) => t.targetId === "claude-global");
+  assert.deepEqual(claude.toEnable, ["beta"]);
+  assert.deepEqual(claude.toDisable, []);
+  assert.deepEqual(claude.missing, ["ghost"]);
+
+  // codex-global is untouched
+  assert.equal(plan.targets.find((t) => t.targetId === "codex-global"), undefined);
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
