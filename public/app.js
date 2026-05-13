@@ -1774,10 +1774,10 @@ function openSnapshotModal() {
   const existing = document.querySelector("dialog[data-snapshot-modal]");
   if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
-  const dialog = makeEl("dialog", { class: "snapshot-modal", dataset: { snapshotModal: "true" } });
+  const dialog = makeEl("dialog", { class: "snapshot-modal", "aria-labelledby": "sets-snapshot-title", dataset: { snapshotModal: "true" } });
   const form = makeEl("form", { class: "snapshot-form", method: "dialog" });
 
-  form.appendChild(makeEl("h3", { class: "snapshot-title" }, "Snapshot current state"));
+  form.appendChild(makeEl("h3", { id: "sets-snapshot-title", class: "snapshot-title" }, "Snapshot current state"));
 
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -1790,6 +1790,7 @@ function openSnapshotModal() {
     value: defaultName,
     required: "true",
     autocomplete: "off",
+    autofocus: "true",
   });
   nameField.appendChild(nameInput);
   form.appendChild(nameField);
