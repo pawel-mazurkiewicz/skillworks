@@ -870,6 +870,43 @@ test("lists global sets from config.json and project-local sets from sets.json",
   assert.equal(result.project[0].id, "set_p1");
 });
 
+test("creates a global set and a project-local set and getSet returns them", async () => {
+  const env = await makeEnv();
+  const manager = createManager({ appHome: env.appHome });
+
+  const g = await manager.createSet({
+    name: "Global mode",
+    scope: "global",
+    entries: [{ skillName: "alpha", targetKey: "claude-global" }],
+  });
+  assert.ok(g.set.id.startsWith("set_"));
+  assert.equal(g.set.scope, "global");
+  assert.equal(g.set.entries.length, 1);
+
+  const p = await manager.createSet({
+    name: "Project mode",
+    scope: "project",
+    projectPath: env.project,
+    entries: [
+      { skillName: "beta", targetKey: "claude-project" },
+      { skillName: "beta", targetKey: "claude-project" }, // duplicate dropped
+    ],
+  });
+  assert.equal(p.set.scope, "project");
+  assert.equal(p.set.entries.length, 1);
+
+  const fetchedG = await manager.getSet(g.set.id, { projectPath: env.project });
+  assert.equal(fetchedG.name, "Global mode");
+
+  const fetchedP = await manager.getSet(p.set.id, { projectPath: env.project });
+  assert.equal(fetchedP.name, "Project mode");
+
+  await assert.rejects(
+    () => manager.getSet("set_missing", { projectPath: env.project }),
+    /Unknown set/,
+  );
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
