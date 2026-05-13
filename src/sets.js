@@ -63,7 +63,7 @@ async function readProjectSets(projectPath) {
 async function writeProjectSets(projectPath, sets) {
   const filePath = projectSetsPath(projectPath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = filePath + ".tmp";
+  const tmp = `${filePath}.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify({ sets }, null, 2), "utf8");
   await fs.rename(tmp, filePath);
 }
