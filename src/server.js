@@ -188,6 +188,75 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/sets") {
+    const projectPath = url.searchParams.get("project") || initialProject;
+    sendJson(response, 200, await manager.listSets({ projectPath }));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sets") {
+    const body = await readJsonBody(request);
+    const result = await manager.createSet({
+      name: body.name,
+      scope: body.scope,
+      projectPath: body.projectPath || (body.scope === "project" ? initialProject : undefined),
+      entries: body.entries,
+    });
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sets/snapshot") {
+    const body = await readJsonBody(request);
+    const result = await manager.snapshotSet({
+      name: body.name,
+      scope: body.scope,
+      projectPath: body.projectPath || (body.scope === "project" ? initialProject : undefined),
+      targetKeys: body.targetKeys,
+    });
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/projects/pinned-sets") {
+    const body = await readJsonBody(request);
+    const result = await manager.setProjectPinnedSets(body.projectPath || initialProject, body.setIds || []);
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname.match(/^\/api\/sets\/[^/]+\/plan$/)) {
+    const id = url.pathname.split("/")[3];
+    const body = await readJsonBody(request);
+    const plan = await manager.planApplySet(id, { projectPath: body.projectPath || initialProject });
+    sendJson(response, 200, plan);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname.match(/^\/api\/sets\/[^/]+\/apply$/)) {
+    const id = url.pathname.split("/")[3];
+    const body = await readJsonBody(request);
+    const result = await manager.applySet(id, { projectPath: body.projectPath || initialProject });
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/sets/")) {
+    const id = url.pathname.slice("/api/sets/".length);
+    const body = await readJsonBody(request);
+    const result = await manager.updateSet(id, body, { projectPath: body.projectPath || initialProject });
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/sets/")) {
+    const id = url.pathname.slice("/api/sets/".length);
+    const projectPath = url.searchParams.get("project") || initialProject;
+    const result = await manager.deleteSet(id, { projectPath });
+    sendJson(response, 200, result);
+    return;
+  }
+
   sendJson(response, 404, { error: "Unknown API route" });
 }
 
