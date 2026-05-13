@@ -633,6 +633,62 @@ test("install with no targets is vault-only", async () => {
   assert.equal(vaultOnly.enabled.length, 0);
 });
 
+test("previewInstall reports planned vault moves and per-target links without changing the disk", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-preview-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+  const cursorRules = path.join(root, "cursor-rules");
+
+  await manager.writeConfig({
+    vaultRoot: vault,
+    recentProjects: [],
+    customTargets: [
+      { id: "cursor-global", label: "Cursor global", scope: "global", path: cursorRules },
+    ],
+  });
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await writeSkill(path.join(source, "react-ui"), "React UI Patterns", "Use for React frontend work.");
+
+  const plan = await manager.previewInstall(source, project, {
+    targetIds: ["agents-project", "cursor-global"],
+  });
+
+  assert.equal(plan.candidates.length, 2);
+  const swiftui = plan.candidates.find((c) => c.name === "SwiftUI Patterns");
+  assert.ok(swiftui, "expected swiftui candidate");
+  assert.equal(swiftui.action, "move");
+  assert.equal(path.dirname(swiftui.vaultDestination), vault);
+  assert.equal(swiftui.willDedupe, false);
+  const swiftuiTargets = swiftui.targetLinks.map((link) => link.targetId).sort();
+  assert.deepEqual(swiftuiTargets, ["agents-project", "cursor-global"]);
+  assert.ok(swiftui.targetLinks.every((link) => link.linkPath && link.linkName));
+
+  // Nothing was actually moved
+  assert.equal(await fileExists(path.join(source, "swiftui", "SKILL.md")), true);
+  assert.equal(await fileExists(vault), false);
+});
+
+test("previewInstall marks duplicate skills as dedupe and points to the existing vault entry", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-preview-dedupe-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const source = path.join(root, "repo");
+  const project = path.join(root, "project");
+
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+  await writeSkill(path.join(vault, "swiftui-patterns"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+  await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
+
+  const plan = await manager.previewInstall(source, project, { targetIds: ["agents-project"] });
+  assert.equal(plan.candidates.length, 1);
+  const candidate = plan.candidates[0];
+  assert.equal(candidate.willDedupe, true);
+  assert.equal(candidate.action, "dedupe");
+  assert.equal(candidate.vaultDestination, path.join(vault, "swiftui-patterns"));
+});
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");

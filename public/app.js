@@ -38,6 +38,8 @@ const elements = {
   gitRepoInput: document.querySelector("#gitRepoInput"),
   gitRefInput: document.querySelector("#gitRefInput"),
   gitTargetCheckboxes: document.querySelector("#gitTargetCheckboxes"),
+  gitPreviewButton: document.querySelector("#gitPreviewButton"),
+  gitPreviewResult: document.querySelector("#gitPreviewResult"),
   searchInput: document.querySelector("#searchInput"),
   bulkSelectedCount: document.querySelector("#bulkSelectedCount"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
@@ -175,6 +177,28 @@ async function bootstrap() {
       showToast("Skill created");
     });
   });
+
+  elements.gitPreviewButton.addEventListener("click", () => runAction(async () => {
+    const repoUrl = elements.gitRepoInput.value.trim();
+    if (!repoUrl) {
+      showToast("Git URL is required");
+      return;
+    }
+    const targetIds = Array.from(
+      elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+    ).map((input) => input.value);
+    const plan = await api("/api/install-git/preview", {
+      method: "POST",
+      body: {
+        repoUrl,
+        ref: elements.gitRefInput.value.trim(),
+        targetIds,
+        projectPath: elements.projectInput.value,
+      },
+    });
+    renderInstallPreview(plan);
+    showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
+  }));
 
   elements.gitInstallForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -555,6 +579,51 @@ function renderInstallTargets() {
     .join("");
   elements.gitTargetCheckboxes.innerHTML =
     `<legend>Install to (vault by default; pick any extra targets)</legend>${items}`;
+}
+
+function renderInstallPreview(plan) {
+  if (!plan || !Array.isArray(plan.candidates)) {
+    elements.gitPreviewResult.hidden = true;
+    elements.gitPreviewResult.innerHTML = "";
+    return;
+  }
+
+  const summary = plan.summary;
+  const rows = plan.candidates
+    .map((candidate) => {
+      const actionLabel = candidate.action === "move"
+        ? `Move to <code>${escapeHtml(candidate.vaultDestination)}</code>`
+        : candidate.action === "dedupe"
+          ? `Dedupe against <code>${escapeHtml(candidate.vaultDestination)}</code>`
+          : `Skip: ${escapeHtml(candidate.skipReason || "")}`;
+      const links = candidate.targetLinks
+        .map((link) => `<li>${escapeHtml(link.targetLabel)} &rarr; <code>${escapeHtml(link.linkPath)}</code></li>`)
+        .join("");
+      return `
+        <article class="preview-item">
+          <header>
+            <strong>${escapeHtml(candidate.name)}</strong>
+            <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${escapeHtml(candidate.action)}</span>
+          </header>
+          <div class="preview-detail">${actionLabel}</div>
+          <div class="preview-source">From: <code>${escapeHtml(candidate.sourcePath)}</code></div>
+          ${links ? `<ul class="preview-links">${links}</ul>` : `<p class="empty-copy">No target links.</p>`}
+        </article>
+      `;
+    })
+    .join("");
+
+  elements.gitPreviewResult.hidden = false;
+  elements.gitPreviewResult.innerHTML = `
+    <div class="preview-summary">
+      <strong>Plan:</strong>
+      <span>${summary.candidates} candidate${summary.candidates === 1 ? "" : "s"}</span>
+      <span>${summary.toMove} move</span>
+      <span>${summary.toDedupe} dedupe</span>
+      <span>${summary.toSkip} skip</span>
+    </div>
+    <div class="preview-list">${rows || `<p class="empty-copy">No skills discovered.</p>`}</div>
+  `;
 }
 
 function renderBulkTargets() {

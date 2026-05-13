@@ -495,6 +495,114 @@ function createManager(options = {}) {
     };
   }
 
+
+  async function previewInstall(sourcePath, projectPath = process.cwd(), targetSelector = "vault") {
+    const config = await readConfig();
+    const source = path.resolve(expandHome(sourcePath));
+    if (!(await pathExists(source))) {
+      throw new Error(`Preview path does not exist: ${source}`);
+    }
+    const targetIds = resolveInstallTargetIds(targetSelector);
+    const allTargets = buildTargets(normalizeProjectPath(projectPath || process.cwd()), homeDir, config.customTargets);
+    const targetsById = new Map(allTargets.map((target) => [target.id, target]));
+    const targets = [];
+    for (const id of targetIds) {
+      const target = targetsById.get(id);
+      if (!target) {
+        throw new Error(`Unknown target: ${id}`);
+      }
+      targets.push(target);
+    }
+
+    const candidates = await findImportCandidates(source);
+    const usedDestinationBases = new Set();
+    const usedLinkNames = new Set();
+    const plan = [];
+    for (const candidate of candidates) {
+      const desiredName = candidate.metadata.name || path.basename(candidate.entryPath);
+      const linkBase = safeSegment(desiredName);
+      let linkName = linkBase;
+      if (usedLinkNames.has(linkName)) {
+        linkName = `${linkBase}-${shortHash(candidate.realPath)}`;
+      }
+      usedLinkNames.add(linkName);
+
+      let action = "move";
+      let vaultDestination = "";
+      let willDedupe = false;
+      let skipReason = "";
+
+      if (isInsidePath(candidate.realPath, config.vaultRoot)) {
+        action = "skip";
+        skipReason = "Already in vault";
+        vaultDestination = candidate.realPath;
+      } else if (isInsidePath(config.vaultRoot, candidate.realPath)) {
+        action = "skip";
+        skipReason = "Refusing to move a skill into its own child directory";
+      } else {
+        const existingDestination = await findDuplicateVaultSkill(config.vaultRoot, candidate);
+        if (existingDestination) {
+          action = "dedupe";
+          willDedupe = true;
+          vaultDestination = existingDestination;
+        } else {
+          const baseName = safeSegment(desiredName);
+          let base = baseName;
+          let index = 2;
+          while (
+            usedDestinationBases.has(base) ||
+            (await exists(path.join(config.vaultRoot, base)))
+          ) {
+            base = `${baseName}-${index}`;
+            index += 1;
+          }
+          usedDestinationBases.add(base);
+          vaultDestination = path.join(config.vaultRoot, base);
+        }
+      }
+
+      const targetLinks = action === "skip"
+        ? []
+        : targets.map((target) => ({
+            targetId: target.id,
+            targetLabel: target.label,
+            scope: target.scope,
+            linkName,
+            linkPath: path.join(target.path, linkName),
+          }));
+
+      plan.push({
+        name: desiredName,
+        sourcePath: candidate.entryPath,
+        realSourcePath: candidate.realPath,
+        kind: candidate.kind,
+        action,
+        skipReason,
+        willDedupe,
+        vaultDestination,
+        linkName,
+        targetLinks,
+      });
+    }
+
+    return {
+      vaultRoot: config.vaultRoot,
+      candidates: plan,
+      targets: targets.map((target) => ({
+        id: target.id,
+        label: target.label,
+        scope: target.scope,
+        path: target.path,
+      })),
+      summary: {
+        candidates: plan.length,
+        toMove: plan.filter((p) => p.action === "move").length,
+        toDedupe: plan.filter((p) => p.action === "dedupe").length,
+        toSkip: plan.filter((p) => p.action === "skip").length,
+      },
+    };
+  }
+
   async function importSource(config, sourcePath, projectPath, options) {
     const source = path.resolve(expandHome(sourcePath));
     if (options.requireExists && !(await pathExists(source))) {
@@ -690,6 +798,7 @@ function createManager(options = {}) {
     importSkills,
     importPaths,
     installSkills,
+    previewInstall,
     createSkill,
     readSkillFile,
   };

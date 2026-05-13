@@ -133,6 +133,20 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/install-git/preview") {
+    const body = await readJsonBody(request);
+    const projectPath = body.projectPath || initialProject;
+    const plan = await previewGitInstall({
+      repoUrl: body.repoUrl,
+      ref: body.ref,
+      targetIds: Array.isArray(body.targetIds) ? body.targetIds : undefined,
+      targetId: typeof body.targetId === "string" ? body.targetId : undefined,
+      projectPath,
+    });
+    sendJson(response, 200, plan);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/install-git") {
     const body = await readJsonBody(request);
     const projectPath = body.projectPath || initialProject;
@@ -296,6 +310,36 @@ async function installFromGit({ repoUrl, ref, targetIds, targetId, projectPath }
         enabled: result.enabled.length,
         errors: result.errors.length,
       },
+    };
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+
+async function previewGitInstall({ repoUrl, ref, targetIds, targetId, projectPath }) {
+  const source = parseGitSource(repoUrl, ref);
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-skill-manager-git-preview-"));
+  const clonePath = path.join(tempRoot, "repo");
+
+  try {
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (source.ref) {
+      cloneArgs.push("--branch", source.ref);
+    }
+    cloneArgs.push(source.repoUrl, clonePath);
+    await execFileAsync("git", cloneArgs, { timeout: 120000 });
+
+    const installRoot = source.subdir ? path.join(clonePath, source.subdir) : clonePath;
+    const selector = Array.isArray(targetIds)
+      ? { targetIds }
+      : targetId !== undefined
+        ? { targetId }
+        : "vault";
+    const plan = await manager.previewInstall(installRoot, projectPath, selector);
+    return {
+      source: { repoUrl: source.repoUrl, ref: source.ref || "", subdir: source.subdir || "" },
+      ...plan,
     };
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);

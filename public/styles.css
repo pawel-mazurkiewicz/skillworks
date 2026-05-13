@@ -867,3 +867,76 @@ dd {
   display: grid;
   gap: 8px;
 }
+
+.install-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.preview-summary strong {
+  color: inherit;
+}
+
+.preview-list {
+  display: grid;
+  gap: 8px;
+}
+
+.preview-item {
+  border: 1px solid var(--panel-border, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.preview-item header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.preview-action {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.preview-action-move {
+  background: rgba(46, 160, 67, 0.18);
+}
+
+.preview-action-dedupe {
+  background: rgba(255, 184, 0, 0.2);
+}
+
+.preview-action-skip {
+  background: rgba(150, 150, 150, 0.2);
+}
+
+.preview-detail,
+.preview-source {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.preview-links {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}

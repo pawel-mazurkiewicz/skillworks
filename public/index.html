@@ -148,8 +148,12 @@
                 <fieldset class="target-checkboxes" id="gitTargetCheckboxes">
                   <legend>Install to (vault by default; pick any extra targets)</legend>
                 </fieldset>
-                <button class="button primary" type="submit">Clone and install</button>
+                <div class="button-row">
+                  <button class="button" id="gitPreviewButton" type="button">Preview</button>
+                  <button class="button primary" type="submit">Clone and install</button>
+                </div>
               </form>
+              <div class="install-preview" id="gitPreviewResult" hidden></div>
             </section>
           </div>
         </aside>
