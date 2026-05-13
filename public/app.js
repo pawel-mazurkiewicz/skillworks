@@ -2059,31 +2059,36 @@ document.addEventListener("click", async (event) => {
   }
 
   if (action === "apply-confirm" && pendingApplySetId) {
-    const setId = pendingApplySetId;
-    await runAction(async () => {
-      const projectPath = (state.data && state.data.project && state.data.project.path) || "";
-      const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/apply`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectPath }),
+    t.disabled = true;
+    try {
+      const setId = pendingApplySetId;
+      await runAction(async () => {
+        const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+        const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/apply`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectPath }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showToast(result.error || "Apply failed");
+          return;
+        }
+        applyState(result.state);
+        lastAppliedSet = {
+          id: setId,
+          name: (result.plan && result.plan.name) || "",
+          touchedTargets: ((result.plan && result.plan.targets) || []).map((tt) => tt.targetId),
+          modified: false,
+        };
+        closeApplyModal();
+        render();
+        const warnings = (result.warnings || []).length;
+        showToast(warnings ? `Applied with ${warnings} warning${warnings === 1 ? "" : "s"}` : "Set applied");
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        showToast(result.error || "Apply failed");
-        return;
-      }
-      applyState(result.state);
-      lastAppliedSet = {
-        id: setId,
-        name: (result.plan && result.plan.name) || "",
-        touchedTargets: ((result.plan && result.plan.targets) || []).map((tt) => tt.targetId),
-        modified: false,
-      };
-      closeApplyModal();
-      render();
-      const warnings = (result.warnings || []).length;
-      showToast(warnings ? `Applied with ${warnings} warning${warnings === 1 ? "" : "s"}` : "Set applied");
-    });
+    } finally {
+      t.disabled = false;
+    }
     return;
   }
 
