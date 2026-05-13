@@ -817,6 +817,131 @@ function createManager(options = {}) {
     };
   }
 
+  async function findVaultDuplicates() {
+    const config = await readConfig();
+    const skills = await discoverSkills(config.vaultRoot);
+    const groupsByHash = new Map();
+
+    for (const skill of skills) {
+      const skillFile = path.join(skill.path, SKILL_FILE);
+      const content = await fs.readFile(skillFile, "utf8").catch(() => "");
+      if (!content) {
+        continue;
+      }
+      const hash = crypto.createHash("sha256").update(content).digest("hex");
+      const stat = await fs.stat(skillFile).catch(() => null);
+      const mtimeMs = stat ? stat.mtimeMs : 0;
+      const bytes = stat ? stat.size : Buffer.byteLength(content);
+      if (!groupsByHash.has(hash)) {
+        groupsByHash.set(hash, []);
+      }
+      groupsByHash.get(hash).push({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        path: skill.path,
+        relativePath: skill.relativePath,
+        mtimeMs,
+        bytes,
+      });
+    }
+
+    const groups = [];
+    for (const [hash, list] of groupsByHash) {
+      if (list.length < 2) {
+        continue;
+      }
+      list.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      groups.push({
+        hash,
+        suggestedKeeperId: list[0].id,
+        count: list.length,
+        skills: list,
+      });
+    }
+
+    groups.sort((a, b) => b.count - a.count || a.skills[0].name.localeCompare(b.skills[0].name));
+    return {
+      vaultRoot: config.vaultRoot,
+      groupCount: groups.length,
+      duplicateCount: groups.reduce((sum, group) => sum + group.count - 1, 0),
+      groups,
+    };
+  }
+
+  async function dedupeVaultSkills({ groups, projectPath }) {
+    const decisions = Array.isArray(groups) ? groups : [];
+    const config = await readConfig();
+    const allSkills = await discoverSkills(config.vaultRoot);
+    const byId = new Map(allSkills.map((skill) => [skill.id, skill]));
+    const targets = buildTargets(
+      normalizeProjectPath(projectPath || process.cwd()),
+      homeDir,
+      config.customTargets,
+    );
+    const targetsByPath = new Map(targets.map((target) => [target.path, target]));
+
+    const report = { merged: [], deleted: [], errors: [] };
+
+    for (const decision of decisions) {
+      const keeperId = decision.keeperId;
+      const removeIds = Array.isArray(decision.removeIds) ? decision.removeIds : [];
+      const keeper = byId.get(keeperId);
+      if (!keeper) {
+        report.errors.push({ keeperId, reason: "Keeper skill not found in vault" });
+        continue;
+      }
+
+      const transferredTargets = new Set();
+      for (const removeId of removeIds) {
+        if (removeId === keeperId) {
+          continue;
+        }
+        const dup = byId.get(removeId);
+        if (!dup) {
+          report.errors.push({ keeperId, removeId, reason: "Duplicate skill not found" });
+          continue;
+        }
+
+        try {
+          for (const target of targets) {
+            if (!(await exists(target.path))) {
+              continue;
+            }
+            const enabled = await isSkillEnabledInTarget(target, dup);
+            if (!enabled) {
+              continue;
+            }
+            const keeperEnabled = await isSkillEnabledInTarget(target, keeper);
+            if (!keeperEnabled) {
+              await enableSkill(target, keeper);
+              transferredTargets.add(target.path);
+            }
+            await disableSkill(target, dup);
+          }
+
+          await fs.rm(dup.path, { recursive: true, force: false });
+          report.deleted.push({ id: dup.id, name: dup.name, path: dup.path });
+        } catch (error) {
+          report.errors.push({
+            keeperId,
+            removeId,
+            reason: error.message || "Dedupe failed",
+          });
+        }
+      }
+
+      report.merged.push({
+        keeperId,
+        keeperName: keeper.name,
+        removed: removeIds.filter((id) => id !== keeperId),
+        transferredTargets: [...transferredTargets].map((p) => targetsByPath.get(p)?.id || p),
+      });
+    }
+
+    return { ...report, state: await getState(projectPath) };
+  }
+
   return {
     appHome,
     readConfig,
@@ -835,6 +960,8 @@ function createManager(options = {}) {
     previewInstall,
     createSkill,
     readSkillFile,
+    findVaultDuplicates,
+    dedupeVaultSkills,
   };
 }
 

@@ -760,6 +760,72 @@ test("installSkills with perSkillTargets routes each skill to its chosen targets
   );
 });
 
+test("findVaultDuplicates groups byte-identical SKILL.md files and suggests newest as keeper", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-dedupe-find-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+
+  await writeSkill(path.join(vault, "animate"), "animate", "Add animations");
+  await writeSkill(path.join(vault, "namespaced", "animate"), "animate", "Add animations");
+  await writeSkill(path.join(vault, "unique"), "unique", "Different skill");
+
+  const older = new Date(Date.now() - 60_000);
+  await fs.utimes(path.join(vault, "animate", "SKILL.md"), older, older);
+
+  const result = await manager.findVaultDuplicates();
+  assert.equal(result.groupCount, 1);
+  assert.equal(result.duplicateCount, 1);
+  const group = result.groups[0];
+  assert.equal(group.count, 2);
+  assert.equal(group.suggestedKeeperId, "namespaced/animate");
+  assert.deepEqual(
+    group.skills.map((s) => s.id).sort(),
+    ["animate", "namespaced/animate"],
+  );
+});
+
+test("dedupeVaultSkills deletes duplicates and repoints managed links to the keeper", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-dedupe-apply-"));
+  const manager = createManager({ appHome: path.join(root, "home", ".agent-skill-manager") });
+  const vault = path.join(root, "vault");
+  const project = path.join(root, "project");
+  await manager.writeConfig({ vaultRoot: vault, recentProjects: [] });
+
+  await writeSkill(path.join(vault, "harden"), "harden", "Improve resilience");
+  await writeSkill(path.join(vault, "plugin", "harden"), "harden", "Improve resilience");
+
+  let state = await manager.getState(project);
+  const dup = state.skills.find((s) => s.id === "harden");
+  const keeperFromState = state.skills.find((s) => s.id === "plugin/harden");
+  assert.ok(dup && keeperFromState);
+
+  await manager.toggleSkill({
+    projectPath: project,
+    targetId: "agents-project",
+    skillId: dup.id,
+    enabled: true,
+  });
+
+  const result = await manager.dedupeVaultSkills({
+    projectPath: project,
+    groups: [{ keeperId: "plugin/harden", removeIds: ["harden"] }],
+  });
+
+  assert.equal(result.deleted.length, 1);
+  assert.equal(result.deleted[0].id, "harden");
+  assert.equal(result.errors.length, 0);
+  assert.equal(await fileExists(path.join(vault, "harden", "SKILL.md")), false);
+  assert.equal(await fileExists(path.join(vault, "plugin", "harden", "SKILL.md")), true);
+
+  const projectTarget = result.state.targets.find((t) => t.id === "agents-project");
+  assert.deepEqual(projectTarget.enabledSkillIds, ["plugin/harden"]);
+  assert.equal(
+    (await fs.lstat(path.join(project, ".agents", "skills", keeperFromState.linkName))).isSymbolicLink(),
+    true,
+  );
+});
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");

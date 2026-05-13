@@ -5,15 +5,16 @@ const state = {
   selectedSkillId: null,
   selectedSkillIds: new Set(),
   activeTag: "All",
-  activeSideTab: "manage",
+  activeTopTab: "manage",
   search: "",
   preview: null,
+  dedupe: null,
+  dedupeChoices: new Map(),
 };
 
 const elements = {
-  sideTabs: document.querySelectorAll("[data-side-tab]"),
-  managePanel: document.querySelector("#managePanel"),
-  installPanel: document.querySelector("#installPanel"),
+  topTabs: document.querySelectorAll("[data-top-tab]"),
+  tabPanels: document.querySelectorAll("[data-top-tab-panel]"),
   pathForm: document.querySelector("#pathForm"),
   projectInput: document.querySelector("#projectInput"),
   browseProjectButton: document.querySelector("#browseProjectButton"),
@@ -80,17 +81,22 @@ const elements = {
   skillPreview: document.querySelector("#skillPreview"),
   copyPathButton: document.querySelector("#copyPathButton"),
   toast: document.querySelector("#toast"),
+  dedupeScanButton: document.querySelector("#dedupeScanButton"),
+  dedupeApplyButton: document.querySelector("#dedupeApplyButton"),
+  dedupeSummary: document.querySelector("#dedupeSummary"),
+  dedupeList: document.querySelector("#dedupeList"),
 };
 
 bootstrap();
 
 async function bootstrap() {
-  elements.sideTabs.forEach((button) => {
+  elements.topTabs.forEach((button) => {
     button.addEventListener("click", () => {
-      state.activeSideTab = button.dataset.sideTab;
-      renderSideTabs();
+      state.activeTopTab = button.dataset.topTab;
+      renderTopTabs();
     });
   });
+  renderTopTabs();
 
   elements.pathForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -255,6 +261,8 @@ async function bootstrap() {
   elements.bulkDeleteButton.addEventListener("click", () => bulkDelete());
   elements.addProjectButton.addEventListener("click", () => addProject());
   elements.scanProjectsButton.addEventListener("click", () => scanProjects());
+  elements.dedupeScanButton.addEventListener("click", () => scanDuplicates());
+  elements.dedupeApplyButton.addEventListener("click", () => applyDedupe());
 
   const updateCustomTargetPlaceholder = () => {
     elements.customTargetPath.placeholder = elements.customTargetScope.value === "global"
@@ -377,7 +385,7 @@ function render() {
   renderInstallTargets();
   renderBulkTargets();
   renderBulkBar();
-  renderSideTabs();
+  renderTopTabs();
   renderUnmanaged();
   renderTargets();
   renderTags();
@@ -735,12 +743,162 @@ function renderBulkBar() {
   });
 }
 
-function renderSideTabs() {
-  elements.sideTabs.forEach((button) => {
-    button.classList.toggle("active", button.dataset.sideTab === state.activeSideTab);
+function renderTopTabs() {
+  elements.topTabs.forEach((button) => {
+    const active = button.dataset.topTab === state.activeTopTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
   });
-  elements.managePanel.classList.toggle("hidden", state.activeSideTab !== "manage");
-  elements.installPanel.classList.toggle("hidden", state.activeSideTab !== "install");
+  elements.tabPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.topTabPanel !== state.activeTopTab);
+  });
+}
+
+async function scanDuplicates() {
+  await runAction(async () => {
+    const result = await api("/api/duplicates");
+    state.dedupe = result;
+    state.dedupeChoices = new Map(
+      (result.groups || []).map((group) => [group.hash, group.suggestedKeeperId]),
+    );
+    renderDedupe();
+  });
+}
+
+async function applyDedupe() {
+  if (!state.dedupe || !state.dedupe.groups || state.dedupe.groups.length === 0) {
+    return;
+  }
+  const groups = state.dedupe.groups
+    .map((group) => {
+      const keeperId = state.dedupeChoices.get(group.hash) || group.suggestedKeeperId;
+      return {
+        keeperId,
+        removeIds: group.skills.map((s) => s.id).filter((id) => id !== keeperId),
+      };
+    })
+    .filter((group) => group.removeIds.length > 0);
+
+  if (groups.length === 0) {
+    showToast("Nothing to remove.");
+    return;
+  }
+
+  await runAction(async () => {
+    const result = await api("/api/dedupe", {
+      method: "POST",
+      body: { groups, projectPath: elements.projectInput.value || undefined },
+    });
+    if (result.state) {
+      state.data = result.state;
+    }
+    const removed = result.deleted ? result.deleted.length : 0;
+    const errors = result.errors ? result.errors.length : 0;
+    showToast(`Merged ${removed} duplicate${removed === 1 ? "" : "s"}${errors ? ` (${errors} error${errors === 1 ? "" : "s"})` : ""}.`);
+    state.dedupe = null;
+    state.dedupeChoices = new Map();
+    renderDedupe();
+    await loadState();
+  });
+}
+
+function renderDedupe() {
+  const dedupe = state.dedupe;
+  if (!dedupe) {
+    setHtml(elements.dedupeSummary, "");
+    setHtml(elements.dedupeList, '<p class="empty-copy">Press <strong>Scan vault</strong> to find duplicate skills.</p>');
+    elements.dedupeApplyButton.disabled = true;
+    return;
+  }
+
+  const groups = dedupe.groups || [];
+  const summary = groups.length === 0
+    ? `<span>No duplicates found in <strong>${escapeHtml(dedupe.vaultRoot || "")}</strong>.</span>`
+    : `
+        <span><strong>${dedupe.groupCount}</strong> duplicate group${dedupe.groupCount === 1 ? "" : "s"}</span>
+        <span><strong>${dedupe.duplicateCount}</strong> skill${dedupe.duplicateCount === 1 ? "" : "s"} will be removed</span>
+        <span>in <strong>${escapeHtml(dedupe.vaultRoot || "")}</strong></span>
+      `;
+  setHtml(elements.dedupeSummary, summary);
+
+  if (groups.length === 0) {
+    setHtml(elements.dedupeList, '<p class="empty-copy">Nothing to clean up. Your vault has no byte-identical duplicates.</p>');
+    elements.dedupeApplyButton.disabled = true;
+    return;
+  }
+
+  setHtml(elements.dedupeList, groups.map((group) => renderDedupeGroup(group)).join(""));
+  elements.dedupeList.querySelectorAll("input[name^='dedupe-keeper-']").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      const target = event.currentTarget;
+      state.dedupeChoices.set(target.dataset.groupHash, target.value);
+      renderDedupe();
+    });
+  });
+  elements.dedupeApplyButton.disabled = false;
+}
+
+function renderDedupeGroup(group) {
+  const keeperId = state.dedupeChoices.get(group.hash) || group.suggestedKeeperId;
+  const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return `
+    <article class="dedupe-group">
+      <div class="dedupe-group-head">
+        <strong>${escapeHtml(group.skills[0].name)}</strong>
+        <span class="hash">sha256 ${escapeHtml(group.hash.slice(0, 12))}</span>
+      </div>
+      <div class="dedupe-options" role="radiogroup" aria-label="Choose the copy to keep for ${escapeHtml(group.skills[0].name)}">
+        ${group.skills
+          .map((skill) => {
+            const isKeeper = skill.id === keeperId;
+            const isSuggested = skill.id === group.suggestedKeeperId;
+            const inputId = `dedupe-${escapeAttr(group.hash)}-${escapeAttr(skill.id)}`;
+            const modified = skill.mtimeMs ? formatter.format(new Date(skill.mtimeMs)) : "unknown";
+            const badge = isKeeper
+              ? `<span class="badge">Keep</span>`
+              : isSuggested
+                ? `<span class="badge">Newest</span>`
+                : `<span class="badge">Remove</span>`;
+            return `
+              <label class="dedupe-option ${isKeeper ? "is-keeper" : ""}" for="${inputId}">
+                <input
+                  type="radio"
+                  name="dedupe-keeper-${escapeAttr(group.hash)}"
+                  id="${inputId}"
+                  data-group-hash="${escapeAttr(group.hash)}"
+                  value="${escapeAttr(skill.id)}"
+                  ${isKeeper ? "checked" : ""}
+                />
+                <span class="dedupe-option-body">
+                  <strong>${escapeHtml(skill.id)}</strong>
+                  <span class="path">${escapeHtml(skill.path)}</span>
+                  <span class="meta">Modified ${escapeHtml(modified)} · ${formatBytes(skill.bytes)}</span>
+                </span>
+                ${badge}
+              </label>
+            `;
+          })
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+function setHtml(node, html) {
+  // Local helper that matches the rest of this file's render-via-template pattern.
+  // All interpolated values pass through escapeHtml/escapeAttr above; no untrusted markup reaches the DOM.
+  node.innerHTML = html;
+}
+
+function escapeAttr(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value)) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function renderTargets() {

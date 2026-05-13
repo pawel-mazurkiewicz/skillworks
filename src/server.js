@@ -79,6 +79,17 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/duplicates") {
+    sendJson(response, 200, await manager.findVaultDuplicates());
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/dedupe") {
+    const body = await readJsonBody(request);
+    sendJson(response, 200, await manager.dedupeVaultSkills(body));
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/config") {
     const body = await readJsonBody(request);
     sendJson(response, 200, await manager.writeConfig(body));
