@@ -3,6 +3,8 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
 
+const setsModule = require("./sets");
+
 const CONFIG_DIR = ".agent-skill-manager";
 const MANIFEST_FILE = ".agent-skill-manager.json";
 const SKILL_FILE = "SKILL.md";
@@ -190,6 +192,7 @@ function createManager(options = {}) {
       recentProjects: Array.isArray(config.recentProjects) ? config.recentProjects : [],
       projects: normalizeProjectRecords(config.projects || []),
       customTargets: safeReadCustomTargets(config.customTargets),
+      sets: Array.isArray(config.sets) ? config.sets : [],
     };
   }
 
@@ -204,6 +207,7 @@ function createManager(options = {}) {
       customTargets: nextConfig.customTargets !== undefined
         ? normalizeCustomTargets(nextConfig.customTargets)
         : current.customTargets,
+      sets: Array.isArray(nextConfig.sets) ? nextConfig.sets : current.sets,
     };
     await writeJson(configPath, merged);
     return readConfig();
@@ -942,10 +946,18 @@ function createManager(options = {}) {
     return { ...report, state: await getState(projectPath) };
   }
 
+  async function listSets({ projectPath } = {}) {
+    const config = await readConfig();
+    const global = setsModule.listGlobalSets({ sets: config.sets });
+    const project = projectPath ? await setsModule.readProjectSets(projectPath) : [];
+    return { global, project };
+  }
+
   return {
     appHome,
     readConfig,
     writeConfig,
+    listSets,
     addProject,
     scanProjects,
     getState,

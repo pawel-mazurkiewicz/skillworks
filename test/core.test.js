@@ -826,6 +826,60 @@ test("dedupeVaultSkills deletes duplicates and repoints managed links to the kee
   );
 });
 
+test("lists global sets from config.json and project-local sets from sets.json", async () => {
+  const env = await makeEnv();
+  await fs.writeFile(
+    path.join(env.appHome, "config.json"),
+    JSON.stringify({
+      vaultRoot: env.vault,
+      sets: [
+        {
+          id: "set_g1",
+          name: "Global one",
+          scope: "global",
+          entries: [{ skillName: "alpha", targetKey: "claude-global" }],
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    }),
+  );
+  const projectSetsDir = path.join(env.project, ".agent-skill-manager");
+  await fs.mkdir(projectSetsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(projectSetsDir, "sets.json"),
+    JSON.stringify({
+      sets: [
+        {
+          id: "set_p1",
+          name: "Project one",
+          scope: "project",
+          entries: [{ skillName: "beta", targetKey: "claude-project" }],
+          createdAt: "2026-01-02T00:00:00Z",
+          updatedAt: "2026-01-02T00:00:00Z",
+        },
+      ],
+    }),
+  );
+
+  const manager = createManager({ appHome: env.appHome });
+  const result = await manager.listSets({ projectPath: env.project });
+  assert.equal(result.global.length, 1);
+  assert.equal(result.global[0].id, "set_g1");
+  assert.equal(result.project.length, 1);
+  assert.equal(result.project[0].id, "set_p1");
+});
+
+async function makeEnv() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
+  const appHome = path.join(root, "app");
+  const vault = path.join(appHome, "vault");
+  const project = path.join(root, "project");
+  await fs.mkdir(vault, { recursive: true });
+  await fs.mkdir(project, { recursive: true });
+  return { root, appHome, vault, project };
+}
+
 async function writeSkill(dir, name, description) {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`, "utf8");
