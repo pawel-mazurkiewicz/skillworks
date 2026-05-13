@@ -142,6 +142,23 @@ Delete selected vault skills
 
 Move and delete remove managed symlinks first. Delete requires UI confirmation before the endpoint is called.
 
+## Sets
+
+Sets are saveable, switchable collections of `(skill, target)` pairs.
+
+Scopes:
+
+- **Global** — stored in `~/.agent-skill-manager/config.json` and shared across projects.
+- **Project** — stored in `<project>/.agent-skill-manager/sets.json` and travel with the project.
+
+Apply replaces state only in the targets the set references; targets the set
+doesn't mention are left alone. Skills missing from the vault are skipped with
+a warning rather than blocking the apply.
+
+The Sets tab supports creating, editing, snapshotting the current state, and
+applying. Each project in the Manage tab can pin multiple sets and apply any
+of them with one click.
+
 ## Test
 
 ```bash
