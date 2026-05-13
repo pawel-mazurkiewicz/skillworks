@@ -23,6 +23,10 @@
             <span class="top-tab-label">Install</span>
             <span class="top-tab-hint">Bring skills in</span>
           </button>
+          <button class="top-tab" data-top-tab="sets" type="button">
+            <span class="top-tab-label">Sets</span>
+            <span class="top-tab-hint">Curated skill bundles</span>
+          </button>
           <button class="top-tab" data-top-tab="configure" type="button">
             <span class="top-tab-label">Configure</span>
             <span class="top-tab-hint">Projects, targets, vault</span>
@@ -207,6 +211,34 @@
               <div class="discovery-list" id="discoveryList"></div>
             </section>
           </div>
+        </section>
+
+        <section class="tab-content hidden" id="setsTab" data-top-tab-panel="sets" aria-label="Skill sets">
+          <section class="panel">
+            <div class="section-head">
+              <h2>Sets</h2>
+              <p class="section-sub">Curated bundles of skills and targets you can apply on demand.</p>
+            </div>
+            <div class="sets-layout">
+              <aside class="sets-list">
+                <header class="sets-list-header">
+                  <div class="sets-filter" role="tablist">
+                    <button type="button" class="chip is-active" data-sets-filter="all">All</button>
+                    <button type="button" class="chip" data-sets-filter="global">Global</button>
+                    <button type="button" class="chip" data-sets-filter="project">Project</button>
+                  </div>
+                  <div class="sets-actions">
+                    <button type="button" class="button" data-action="set-new">New set</button>
+                    <button type="button" class="button" data-action="set-snapshot">Snapshot current…</button>
+                  </div>
+                </header>
+                <ul class="sets-rows" data-sets-rows></ul>
+              </aside>
+              <article class="sets-editor" data-sets-editor>
+                <p class="muted">Select a set on the left, or create a new one.</p>
+              </article>
+            </div>
+          </section>
         </section>
 
         <section class="tab-content hidden" id="configureTab" data-top-tab-panel="configure" aria-label="Configure workspace">
