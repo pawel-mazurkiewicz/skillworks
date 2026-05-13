@@ -1084,6 +1084,25 @@ test("snapshotSet captures current managed symlinks and re-applies as a no-op", 
   assert.deepEqual(re.warnings, []);
 });
 
+test("setProjectPinnedSets persists and missing ids are flagged on listSets", async () => {
+  const env = await makeEnv();
+  const manager = createManager({ appHome: env.appHome });
+  const g = (await manager.createSet({
+    name: "Pinned",
+    scope: "global",
+    entries: [{ skillName: "alpha", targetKey: "claude-global" }],
+  })).set;
+
+  await manager.addProject(env.project);
+  await manager.setProjectPinnedSets(env.project, [g.id, "set_missing"]);
+
+  const result = await manager.listSets({ projectPath: env.project });
+  assert.deepEqual(result.pinned.ids, [g.id, "set_missing"]);
+  assert.deepEqual(result.pinned.missing, ["set_missing"]);
+  assert.equal(result.pinned.resolved.length, 1);
+  assert.equal(result.pinned.resolved[0].id, g.id);
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
