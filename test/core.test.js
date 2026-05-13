@@ -1034,6 +1034,33 @@ test("applySet skips missing skills but applies the rest, surfacing a warning", 
   assert.deepEqual(enabledNames, ["alpha"]);
 });
 
+test("applySet stops on mid-apply failure, leaving later targets untouched", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+
+  // Block enable in claude-global by pre-placing a regular file at the link path
+  const claudeGlobalDir = path.join(env.root, ".claude", "skills");
+  await fs.mkdir(claudeGlobalDir, { recursive: true });
+  await fs.writeFile(path.join(claudeGlobalDir, "alpha"), "not a symlink", "utf8");
+
+  const created = await manager.createSet({
+    name: "S",
+    scope: "global",
+    entries: [
+      { skillName: "alpha", targetKey: "claude-global" },
+      { skillName: "alpha", targetKey: "codex-global" },
+    ],
+  });
+
+  const result = await manager.applySet(created.set.id, { projectPath: env.project });
+  const claude = result.perTargetResult.find((t) => t.targetId === "claude-global");
+  const codex = result.perTargetResult.find((t) => t.targetId === "codex-global");
+  assert.equal(claude.status, "failed");
+  assert.equal(codex, undefined, "codex-global should not have been processed after failure");
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
