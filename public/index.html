@@ -112,6 +112,8 @@
 
               <div class="target-strip" id="targetStrip"></div>
 
+              <div class="drift-pill" data-drift hidden></div>
+
               <div class="matrix-wrap">
                 <table class="skill-matrix">
                   <thead id="matrixHead"></thead>
@@ -346,6 +348,20 @@
 
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
+
+    <dialog class="modal" data-modal="apply-set" aria-labelledby="apply-set-title">
+      <header class="modal-header">
+        <h2 id="apply-set-title" data-apply-title>Apply set</h2>
+        <button type="button" class="modal-close" data-action="apply-cancel" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body" data-apply-body>
+        <p class="muted">Computing plan&hellip;</p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="button ghost" data-action="apply-cancel">Cancel</button>
+        <button type="button" class="button primary" data-action="apply-confirm" disabled>Apply</button>
+      </footer>
+    </dialog>
 
     <script src="/app.js" defer></script>
   </body>

@@ -22,6 +22,9 @@ let setsState = {
   loaded: false,
 };
 
+let pendingApplySetId = null;
+let lastAppliedSet = null; // { id, name, touchedTargets, modified }
+
 const elements = {
   topTabs: document.querySelectorAll("[data-top-tab]"),
   tabPanels: document.querySelectorAll("[data-top-tab-panel]"),
@@ -317,6 +320,11 @@ async function loadState() {
   if (!state.selectedSkillId && state.data.skills[0]) {
     state.selectedSkillId = state.data.skills[0].id;
   }
+  try {
+    await loadSets();
+  } catch {
+    // Sets are optional context for Manage tab — ignore failures here.
+  }
   render();
 }
 
@@ -408,6 +416,7 @@ function render() {
   renderTargets();
   renderTags();
   renderMatrix();
+  renderDrift();
   renderDetail();
 }
 
@@ -443,6 +452,66 @@ function renderProjects() {
       await loadState();
       showToast("Project loaded");
     }));
+  });
+
+  renderProjectPinnedControls();
+}
+
+function renderProjectPinnedControls() {
+  const activeProjectPath = state.data && state.data.project && state.data.project.path;
+  if (!activeProjectPath) return;
+  const items = elements.projectList.querySelectorAll(".project-item");
+  items.forEach((article, index) => {
+    const project = (state.data.projects || [])[index];
+    if (!project || project.path !== activeProjectPath) return;
+
+    // Remove any previously-rendered pinned controls.
+    const old = article.querySelector("[data-project-pinned]");
+    if (old) old.remove();
+
+    const wrap = makeEl("div", { class: "project-pinned", dataset: { projectPinned: "true" } });
+
+    const allSets = [...setsState.global, ...setsState.project];
+    const pinnedResolved = (setsState.pinned && setsState.pinned.resolved) || [];
+    const pinnedIds = (setsState.pinned && setsState.pinned.ids) || [];
+
+    const chips = makeEl("div", { class: "project-pinned-chips" });
+    if (pinnedResolved.length === 0) {
+      chips.appendChild(makeEl("span", { class: "muted" }, "No pinned sets yet."));
+    } else {
+      for (const ps of pinnedResolved) {
+        const chip = makeEl("span", { class: "project-pinned-chip" });
+        chip.appendChild(makeEl("span", {}, ps.name));
+        chip.appendChild(makeEl("button", {
+          type: "button",
+          dataset: { action: "unpin-set", id: ps.id },
+          "aria-label": `Unpin ${ps.name}`,
+        }, "×"));
+        chips.appendChild(chip);
+      }
+    }
+    wrap.appendChild(chips);
+
+    const controls = makeEl("div", { class: "project-pinned-controls" });
+
+    const pinSelect = makeEl("select", { dataset: { action: "pin-set" }, "aria-label": "Pin a set" });
+    pinSelect.appendChild(makeEl("option", { value: "" }, "Pin set…"));
+    const pinnedSet = new Set(pinnedIds);
+    for (const s of allSets) {
+      if (pinnedSet.has(s.id)) continue;
+      pinSelect.appendChild(makeEl("option", { value: s.id }, `${s.name} (${s.scope})`));
+    }
+    controls.appendChild(pinSelect);
+
+    const applySelect = makeEl("select", { dataset: { action: "apply-pinned-set" }, "aria-label": "Apply pinned set" });
+    applySelect.appendChild(makeEl("option", { value: "" }, "Apply pinned set…"));
+    for (const ps of pinnedResolved) {
+      applySelect.appendChild(makeEl("option", { value: ps.id }, ps.name));
+    }
+    controls.appendChild(applySelect);
+
+    wrap.appendChild(controls);
+    article.appendChild(wrap);
   });
 }
 
@@ -1114,15 +1183,19 @@ function renderMatrix() {
   elements.matrixBody.querySelectorAll("[data-target-id]").forEach((button) => {
     button.addEventListener("click", () => runAction(async () => {
       const nextEnabled = button.dataset.enabled !== "true";
+      const targetId = button.dataset.targetId;
       applyState(await api("/api/toggle", {
         method: "POST",
         body: {
           projectPath: elements.projectInput.value,
-          targetId: button.dataset.targetId,
+          targetId,
           skillId: button.dataset.skillId,
           enabled: nextEnabled,
         },
       }));
+      if (lastAppliedSet && lastAppliedSet.touchedTargets.includes(targetId)) {
+        lastAppliedSet.modified = true;
+      }
       render();
       showToast(nextEnabled ? "Skill enabled" : "Skill disabled");
     }));
@@ -1471,9 +1544,7 @@ function initSetsPanel() {
         showToast("Set deleted");
       });
     } else if (action === "set-apply") {
-      // Task 11 will wire this; leave a stub for now.
-      console.log("apply pending", id);
-      showToast("Apply coming in next task");
+      openApplyModal(id);
     } else if (action === "set-snapshot") {
       openSnapshotModal();
     } else if (action === "entry-add") {
@@ -1894,3 +1965,203 @@ function openSnapshotModal() {
     dialog.setAttribute("open", "");
   }
 }
+
+function renderDrift() {
+  const el = document.querySelector("[data-drift]");
+  if (!el) return;
+  if (!lastAppliedSet) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = `Applied: ${lastAppliedSet.name}${lastAppliedSet.modified ? " (modified)" : ""}`;
+}
+
+async function openApplyModal(setId) {
+  pendingApplySetId = setId;
+  const modal = document.querySelector('[data-modal="apply-set"]');
+  if (!modal) return;
+  const body = modal.querySelector("[data-apply-body]");
+  const title = modal.querySelector("[data-apply-title]");
+  const confirm = modal.querySelector('[data-action="apply-confirm"]');
+  confirm.disabled = true;
+  clearChildren(body);
+  body.appendChild(makeEl("p", { class: "muted" }, "Computing plan…"));
+  if (typeof modal.showModal === "function" && !modal.open) {
+    modal.showModal();
+  } else if (!modal.open) {
+    modal.setAttribute("open", "");
+  }
+
+  const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+  let plan;
+  try {
+    const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/plan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectPath }),
+    });
+    plan = await response.json();
+    if (!response.ok) {
+      clearChildren(body);
+      body.appendChild(makeEl("p", { class: "muted" }, plan.error || "Failed to load plan"));
+      return;
+    }
+  } catch (error) {
+    clearChildren(body);
+    body.appendChild(makeEl("p", { class: "muted" }, error.message || "Failed to load plan"));
+    return;
+  }
+
+  title.textContent = `Apply set: ${plan.name}`;
+  clearChildren(body);
+
+  if (!plan.targets || plan.targets.length === 0) {
+    body.appendChild(makeEl("p", { class: "muted" }, "This set has no entries — nothing to apply."));
+    return;
+  }
+
+  for (const t of plan.targets) {
+    const section = makeEl("section", { class: "apply-target" });
+    section.appendChild(makeEl("h3", {}, t.targetLabel || t.targetId));
+    const list = makeEl("ul", { class: "apply-list" });
+    if (t.missingTarget) {
+      list.appendChild(makeEl("li", { class: "apply-warn" }, `⚠ target not available: ${t.targetId}`));
+    }
+    for (const n of t.toEnable || []) list.appendChild(makeEl("li", { class: "apply-add" }, `+ ${n}`));
+    for (const n of t.toDisable || []) list.appendChild(makeEl("li", { class: "apply-rm" }, `− ${n}`));
+    for (const n of t.missing || []) list.appendChild(makeEl("li", { class: "apply-warn" }, `⚠ missing skill: ${n}`));
+    if (!t.missingTarget && (t.toEnable || []).length === 0 && (t.toDisable || []).length === 0 && (t.missing || []).length === 0) {
+      list.appendChild(makeEl("li", { class: "muted" }, "Already up to date."));
+    }
+    section.appendChild(list);
+    body.appendChild(section);
+  }
+  confirm.disabled = false;
+}
+
+function closeApplyModal() {
+  const modal = document.querySelector('[data-modal="apply-set"]');
+  if (modal && modal.open) modal.close();
+  pendingApplySetId = null;
+}
+
+// Global delegated handlers for apply modal, project pinned-sets, etc.
+document.addEventListener("click", async (event) => {
+  const t = event.target.closest("[data-action]");
+  if (!t) return;
+  const action = t.dataset.action;
+
+  if (action === "apply-cancel") {
+    closeApplyModal();
+    return;
+  }
+
+  if (action === "apply-confirm" && pendingApplySetId) {
+    const setId = pendingApplySetId;
+    await runAction(async () => {
+      const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+      const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/apply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectPath }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(result.error || "Apply failed");
+        return;
+      }
+      applyState(result.state);
+      lastAppliedSet = {
+        id: setId,
+        name: (result.plan && result.plan.name) || "",
+        touchedTargets: ((result.plan && result.plan.targets) || []).map((tt) => tt.targetId),
+        modified: false,
+      };
+      closeApplyModal();
+      render();
+      const warnings = (result.warnings || []).length;
+      showToast(warnings ? `Applied with ${warnings} warning${warnings === 1 ? "" : "s"}` : "Set applied");
+    });
+    return;
+  }
+
+  if (action === "unpin-set") {
+    const setId = t.dataset.id;
+    if (!setId) return;
+    await runAction(async () => {
+      const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+      if (!projectPath) return;
+      const nextIds = ((setsState.pinned && setsState.pinned.ids) || []).filter((x) => x !== setId);
+      const response = await fetch("/api/projects/pinned-sets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectPath, setIds: nextIds }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(payload.error || "Unpin failed");
+        return;
+      }
+      await loadSets();
+      renderProjectPinnedControls();
+      showToast("Set unpinned");
+    });
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const t = event.target.closest("[data-action]");
+  if (!t) return;
+  const action = t.dataset.action;
+
+  if (action === "pin-set") {
+    const setId = t.value;
+    if (!setId) return;
+    await runAction(async () => {
+      const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+      if (!projectPath) {
+        showToast("Load a project first");
+        t.value = "";
+        return;
+      }
+      const currentIds = ((setsState.pinned && setsState.pinned.ids) || []).slice();
+      if (currentIds.includes(setId)) {
+        t.value = "";
+        return;
+      }
+      currentIds.push(setId);
+      const response = await fetch("/api/projects/pinned-sets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectPath, setIds: currentIds }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(payload.error || "Pin failed");
+        t.value = "";
+        return;
+      }
+      await loadSets();
+      renderProjectPinnedControls();
+      showToast("Set pinned");
+    });
+    return;
+  }
+
+  if (action === "apply-pinned-set") {
+    const setId = t.value;
+    if (!setId) return;
+    t.value = "";
+    openApplyModal(setId);
+  }
+});
+
+document.addEventListener("cancel", (event) => {
+  const modal = event.target;
+  if (modal && modal.dataset && modal.dataset.modal === "apply-set") {
+    event.preventDefault();
+    closeApplyModal();
+  }
+});
