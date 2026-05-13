@@ -232,6 +232,22 @@ function createManager(options = {}) {
     return { project: record, state: await getState(projectPath) };
   }
 
+  async function setProjectPinnedSets(projectPath, setIds) {
+    const normalized = normalizeProjectPath(projectPath);
+    const ids = Array.isArray(setIds) ? setIds.filter((v) => typeof v === "string" && v) : [];
+    const config = await readConfig();
+    const projects = config.projects.slice();
+    const idx = projects.findIndex((p) => p.path === normalized);
+    if (idx === -1) {
+      const record = await buildProjectRecord(normalized);
+      projects.push({ ...record, pinnedSetIds: ids });
+    } else {
+      projects[idx] = { ...projects[idx], pinnedSetIds: ids };
+    }
+    await writeConfig({ ...config, projects });
+    return { state: await getState(normalized) };
+  }
+
   async function scanProjects(options = {}) {
     const config = await readConfig();
     const scan = await scanProjectRoots({
@@ -950,7 +966,22 @@ function createManager(options = {}) {
     const config = await readConfig();
     const global = setsModule.listGlobalSets({ sets: config.sets });
     const project = projectPath ? await setsModule.readProjectSets(projectPath) : [];
-    return { global, project };
+    let pinned = { ids: [], resolved: [], missing: [] };
+    if (projectPath) {
+      const normalized = normalizeProjectPath(projectPath);
+      const projectRecord = config.projects.find((p) => p.path === normalized);
+      const ids = projectRecord?.pinnedSetIds || [];
+      const all = [...global, ...project];
+      const resolved = [];
+      const missing = [];
+      for (const id of ids) {
+        const match = all.find((s) => s.id === id);
+        if (match) resolved.push(match);
+        else missing.push(id);
+      }
+      pinned = { ids, resolved, missing };
+    }
+    return { global, project, pinned };
   }
 
   async function createSet({ name, scope, projectPath, entries }) {
@@ -1204,6 +1235,7 @@ function createManager(options = {}) {
     applySet,
     snapshotSet,
     addProject,
+    setProjectPinnedSets,
     scanProjects,
     getState,
     toggleSkill,
@@ -1830,6 +1862,7 @@ async function buildProjectRecord(projectPath, options = {}) {
     skillSourceCount: skillSources.length,
     skillSources,
     lastSeenAt: new Date().toISOString(),
+    pinnedSetIds: [],
   };
 }
 
@@ -2048,6 +2081,7 @@ function normalizeProjectRecords(records) {
       skillSourceCount: Number(record.skillSourceCount || 0),
       skillSources: Array.isArray(record.skillSources) ? record.skillSources : [],
       lastSeenAt: record.lastSeenAt || "",
+      pinnedSetIds: Array.isArray(record.pinnedSetIds) ? record.pinnedSetIds.filter((v) => typeof v === "string") : [],
     });
   }
   return normalized;
