@@ -1052,6 +1052,64 @@ function createManager(options = {}) {
     throw new Error(`Unknown set: ${id}`);
   }
 
+  async function planApplySet(id, { projectPath } = {}) {
+    const set = await getSet(id, { projectPath });
+    const config = await readConfig();
+    const skills = await discoverSkills(config.vaultRoot);
+    const skillsByName = new Map(skills.map((s) => [s.name, s]));
+    const targets = buildTargets(
+      normalizeProjectPath(projectPath || process.cwd()),
+      homeDir,
+      config.customTargets,
+    );
+    const targetsById = new Map(targets.map((t) => [t.id, t]));
+
+    const byTarget = new Map();
+    for (const entry of set.entries) {
+      if (!byTarget.has(entry.targetKey)) byTarget.set(entry.targetKey, []);
+      byTarget.get(entry.targetKey).push(entry);
+    }
+
+    const result = { setId: id, name: set.name, targets: [] };
+    for (const [targetKey, entries] of byTarget) {
+      const target = targetsById.get(targetKey);
+      if (!target) {
+        result.targets.push({
+          targetId: targetKey,
+          targetLabel: targetKey,
+          missingTarget: true,
+          toEnable: [],
+          toDisable: [],
+          missing: entries.map((e) => e.skillName),
+        });
+        continue;
+      }
+      const manifest = await readManifest(target.path);
+      const currentlyEnabledNames = new Set();
+      for (const skillId of Object.keys(manifest.managedLinks || {})) {
+        const s = skills.find((sk) => sk.id === skillId);
+        if (s) currentlyEnabledNames.add(s.name);
+      }
+      const desiredNames = new Set();
+      const missing = [];
+      for (const entry of entries) {
+        if (!skillsByName.has(entry.skillName)) missing.push(entry.skillName);
+        else desiredNames.add(entry.skillName);
+      }
+      const toEnable = [...desiredNames].filter((n) => !currentlyEnabledNames.has(n));
+      const toDisable = [...currentlyEnabledNames].filter((n) => !desiredNames.has(n));
+      result.targets.push({
+        targetId: target.id,
+        targetLabel: target.label,
+        toEnable,
+        toDisable,
+        missing,
+      });
+    }
+
+    return result;
+  }
+
   return {
     appHome,
     readConfig,
@@ -1061,6 +1119,7 @@ function createManager(options = {}) {
     getSet,
     updateSet,
     deleteSet,
+    planApplySet,
     addProject,
     scanProjects,
     getState,
