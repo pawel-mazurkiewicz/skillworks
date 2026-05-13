@@ -241,7 +241,7 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  if (request.method === "PATCH" && url.pathname.startsWith("/api/sets/")) {
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/sets/") && !url.pathname.endsWith("/snapshot")) {
     const id = url.pathname.slice("/api/sets/".length);
     const body = await readJsonBody(request);
     const result = await manager.updateSet(id, body, { projectPath: body.projectPath || initialProject });
@@ -249,7 +249,7 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  if (request.method === "DELETE" && url.pathname.startsWith("/api/sets/")) {
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/sets/") && !url.pathname.endsWith("/snapshot")) {
     const id = url.pathname.slice("/api/sets/".length);
     const projectPath = url.searchParams.get("project") || initialProject;
     const result = await manager.deleteSet(id, { projectPath });
