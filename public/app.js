@@ -12,6 +12,16 @@ const state = {
   dedupeChoices: new Map(),
 };
 
+let setsState = {
+  global: [],
+  project: [],
+  pinned: { ids: [], resolved: [], missing: [] },
+  filter: "all",
+  selectedId: null,
+  draft: null,
+  loaded: false,
+};
+
 const elements = {
   topTabs: document.querySelectorAll("[data-top-tab]"),
   tabPanels: document.querySelectorAll("[data-top-tab-panel]"),
@@ -94,9 +104,17 @@ async function bootstrap() {
     button.addEventListener("click", () => {
       state.activeTopTab = button.dataset.topTab;
       renderTopTabs();
+      if (state.activeTopTab === "sets") {
+        runAction(async () => {
+          await loadSets();
+          renderSets();
+        });
+      }
     });
   });
   renderTopTabs();
+
+  initSetsPanel();
 
   elements.pathForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1352,4 +1370,526 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+/* ---------- Sets panel ---------- */
+
+function clearChildren(el) {
+  while (el && el.firstChild) el.removeChild(el.firstChild);
+}
+
+function makeEl(tag, attrs = {}, text = "") {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k === "dataset") {
+      for (const [dk, dv] of Object.entries(v)) el.dataset[dk] = dv;
+    } else if (k === "hidden") {
+      if (v) el.hidden = true;
+    } else if (k === "disabled") {
+      if (v) el.disabled = true;
+    } else if (k === "checked") {
+      if (v) el.checked = true;
+    } else if (k === "selected") {
+      if (v) el.selected = true;
+    } else if (k === "value") {
+      el.value = v;
+    } else {
+      el.setAttribute(k, v);
+    }
+  }
+  if (text !== "" && text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function summarizeTargets(entries) {
+  return [...new Set(entries.map((e) => e.targetKey))].join(", ");
+}
+
+function setsScope() {
+  return state.data && state.data.project && state.data.project.path ? "project" : "global";
+}
+
+async function loadSets() {
+  const project = encodeURIComponent((state.data && state.data.project && state.data.project.path) || "");
+  const response = await fetch(`/api/sets?project=${project}`);
+  const result = await response.json();
+  if (!response.ok) {
+    showToast(result.error || "Failed to load sets");
+    return;
+  }
+  setsState.global = Array.isArray(result.global) ? result.global : [];
+  setsState.project = Array.isArray(result.project) ? result.project : [];
+  setsState.pinned = result.pinned || { ids: [], resolved: [], missing: [] };
+  setsState.loaded = true;
+}
+
+function initSetsPanel() {
+  const panel = document.querySelector('[data-top-tab-panel="sets"]');
+  if (!panel) return;
+  panel.addEventListener("click", async (event) => {
+    const t = event.target.closest("[data-action], [data-sets-filter]");
+    if (!t || !panel.contains(t)) return;
+    if (t.dataset.setsFilter) {
+      setsState.filter = t.dataset.setsFilter;
+      renderSets();
+      return;
+    }
+    const action = t.dataset.action;
+    const id = t.dataset.id;
+    if (action === "set-new") {
+      setsState.draft = { id: null, name: "", scope: setsScope(), entries: [] };
+      setsState.selectedId = null;
+      renderSets();
+    } else if (action === "set-edit") {
+      const s = [...setsState.global, ...setsState.project].find((x) => x.id === id);
+      if (!s) return;
+      setsState.draft = {
+        id: s.id,
+        name: s.name,
+        scope: s.scope,
+        entries: (s.entries || []).map((e) => ({ skillName: e.skillName, targetKey: e.targetKey })),
+      };
+      setsState.selectedId = s.id;
+      renderSets();
+    } else if (action === "set-delete") {
+      if (!window.confirm("Delete this set?")) return;
+      await runAction(async () => {
+        const project = encodeURIComponent((state.data && state.data.project && state.data.project.path) || "");
+        const response = await fetch(`/api/sets/${encodeURIComponent(id)}?project=${project}`, { method: "DELETE" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showToast(payload.error || "Delete failed");
+          return;
+        }
+        if (setsState.selectedId === id) {
+          setsState.selectedId = null;
+          setsState.draft = null;
+        }
+        await loadSets();
+        renderSets();
+        showToast("Set deleted");
+      });
+    } else if (action === "set-apply") {
+      // Task 11 will wire this; leave a stub for now.
+      console.log("apply pending", id);
+      showToast("Apply coming in next task");
+    } else if (action === "set-snapshot") {
+      openSnapshotModal();
+    } else if (action === "entry-add") {
+      if (!setsState.draft) return;
+      setsState.draft.entries.push({ skillName: "", targetKey: "" });
+      renderSets();
+    } else if (action === "entry-remove") {
+      if (!setsState.draft) return;
+      const idx = Number(t.dataset.index);
+      if (Number.isFinite(idx)) {
+        setsState.draft.entries.splice(idx, 1);
+        renderSets();
+      }
+    } else if (action === "draft-revert") {
+      setsState.draft = null;
+      renderSets();
+    } else if (action === "draft-save") {
+      await runAction(saveDraft);
+    }
+  });
+}
+
+function renderSets() {
+  const rowsEl = document.querySelector("[data-sets-rows]");
+  const editorEl = document.querySelector("[data-sets-editor]");
+  if (!rowsEl || !editorEl) return;
+
+  // Sync filter chip active state.
+  const panel = document.querySelector('[data-top-tab-panel="sets"]');
+  if (panel) {
+    panel.querySelectorAll("[data-sets-filter]").forEach((btn) => {
+      btn.classList.toggle("is-active", btn.dataset.setsFilter === setsState.filter);
+    });
+  }
+
+  clearChildren(rowsEl);
+
+  const all = [
+    ...setsState.global.map((s) => ({ ...s, _scope: "global" })),
+    ...setsState.project.map((s) => ({ ...s, _scope: "project" })),
+  ];
+  const filtered = all.filter((s) => setsState.filter === "all" || s._scope === setsState.filter);
+
+  if (filtered.length === 0) {
+    rowsEl.appendChild(makeEl("li", { class: "muted set-row-empty" }, "No sets yet."));
+  } else {
+    for (const s of filtered) {
+      const li = makeEl("li", {
+        class: "set-row" + (s.id === setsState.selectedId ? " is-selected" : ""),
+        dataset: { setId: s.id },
+      });
+      li.appendChild(makeEl("div", { class: "set-row-name" }, s.name));
+      const meta = makeEl("div", { class: "set-row-meta" });
+      meta.appendChild(makeEl("span", { class: `badge badge-${s._scope}` }, s._scope));
+      const entryCount = (s.entries || []).length;
+      meta.appendChild(makeEl("span", { class: "muted" }, `${entryCount} entr${entryCount === 1 ? "y" : "ies"}`));
+      const targetSummary = summarizeTargets(s.entries || []);
+      if (targetSummary) {
+        meta.appendChild(makeEl("span", { class: "muted" }, targetSummary));
+      }
+      li.appendChild(meta);
+      const actions = makeEl("div", { class: "set-row-actions" });
+      actions.appendChild(makeEl("button", {
+        type: "button", class: "button ghost", dataset: { action: "set-apply", id: s.id },
+      }, "Apply"));
+      actions.appendChild(makeEl("button", {
+        type: "button", class: "button ghost", dataset: { action: "set-edit", id: s.id },
+      }, "Edit"));
+      actions.appendChild(makeEl("button", {
+        type: "button", class: "button ghost", dataset: { action: "set-delete", id: s.id },
+      }, "Delete"));
+      li.appendChild(actions);
+      rowsEl.appendChild(li);
+    }
+  }
+
+  clearChildren(editorEl);
+  if (!setsState.draft && !setsState.selectedId) {
+    editorEl.appendChild(makeEl("p", { class: "muted" }, "Select a set on the left, or create a new one."));
+    return;
+  }
+  if (!setsState.draft && setsState.selectedId) {
+    const s = [...setsState.global, ...setsState.project].find((x) => x.id === setsState.selectedId);
+    if (!s) {
+      editorEl.appendChild(makeEl("p", { class: "muted" }, "Select a set on the left, or create a new one."));
+      return;
+    }
+    renderSetReadOnly(editorEl, s);
+    return;
+  }
+  renderSetEditor(editorEl);
+}
+
+function renderSetReadOnly(editorEl, s) {
+  const head = makeEl("div", { class: "sets-editor-head" });
+  head.appendChild(makeEl("h3", { class: "sets-editor-title" }, s.name));
+  head.appendChild(makeEl("span", { class: `badge badge-${s.scope}` }, s.scope));
+  editorEl.appendChild(head);
+
+  if (!s.entries || s.entries.length === 0) {
+    editorEl.appendChild(makeEl("p", { class: "muted" }, "No entries yet."));
+  } else {
+    const list = makeEl("ul", { class: "set-entry-readlist" });
+    for (const e of s.entries) {
+      const li = makeEl("li", { class: "set-entry-readrow" });
+      li.appendChild(makeEl("strong", {}, e.skillName));
+      li.appendChild(makeEl("span", { class: "muted" }, ` → ${e.targetKey}`));
+      list.appendChild(li);
+    }
+    editorEl.appendChild(list);
+  }
+
+  const footer = makeEl("div", { class: "sets-editor-footer" });
+  footer.appendChild(makeEl("button", {
+    type: "button", class: "button", dataset: { action: "set-edit", id: s.id },
+  }, "Edit"));
+  editorEl.appendChild(footer);
+}
+
+function renderSetEditor(editorEl) {
+  const draft = setsState.draft;
+  if (!draft) return;
+  const form = makeEl("form", { class: "set-editor-form" });
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    runAction(saveDraft);
+  });
+
+  const head = makeEl("div", { class: "sets-editor-head" });
+  head.appendChild(makeEl("h3", { class: "sets-editor-title" }, draft.id ? "Edit set" : "New set"));
+  if (draft.id) {
+    head.appendChild(makeEl("span", { class: `badge badge-${draft.scope}` }, draft.scope));
+  }
+  form.appendChild(head);
+
+  const nameField = makeEl("label", { class: "set-field" });
+  nameField.appendChild(makeEl("span", {}, "Name"));
+  const nameInput = makeEl("input", {
+    type: "text",
+    value: draft.name || "",
+    placeholder: "e.g. Daily TDD",
+    autocomplete: "off",
+  });
+  nameInput.addEventListener("input", () => {
+    draft.name = nameInput.value;
+  });
+  nameField.appendChild(nameInput);
+  form.appendChild(nameField);
+
+  // Scope: toggle when creating, locked when editing.
+  const scopeField = makeEl("div", { class: "set-field" });
+  scopeField.appendChild(makeEl("span", {}, "Scope"));
+  if (draft.id) {
+    scopeField.appendChild(makeEl("span", { class: `badge badge-${draft.scope}` }, draft.scope));
+  } else {
+    const scopeWrap = makeEl("div", { class: "set-scope-toggle" });
+    const globalBtn = makeEl("button", {
+      type: "button",
+      class: "chip" + (draft.scope === "global" ? " is-active" : ""),
+    }, "Global");
+    globalBtn.addEventListener("click", () => {
+      draft.scope = "global";
+      renderSets();
+    });
+    scopeWrap.appendChild(globalBtn);
+    const hasProject = !!(state.data && state.data.project && state.data.project.path);
+    const projectBtn = makeEl("button", {
+      type: "button",
+      class: "chip" + (draft.scope === "project" ? " is-active" : ""),
+    }, "Project");
+    if (!hasProject) {
+      projectBtn.disabled = true;
+      projectBtn.title = "Load a project first";
+    }
+    projectBtn.addEventListener("click", () => {
+      if (!hasProject) return;
+      draft.scope = "project";
+      renderSets();
+    });
+    scopeWrap.appendChild(projectBtn);
+    scopeField.appendChild(scopeWrap);
+  }
+  form.appendChild(scopeField);
+
+  // Entries.
+  const entriesWrap = makeEl("div", { class: "set-entries" });
+  entriesWrap.appendChild(makeEl("div", { class: "set-entries-head" }, "Entries"));
+  const skills = (state.data && state.data.skills) || [];
+  const targets = (state.data && state.data.targets) || [];
+
+  if (draft.entries.length === 0) {
+    entriesWrap.appendChild(makeEl("p", { class: "muted" }, "No entries yet. Add some below."));
+  } else {
+    const table = makeEl("ul", { class: "set-entry-list" });
+    draft.entries.forEach((entry, idx) => {
+      const row = makeEl("li", { class: "set-entry-row" });
+
+      const skillSel = makeEl("select", { class: "set-entry-skill" });
+      skillSel.appendChild(makeEl("option", { value: "" }, "— skill —"));
+      for (const sk of skills) {
+        const opt = makeEl("option", { value: sk.name }, sk.name);
+        if (entry.skillName === sk.name) opt.selected = true;
+        skillSel.appendChild(opt);
+      }
+      skillSel.addEventListener("change", () => {
+        entry.skillName = skillSel.value;
+      });
+      row.appendChild(skillSel);
+
+      const targetSel = makeEl("select", { class: "set-entry-target" });
+      targetSel.appendChild(makeEl("option", { value: "" }, "— target —"));
+      for (const tg of targets) {
+        const opt = makeEl("option", { value: tg.id }, tg.label);
+        if (entry.targetKey === tg.id) opt.selected = true;
+        targetSel.appendChild(opt);
+      }
+      targetSel.addEventListener("change", () => {
+        entry.targetKey = targetSel.value;
+      });
+      row.appendChild(targetSel);
+
+      row.appendChild(makeEl("button", {
+        type: "button",
+        class: "button ghost",
+        dataset: { action: "entry-remove", index: String(idx) },
+      }, "Remove"));
+
+      table.appendChild(row);
+    });
+    entriesWrap.appendChild(table);
+  }
+
+  const addBtn = makeEl("button", {
+    type: "button",
+    class: "button",
+    dataset: { action: "entry-add" },
+  }, "Add entry");
+  entriesWrap.appendChild(addBtn);
+  form.appendChild(entriesWrap);
+
+  const footer = makeEl("div", { class: "sets-editor-footer" });
+  footer.appendChild(makeEl("button", {
+    type: "submit",
+    class: "button primary",
+  }, "Save"));
+  footer.appendChild(makeEl("button", {
+    type: "button",
+    class: "button ghost",
+    dataset: { action: "draft-revert" },
+  }, "Revert"));
+  form.appendChild(footer);
+
+  editorEl.appendChild(form);
+}
+
+async function saveDraft() {
+  const draft = setsState.draft;
+  if (!draft) return;
+  const name = (draft.name || "").trim();
+  if (!name) {
+    showToast("Name is required");
+    return;
+  }
+  const entries = draft.entries.filter((e) => e.skillName && e.targetKey);
+  const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+  const payload = draft.id
+    ? { name, entries }
+    : {
+        name,
+        scope: draft.scope,
+        projectPath: draft.scope === "project" ? projectPath : undefined,
+        entries,
+      };
+  if (draft.id && draft.scope === "project") {
+    payload.projectPath = projectPath;
+  }
+  const url = draft.id ? `/api/sets/${encodeURIComponent(draft.id)}` : "/api/sets";
+  const method = draft.id ? "PATCH" : "POST";
+  const response = await fetch(url, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showToast(result.error || "Save failed");
+    return;
+  }
+  setsState.draft = null;
+  setsState.selectedId = result.set ? result.set.id : null;
+  await loadSets();
+  renderSets();
+  showToast(draft.id ? "Set updated" : "Set created");
+}
+
+function openSnapshotModal() {
+  // Close any existing modal first.
+  const existing = document.querySelector("dialog[data-snapshot-modal]");
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  const dialog = makeEl("dialog", { class: "snapshot-modal", dataset: { snapshotModal: "true" } });
+  const form = makeEl("form", { class: "snapshot-form", method: "dialog" });
+
+  form.appendChild(makeEl("h3", { class: "snapshot-title" }, "Snapshot current state"));
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const defaultName = `Snapshot ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+  const nameField = makeEl("label", { class: "set-field" });
+  nameField.appendChild(makeEl("span", {}, "Name"));
+  const nameInput = makeEl("input", {
+    type: "text",
+    value: defaultName,
+    required: "true",
+    autocomplete: "off",
+  });
+  nameField.appendChild(nameInput);
+  form.appendChild(nameField);
+
+  const hasProject = !!(state.data && state.data.project && state.data.project.path);
+  const scopeField = makeEl("fieldset", { class: "set-field snapshot-scope" });
+  scopeField.appendChild(makeEl("legend", {}, "Save as"));
+  const scopeGlobalLabel = makeEl("label", { class: "snapshot-scope-option" });
+  const scopeGlobalInput = makeEl("input", { type: "radio", name: "snapshot-scope", value: "global", checked: true });
+  scopeGlobalLabel.appendChild(scopeGlobalInput);
+  scopeGlobalLabel.appendChild(makeEl("span", {}, "Global"));
+  scopeField.appendChild(scopeGlobalLabel);
+  const scopeProjectLabel = makeEl("label", { class: "snapshot-scope-option" });
+  const scopeProjectInput = makeEl("input", { type: "radio", name: "snapshot-scope", value: "project" });
+  if (!hasProject) scopeProjectInput.disabled = true;
+  scopeProjectLabel.appendChild(scopeProjectInput);
+  scopeProjectLabel.appendChild(makeEl("span", {}, hasProject ? "Project" : "Project (load one first)"));
+  scopeField.appendChild(scopeProjectLabel);
+  form.appendChild(scopeField);
+
+  const targetsField = makeEl("fieldset", { class: "set-field snapshot-targets" });
+  targetsField.appendChild(makeEl("legend", {}, "Targets to snapshot"));
+  const targets = (state.data && state.data.targets) || [];
+  if (targets.length === 0) {
+    targetsField.appendChild(makeEl("p", { class: "muted" }, "No targets available."));
+  } else {
+    for (const tg of targets) {
+      const optLabel = makeEl("label", { class: "snapshot-target-option" });
+      const cb = makeEl("input", { type: "checkbox", value: tg.id });
+      optLabel.appendChild(cb);
+      optLabel.appendChild(makeEl("span", {}, tg.label));
+      targetsField.appendChild(optLabel);
+    }
+  }
+  form.appendChild(targetsField);
+
+  const footer = makeEl("div", { class: "sets-editor-footer" });
+  const confirmBtn = makeEl("button", { type: "button", class: "button primary" }, "Save snapshot");
+  const cancelBtn = makeEl("button", { type: "button", class: "button ghost" }, "Cancel");
+  footer.appendChild(confirmBtn);
+  footer.appendChild(cancelBtn);
+  form.appendChild(footer);
+  dialog.appendChild(form);
+
+  document.body.appendChild(dialog);
+
+  const close = () => {
+    if (dialog.open) dialog.close();
+    if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+  };
+
+  cancelBtn.addEventListener("click", close);
+  dialog.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    close();
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Name is required");
+      return;
+    }
+    const scope = scopeProjectInput.checked ? "project" : "global";
+    const targetKeys = Array.from(targetsField.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+    if (targetKeys.length === 0) {
+      showToast("Pick at least one target");
+      return;
+    }
+    const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+    const payload = {
+      name,
+      scope,
+      targetKeys,
+    };
+    if (scope === "project") payload.projectPath = projectPath;
+
+    await runAction(async () => {
+      const response = await fetch("/api/sets/snapshot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(result.error || "Snapshot failed");
+        return;
+      }
+      close();
+      setsState.selectedId = result.set ? result.set.id : null;
+      setsState.draft = null;
+      await loadSets();
+      renderSets();
+      showToast("Snapshot saved");
+    });
+  });
+
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
 }
