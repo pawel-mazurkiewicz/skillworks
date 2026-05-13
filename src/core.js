@@ -953,11 +953,48 @@ function createManager(options = {}) {
     return { global, project };
   }
 
+  async function createSet({ name, scope, projectPath, entries }) {
+    if (!name || !name.trim()) throw new Error("Set name is required");
+    if (scope !== "global" && scope !== "project") throw new Error("Invalid scope");
+    if (scope === "project" && !projectPath) throw new Error("projectPath required for project-scoped set");
+
+    const now = new Date().toISOString();
+    const record = {
+      id: setsModule.newSetId(),
+      name: name.trim(),
+      scope,
+      ...(scope === "project" ? { projectPath: normalizeProjectPath(projectPath) } : {}),
+      entries: setsModule.normalizeEntries(entries),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (scope === "global") {
+      const config = await readConfig();
+      const nextSets = [...config.sets, record];
+      await writeConfig({ ...config, sets: nextSets });
+    } else {
+      const projectSets = await setsModule.readProjectSets(projectPath);
+      await setsModule.writeProjectSets(projectPath, [...projectSets, record]);
+    }
+
+    return { set: record, state: await getState(projectPath || process.cwd()) };
+  }
+
+  async function getSet(id, { projectPath } = {}) {
+    const { global, project } = await listSets({ projectPath });
+    const match = [...global, ...project].find((s) => s.id === id);
+    if (!match) throw new Error(`Unknown set: ${id}`);
+    return match;
+  }
+
   return {
     appHome,
     readConfig,
     writeConfig,
     listSets,
+    createSet,
+    getSet,
     addProject,
     scanProjects,
     getState,
