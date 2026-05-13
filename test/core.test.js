@@ -978,6 +978,62 @@ test("planApplySet computes toEnable/toDisable/missing per touched target only",
   assert.equal(plan.targets.find((t) => t.targetId === "codex-global"), undefined);
 });
 
+test("applySet leaves touched targets matching the set and untouched targets alone", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+  await writeSkill(path.join(env.vault, "beta"), "beta", "beta desc");
+  await writeSkill(path.join(env.vault, "gamma"), "gamma", "gamma desc");
+
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+
+  await manager.toggleSkill({ projectPath: env.project, targetId: "claude-global", skillId: "alpha", enabled: true });
+  await manager.toggleSkill({ projectPath: env.project, targetId: "claude-global", skillId: "gamma", enabled: true });
+  await manager.toggleSkill({ projectPath: env.project, targetId: "codex-global", skillId: "gamma", enabled: true });
+
+  const created = await manager.createSet({
+    name: "S",
+    scope: "global",
+    entries: [
+      { skillName: "alpha", targetKey: "claude-global" },
+      { skillName: "beta",  targetKey: "claude-global" },
+    ],
+  });
+
+  const result = await manager.applySet(created.set.id, { projectPath: env.project });
+
+  const stateClaude = result.state.targets.find((t) => t.id === "claude-global");
+  const enabledNamesClaude = stateClaude.enabledSkillIds
+    .map((sid) => result.state.skills.find((sk) => sk.id === sid)?.name)
+    .sort();
+  assert.deepEqual(enabledNamesClaude, ["alpha", "beta"]);
+
+  const stateCodex = result.state.targets.find((t) => t.id === "codex-global");
+  const enabledNamesCodex = stateCodex.enabledSkillIds
+    .map((sid) => result.state.skills.find((sk) => sk.id === sid)?.name);
+  assert.deepEqual(enabledNamesCodex, ["gamma"]);
+});
+
+test("applySet skips missing skills but applies the rest, surfacing a warning", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+  const created = await manager.createSet({
+    name: "S",
+    scope: "global",
+    entries: [
+      { skillName: "alpha", targetKey: "claude-global" },
+      { skillName: "ghost", targetKey: "claude-global" },
+    ],
+  });
+
+  const result = await manager.applySet(created.set.id, { projectPath: env.project });
+  assert.equal(result.warnings.some((w) => w.includes("ghost")), true);
+  const claudeState = result.state.targets.find((t) => t.id === "claude-global");
+  const enabledNames = claudeState.enabledSkillIds.map((sid) => result.state.skills.find((sk) => sk.id === sid)?.name);
+  assert.deepEqual(enabledNames, ["alpha"]);
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");

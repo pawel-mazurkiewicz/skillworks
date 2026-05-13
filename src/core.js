@@ -1110,6 +1110,59 @@ function createManager(options = {}) {
     return result;
   }
 
+  async function applySet(id, { projectPath } = {}) {
+    const plan = await planApplySet(id, { projectPath });
+    const config = await readConfig();
+    const skills = await discoverSkills(config.vaultRoot);
+    const skillsByName = new Map(skills.map((s) => [s.name, s]));
+    const targets = buildTargets(
+      normalizeProjectPath(projectPath || process.cwd()),
+      homeDir,
+      config.customTargets,
+    );
+    const targetsById = new Map(targets.map((t) => [t.id, t]));
+
+    const perTargetResult = [];
+    const warnings = [];
+
+    for (const targetPlan of plan.targets) {
+      if (targetPlan.missingTarget) {
+        perTargetResult.push({ targetId: targetPlan.targetId, status: "skipped", reason: "Unknown target" });
+        warnings.push(`Target ${targetPlan.targetId} not found; skipped`);
+        continue;
+      }
+      if (targetPlan.missing.length) {
+        warnings.push(`Skipped missing skills in ${targetPlan.targetLabel}: ${targetPlan.missing.join(", ")}`);
+      }
+      const target = targetsById.get(targetPlan.targetId);
+      try {
+        for (const skillName of targetPlan.toDisable) {
+          const s = skills.find((sk) => sk.name === skillName);
+          if (s) await disableSkill(target, s);
+        }
+        for (const skillName of targetPlan.toEnable) {
+          const s = skillsByName.get(skillName);
+          if (s) await enableSkill(target, s);
+        }
+        perTargetResult.push({ targetId: targetPlan.targetId, status: "applied" });
+      } catch (error) {
+        perTargetResult.push({
+          targetId: targetPlan.targetId,
+          status: "failed",
+          reason: error.message || "Apply failed",
+        });
+        break; // stop on first failure
+      }
+    }
+
+    return {
+      plan,
+      perTargetResult,
+      warnings,
+      state: await getState(projectPath || process.cwd()),
+    };
+  }
+
   return {
     appHome,
     readConfig,
@@ -1120,6 +1173,7 @@ function createManager(options = {}) {
     updateSet,
     deleteSet,
     planApplySet,
+    applySet,
     addProject,
     scanProjects,
     getState,
