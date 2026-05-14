@@ -2,11 +2,12 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
-import { mountSkillEditor, unmountAllSkillEditors } from "./skill-editor.jsx";
+import { mountCreateSkillEditor, mountSkillEditor, unmountAllSkillEditors, unmountSkillEditor } from "./skill-editor.jsx";
 import "./styles.css";
 
 const PROJECT_CACHE_KEY = "asm.projects";
 const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
+const SIDEBAR_COLLAPSE_KEY = "skillworks.sidebarCollapsed";
 
 const state = {
   data: null,
@@ -15,6 +16,10 @@ const state = {
   activeTag: "All",
   activeTopTab: "manage",
   search: "",
+  filterTargetId: "all",
+  filterStatus: "all",
+  filterType: "all",
+  sortBy: "name-asc",
   preview: null,
   dedupe: null,
   dedupeChoices: new Map(),
@@ -70,16 +75,23 @@ const elements = {
   discoverySummary: document.querySelector("#discoverySummary"),
   discoveryList: document.querySelector("#discoveryList"),
   unmanagedList: document.querySelector("#unmanagedList"),
-  createSkillForm: document.querySelector("#createSkillForm"),
-  newSkillName: document.querySelector("#newSkillName"),
-  newSkillDescription: document.querySelector("#newSkillDescription"),
+  openCreateSkillButton: document.querySelector("#openCreateSkillButton"),
+  closeCreateSkillButton: document.querySelector("#closeCreateSkillButton"),
+  createSkillModal: document.querySelector('[data-modal="create-skill"]'),
+  createSkillEditorRoot: document.querySelector("#createSkillEditorRoot"),
   gitInstallForm: document.querySelector("#gitInstallForm"),
   gitRepoInput: document.querySelector("#gitRepoInput"),
   gitRefInput: document.querySelector("#gitRefInput"),
+  gitTargetPicker: document.querySelector("#gitTargetPicker"),
+  gitTargetSummary: document.querySelector("#gitTargetSummary"),
   gitTargetCheckboxes: document.querySelector("#gitTargetCheckboxes"),
   gitPreviewButton: document.querySelector("#gitPreviewButton"),
   gitPreviewResult: document.querySelector("#gitPreviewResult"),
   searchInput: document.querySelector("#searchInput"),
+  agentFilterSelect: document.querySelector("#agentFilterSelect"),
+  statusFilterSelect: document.querySelector("#statusFilterSelect"),
+  typeFilterSelect: document.querySelector("#typeFilterSelect"),
+  sortSelect: document.querySelector("#sortSelect"),
   bulkSelectedCount: document.querySelector("#bulkSelectedCount"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   bulkTargetSelect: document.querySelector("#bulkTargetSelect"),
@@ -107,7 +119,6 @@ const elements = {
   customTargetScope: document.querySelector("#customTargetScope"),
   customTargetPath: document.querySelector("#customTargetPath"),
   customTargetList: document.querySelector("#customTargetList"),
-  tagFilters: document.querySelector("#tagFilters"),
   targetStrip: document.querySelector("#targetStrip"),
   matrixHead: document.querySelector("#matrixHead"),
   matrixBody: document.querySelector("#matrixBody"),
@@ -122,6 +133,9 @@ const elements = {
   skillPreview: document.querySelector("#skillPreview"),
   copyPathButton: document.querySelector("#copyPathButton"),
   toast: document.querySelector("#toast"),
+  bulkFloating: document.querySelector("#bulkFloating"),
+  manageGrid: document.querySelector("#manageTab .manage-grid"),
+  sidebarToggle: document.querySelector('[data-action="sidebar-toggle"]'),
   dedupeScanButton: document.querySelector("#dedupeScanButton"),
   dedupeApplyButton: document.querySelector("#dedupeApplyButton"),
   dedupeSummary: document.querySelector("#dedupeSummary"),
@@ -143,7 +157,7 @@ async function bootstrap() {
       }
     });
   });
-  window.addEventListener("resize", relocateManageControls);
+  initSidebarToggle();
   renderTopTabs();
 
   initSetsPanel();
@@ -213,27 +227,16 @@ async function bootstrap() {
     showToast(`Moved ${report.imported}, skipped ${report.skipped}, errors ${report.errors}`);
   }));
 
-  elements.createSkillForm.addEventListener("submit", async (event) => {
+  elements.openCreateSkillButton.addEventListener("click", () => openCreateSkillModal());
+  elements.closeCreateSkillButton.addEventListener("click", () => closeCreateSkillModal());
+  elements.createSkillModal.addEventListener("cancel", (event) => {
     event.preventDefault();
-    await runAction(async () => {
-      const name = elements.newSkillName.value.trim();
-      if (!name) {
-        showToast("Skill name is required");
-        return;
-      }
-      applyState(await api("/api/create-skill", {
-        method: "POST",
-        body: {
-          name,
-          description: elements.newSkillDescription.value.trim(),
-          projectPath: elements.projectInput.value,
-        },
-      }));
-      elements.newSkillName.value = "";
-      elements.newSkillDescription.value = "";
-      render();
-      showToast("Skill created");
-    });
+    closeCreateSkillModal();
+  });
+  elements.createSkillModal.addEventListener("close", () => {
+    if (!elements.createSkillModal.open) {
+      unmountCreateSkillModal();
+    }
   });
 
   elements.gitPreviewButton.addEventListener("click", () => runAction(async () => {
@@ -257,6 +260,12 @@ async function bootstrap() {
     renderInstallPreview(plan, { repoUrl });
     showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
   }));
+
+  elements.gitTargetCheckboxes.addEventListener("change", (event) => {
+    if (event.target.matches("input[type=checkbox]")) {
+      updateGitTargetSummary();
+    }
+  });
 
   elements.gitInstallForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -298,6 +307,29 @@ async function bootstrap() {
     renderBulkBar();
   });
 
+  elements.agentFilterSelect.addEventListener("change", () => {
+    state.filterTargetId = elements.agentFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.statusFilterSelect.addEventListener("change", () => {
+    state.filterStatus = elements.statusFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.typeFilterSelect.addEventListener("change", () => {
+    state.filterType = elements.typeFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.sortSelect.addEventListener("change", () => {
+    state.sortBy = elements.sortSelect.value;
+    renderMatrix();
+  });
+
   elements.clearSelectionButton.addEventListener("click", () => {
     state.selectedSkillIds.clear();
     renderMatrix();
@@ -335,6 +367,48 @@ async function bootstrap() {
 
   elements.projectInput.value = localStorage.getItem("asm.projectPath") || "";
   await runAction(() => loadState());
+}
+
+function openCreateSkillModal() {
+  mountCreateSkillEditor(elements.createSkillEditorRoot, {
+    onCancel: closeCreateSkillModal,
+    onToast: showToast,
+    onCreate: async ({ name, content }) => {
+      applyState(await api("/api/create-skill", {
+        method: "POST",
+        body: {
+          name,
+          content,
+          projectPath: elements.projectInput.value,
+        },
+      }));
+      state.selectedSkillId = state.data.skills.find((skill) => skill.name === name)?.id || state.selectedSkillId;
+      closeCreateSkillModal();
+      render();
+      showToast("Skill created");
+    },
+  });
+
+  if (typeof elements.createSkillModal.showModal === "function") {
+    elements.createSkillModal.showModal();
+  } else {
+    elements.createSkillModal.setAttribute("open", "");
+  }
+}
+
+function closeCreateSkillModal() {
+  if (elements.createSkillModal.open && typeof elements.createSkillModal.close === "function") {
+    elements.createSkillModal.close();
+  } else {
+    elements.createSkillModal.removeAttribute("open");
+    unmountCreateSkillModal();
+  }
+}
+
+function unmountCreateSkillModal() {
+  if (elements.createSkillEditorRoot) {
+    unmountSkillEditor(elements.createSkillEditorRoot);
+  }
 }
 
 async function loadState() {
@@ -706,8 +780,9 @@ function renderInstallTargets() {
   const targets = state.data.targets || [];
   if (!targets.length) {
     elements.gitTargetCheckboxes.innerHTML =
-      `<legend>Install to (vault by default; pick any extra targets)</legend>` +
+      `<legend>Extra targets</legend>` +
       `<p class="empty-copy">No targets available.</p>`;
+    updateGitTargetSummary();
     return;
   }
   const previouslyChecked = new Set(
@@ -716,16 +791,38 @@ function renderInstallTargets() {
   const items = targets
     .map((target) => {
       const checked = previouslyChecked.has(target.id) ? "checked" : "";
+      const locator = target.scope === "project" ? "Project target" : "Global target";
       return `
         <label class="target-checkbox">
           <input type="checkbox" value="${escapeHtml(target.id)}" ${checked} />
-          <span>${escapeHtml(target.label)}</span>
+          <span>
+            <strong>${escapeHtml(target.label)}</strong>
+            <small>${escapeHtml(locator)}</small>
+          </span>
         </label>
       `;
     })
     .join("");
   elements.gitTargetCheckboxes.innerHTML =
-    `<legend>Install to (vault by default; pick any extra targets)</legend>${items}`;
+    `<legend>Extra targets</legend>${items}`;
+  updateGitTargetSummary();
+}
+
+function updateGitTargetSummary() {
+  if (!elements.gitTargetSummary || !elements.gitTargetCheckboxes) {
+    return;
+  }
+  const checked = Array.from(
+    elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  );
+  if (!checked.length) {
+    elements.gitTargetSummary.textContent = "Vault only";
+    return;
+  }
+  const labelsById = new Map((state.data?.targets || []).map((target) => [target.id, target.label]));
+  const names = checked.map((input) => labelsById.get(input.value) || input.value);
+  elements.gitTargetSummary.textContent =
+    names.length <= 2 ? `Vault + ${names.join(", ")}` : `Vault + ${names.length} targets`;
 }
 
 function renderInstallPreview(plan, options = {}) {
@@ -859,7 +956,9 @@ function renderBulkBar() {
   }
 
   const count = state.selectedSkillIds.size;
-  elements.bulkSelectedCount.textContent = `${count} selected`;
+  if (elements.bulkSelectedCount) {
+    elements.bulkSelectedCount.textContent = `${count} selected`;
+  }
   const disabled = count === 0;
   [
     elements.clearSelectionButton,
@@ -870,8 +969,23 @@ function renderBulkBar() {
     elements.bulkMoveButton,
     elements.bulkDeleteButton,
   ].forEach((button) => {
-    button.disabled = disabled;
+    if (button) button.disabled = disabled;
   });
+
+  const panel = elements.bulkFloating;
+  if (panel) {
+    const shouldShow = count > 1;
+    if (shouldShow) {
+      panel.hidden = false;
+      // Force reflow so the transition can run, then add the visible class.
+      // eslint-disable-next-line no-unused-expressions
+      panel.offsetHeight;
+      panel.classList.add("is-visible");
+    } else {
+      panel.classList.remove("is-visible");
+      panel.hidden = true;
+    }
+  }
 }
 
 function renderTopTabs() {
@@ -883,30 +997,40 @@ function renderTopTabs() {
   elements.tabPanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.topTabPanel !== state.activeTopTab);
   });
-  relocateManageControls();
+  if (elements.appShell) {
+    elements.appShell.setAttribute("data-active-tab", state.activeTopTab);
+  }
+}
+
+function initSidebarToggle() {
+  if (!elements.manageGrid || !elements.sidebarToggle) return;
+  const stored = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+  const collapsed = stored === null ? true : stored !== "false";
+  applySidebarState(collapsed);
+  elements.sidebarToggle.addEventListener("click", () => {
+    const next = elements.manageGrid.getAttribute("data-sidebar-collapsed") !== "false"
+      ? false
+      : true;
+    applySidebarState(next);
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, String(next));
+    } catch (_err) {
+      /* ignore storage errors */
+    }
+  });
+}
+
+function applySidebarState(collapsed) {
+  if (!elements.manageGrid) return;
+  elements.manageGrid.setAttribute("data-sidebar-collapsed", collapsed ? "true" : "false");
+  if (elements.sidebarToggle) {
+    elements.sidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
 }
 
 function relocateManageControls() {
-  if (!elements.appShell || !elements.toolbar || !elements.contextStrip || !elements.mainSurface || !elements.bulkBar || !elements.targetStrip) {
-    return;
-  }
-  const shouldDock = state.activeTopTab === "manage";
-  const shouldPromoteBulk = shouldDock;
-  if (shouldDock && elements.toolbar.parentElement !== elements.contextStrip) {
-    elements.contextStrip.appendChild(elements.toolbar);
-  } else if (!shouldDock && elements.toolbar.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.toolbar, elements.bulkBar);
-  }
-  if (shouldDock && elements.targetStrip.parentElement !== elements.contextStrip) {
-    elements.contextStrip.appendChild(elements.targetStrip);
-  } else if (!shouldDock && elements.targetStrip.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.targetStrip, elements.matrixBody.closest(".matrix-wrap"));
-  }
-  if (shouldPromoteBulk && elements.bulkBar.parentElement !== elements.appShell) {
-    elements.appShell.insertBefore(elements.bulkBar, elements.contextStrip.nextSibling);
-  } else if (!shouldPromoteBulk && elements.bulkBar.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.bulkBar, elements.targetStrip);
-  }
+  // Layout is now static: header is permanent, sidebar/main/detail are wired in markup.
+  // Kept as a no-op so older call sites continue to compile.
 }
 
 async function scanDuplicates() {
@@ -1061,11 +1185,15 @@ function formatBytes(value) {
 }
 
 function renderTargets() {
+  const activeTargetId = state.filterTargetId && state.filterTargetId !== "all"
+    ? state.filterTargetId
+    : null;
   elements.targetStrip.innerHTML = state.data.targets
     .map((target) => {
       const unmanaged = target.unmanaged.length ? `${target.unmanaged.length} unmanaged` : "clean";
+      const isActive = activeTargetId === target.id;
       return `
-        <article class="target-card">
+        <article class="target-card${isActive ? " is-active" : ""}" role="button" tabindex="0" data-target-id="${escapeAttr(target.id)}" aria-pressed="${isActive ? "true" : "false"}">
           <div class="target-card-head">
             ${iconSprite("folder", "icon target-card-icon")}
             <strong>${escapeHtml(target.label)}</strong>
@@ -1076,6 +1204,29 @@ function renderTargets() {
       `;
     })
     .join("");
+
+  elements.targetStrip.querySelectorAll("[data-target-id]").forEach((card) => {
+    const activate = () => {
+      const id = card.getAttribute("data-target-id");
+      const current = state.filterTargetId;
+      const next = current === id ? "all" : id;
+      state.filterTargetId = next;
+      if (elements.agentFilterSelect) {
+        const hasOption = Array.from(elements.agentFilterSelect.options).some((opt) => opt.value === next);
+        elements.agentFilterSelect.value = hasOption ? next : "all";
+      }
+      renderMatrix();
+      renderBulkBar();
+      renderTargets();
+    };
+    card.addEventListener("click", activate);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
+  });
 }
 
 function renderUnmanaged() {
@@ -1138,102 +1289,82 @@ function renderUnmanaged() {
 }
 
 function renderTags() {
-  const tags = new Set(["All"]);
+  const currentTarget = state.filterTargetId;
+  const currentType = state.filterType;
+  const types = new Set();
   for (const skill of state.data.skills) {
-    for (const tag of skill.tags) {
-      tags.add(tag);
-    }
+    types.add(skillType(skill));
   }
 
-  elements.tagFilters.innerHTML = [...tags]
-    .map(
-      (tag) => `
-        <button class="segment ${tag === state.activeTag ? "active" : ""}" type="button" data-tag="${escapeHtml(tag)}">
-          ${escapeHtml(tag)}
-        </button>
-      `,
-    )
-    .join("");
+  elements.agentFilterSelect.innerHTML = [
+    `<option value="all">Any agent</option>`,
+    ...state.data.targets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.label)}</option>`),
+  ].join("");
+  elements.agentFilterSelect.value = state.data.targets.some((target) => target.id === currentTarget)
+    ? currentTarget
+    : "all";
+  state.filterTargetId = elements.agentFilterSelect.value;
 
-  elements.tagFilters.querySelectorAll("button").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeTag = button.dataset.tag;
-      renderTags();
-      renderMatrix();
-    });
-  });
+  elements.typeFilterSelect.innerHTML = [
+    `<option value="all">Any type</option>`,
+    ...[...types].sort((left, right) => left.localeCompare(right)).map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`),
+  ].join("");
+  elements.typeFilterSelect.value = types.has(currentType) ? currentType : "all";
+  state.filterType = elements.typeFilterSelect.value;
+  elements.statusFilterSelect.value = state.filterStatus;
+  elements.sortSelect.value = state.sortBy;
 }
 
 function renderMatrix() {
-  unmountAllSkillEditors();
   const targets = state.data.targets;
   const skills = filteredSkills();
   const visibleSkillIds = skills.map((skill) => skill.id);
   const allVisibleSelected = visibleSkillIds.length > 0 && visibleSkillIds.every((id) => state.selectedSkillIds.has(id));
 
   elements.matrixHead.innerHTML = `
-    <tr>
-      <th class="checkbox-cell">
-        <input type="checkbox" id="selectVisibleCheckbox" ${allVisibleSelected ? "checked" : ""} aria-label="Select visible skills" />
-      </th>
-      <th>Skill</th>
-      ${targets.map((target) => `<th title="${escapeHtml(target.label)}">${escapeHtml(target.shortLabel)}</th>`).join("")}
-    </tr>
+    <label class="skill-list-select-all">
+      <input type="checkbox" id="selectVisibleCheckbox" ${allVisibleSelected ? "checked" : ""} aria-label="Select visible skills" />
+      <span>${skills.length} skill${skills.length === 1 ? "" : "s"}</span>
+    </label>
+    <span>${escapeHtml(activeFilterSummary())}</span>
   `;
 
   if (!skills.length) {
-    elements.matrixBody.innerHTML = `<tr><td class="empty-state" colspan="${targets.length + 2}">No skills match the current filter.</td></tr>`;
+    elements.matrixBody.innerHTML = `<div class="empty-state">No skills match the current filter.</div>`;
     bindSelectVisible(visibleSkillIds);
     return;
   }
 
   elements.matrixBody.innerHTML = skills
     .map((skill) => {
-      const cells = targets
-        .map((target) => {
-          const status = target.skillStatuses[skill.id];
-          const label = status.enabled ? "Disable" : "Enable";
-          const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
-          return `
-            <td>
-              <button
-                class="${classes}"
-                type="button"
-                title="${escapeHtml(label)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
-                data-skill-id="${escapeHtml(skill.id)}"
-                data-target-id="${escapeHtml(target.id)}"
-                data-enabled="${status.enabled ? "true" : "false"}"
-              ><span></span></button>
-            </td>
-          `;
-        })
-        .join("");
-
-      const row = `
-        <tr class="${skill.id === state.selectedSkillId ? "selected-row" : ""}">
-          <td class="checkbox-cell">
+      const activeTargets = targets.filter((target) => target.skillStatuses[skill.id]?.enabled);
+      const assignmentText = activeTargets.length
+        ? activeTargets.map((target) => target.shortLabel || target.label).join(", ")
+        : "Disabled";
+      return `
+        <article class="skill-list-item ${skill.id === state.selectedSkillId ? "is-selected" : ""}" data-select-skill="${escapeHtml(skill.id)}">
+          <label class="row-check" title="Select ${escapeHtml(skill.name)}">
             <input
               type="checkbox"
               aria-label="Select ${escapeHtml(skill.name)}"
               data-select-row="${escapeHtml(skill.id)}"
               ${state.selectedSkillIds.has(skill.id) ? "checked" : ""}
             />
-          </td>
-          <td class="skill-cell">
-            <div class="skill-name">
-              <button type="button" data-select-skill="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
-            </div>
-            <div class="skill-description">${escapeHtml(skill.description || "No description")}</div>
-            <div class="tag-row">
+          </label>
+          <button class="skill-list-button" type="button">
+            <span class="skill-list-title">
+              <strong>${escapeHtml(skill.name)}</strong>
+              <span>${escapeHtml(skillAuthor(skill))}</span>
+            </span>
+            <span class="skill-description">${escapeHtml(skill.description || "No description")}</span>
+            <span class="tag-row">
+              <span class="tag type-tag">${escapeHtml(skillType(skill))}</span>
               ${skill.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
-            </div>
-          </td>
-          ${cells}
-        </tr>
+            </span>
+          </button>
+          <span class="assignment-summary ${activeTargets.length ? "" : "is-disabled"}">${escapeHtml(assignmentText)}</span>
+        </article>
       `;
-      return skill.id === state.selectedSkillId
-        ? `${row}${renderInlineDetailRow(skill, targets.length + 2)}`
-        : row;
     })
     .join("");
 
@@ -1252,90 +1383,28 @@ function renderMatrix() {
     });
   });
 
-  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      state.selectedSkillId = state.selectedSkillId === button.dataset.selectSkill
-        ? null
-        : button.dataset.selectSkill;
+  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((row) => {
+    row.addEventListener("click", async (event) => {
+      if (event.target.closest("[data-select-row]")) {
+        return;
+      }
+      state.selectedSkillId = row.dataset.selectSkill;
       renderMatrix();
       await renderDetail();
+      scrollDetailIntoViewIfStacked();
     });
   });
 
-  elements.matrixBody.querySelectorAll("[data-copy-selected-path]").forEach((button) => {
-    button.addEventListener("click", () => copySelectedSkillPath());
-  });
-
-  elements.matrixBody.querySelectorAll("[data-target-id]").forEach((button) => {
-    button.addEventListener("click", () => runAction(async () => {
-      const nextEnabled = button.dataset.enabled !== "true";
-      const targetId = button.dataset.targetId;
-      applyState(await api("/api/toggle", {
-        method: "POST",
-        body: {
-          projectPath: elements.projectInput.value,
-          targetId,
-          skillId: button.dataset.skillId,
-          enabled: nextEnabled,
-        },
-      }));
-      if (lastAppliedSet && lastAppliedSet.touchedTargets.includes(targetId)) {
-        lastAppliedSet.modified = true;
-      }
-      render();
-      showToast(nextEnabled ? "Skill enabled" : "Skill disabled");
-    }));
-  });
 }
 
-function renderInlineDetailRow(skill, colspan) {
-  const links = state.data.targets
-    .map((target) => ({ target, status: target.skillStatuses[skill.id] }))
-    .filter((item) => item.status.enabled || item.status.conflict || item.status.staleManifest);
-
-  const linkHtml = links.length
-    ? links
-        .map(
-          ({ target, status }) => `
-            <div class="link-pill">
-              <strong>${escapeHtml(target.label)}${status.conflict ? " conflict" : ""}${status.staleManifest ? " stale" : ""}</strong>
-              <span>${escapeHtml(status.linkPath)}</span>
-            </div>
-          `,
-        )
-        .join("")
-    : `<div class="link-pill"><strong>Not linked</strong><span>No active target links for this skill.</span></div>`;
-
-  return `
-    <tr class="detail-row">
-      <td colspan="${colspan}">
-        <section class="panel detail-card inline-detail-card" data-inline-skill-detail="${escapeHtml(skill.id)}">
-          <div class="skill-detail">
-            <div class="detail-title-row">
-              <div>
-                <p class="eyebrow">${escapeHtml(skill.tags.join(" / "))}</p>
-                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
-              </div>
-              <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
-            </div>
-            <p class="description">${escapeHtml(skill.description || "No description")}</p>
-            <dl class="path-list">
-              <div>
-                <dt>Vault path</dt>
-                <dd>${escapeHtml(skill.path)}</dd>
-              </div>
-              <div>
-                <dt>Relative id</dt>
-                <dd>${escapeHtml(skill.id)}</dd>
-              </div>
-            </dl>
-            <div class="detail-links">${linkHtml}</div>
-            <div class="skill-editor-host" data-skill-editor-root>Loading editor...</div>
-          </div>
-        </section>
-      </td>
-    </tr>
-  `;
+function scrollDetailIntoViewIfStacked() {
+  const pane = document.querySelector("#manageTab .detail-pane");
+  if (!pane) return;
+  // When the layout collapses to "side main / detail detail" the detail pane
+  // can sit below the fold. Bring it into view on the workspace scroll axis.
+  const stacked = window.matchMedia("(max-width: 900px)").matches;
+  if (!stacked) return;
+  pane.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function bindSelectVisible(visibleSkillIds) {
@@ -1360,14 +1429,44 @@ function bindSelectVisible(visibleSkillIds) {
 async function renderDetail() {
   const skill = selectedSkill();
   if (!skill) {
+    unmountAllSkillEditors();
+    elements.emptyDetail.hidden = false;
+    elements.skillDetail.hidden = true;
+    elements.skillPreview.innerHTML = "";
     return;
   }
 
-  const detail = document.querySelector(`[data-inline-skill-detail="${cssEscape(skill.id)}"]`);
-  const editorNode = detail?.querySelector("[data-skill-editor-root]");
-  if (!editorNode) {
-    return;
-  }
+  unmountAllSkillEditors();
+  elements.emptyDetail.hidden = true;
+  elements.skillDetail.hidden = false;
+  elements.skillPreview.innerHTML = renderDetailPane(skill);
+
+  elements.skillPreview.querySelectorAll("[data-copy-selected-path]").forEach((button) => {
+    button.addEventListener("click", () => copySelectedSkillPath());
+  });
+
+  elements.skillPreview.querySelectorAll("[data-detail-target-id]").forEach((button) => {
+    button.addEventListener("click", () => runAction(async () => {
+      const nextEnabled = button.dataset.enabled !== "true";
+      const targetId = button.dataset.detailTargetId;
+      applyState(await api("/api/toggle", {
+        method: "POST",
+        body: {
+          projectPath: elements.projectInput.value,
+          targetId,
+          skillId: button.dataset.skillId,
+          enabled: nextEnabled,
+        },
+      }));
+      if (lastAppliedSet && lastAppliedSet.touchedTargets.includes(targetId)) {
+        lastAppliedSet.modified = true;
+      }
+      render();
+      showToast(nextEnabled ? "Skill enabled" : "Skill disabled");
+    }));
+  });
+
+  const editorNode = elements.skillPreview.querySelector("[data-skill-editor-root]");
 
   const activeSkillId = skill.id;
   const preview = await api(`/api/skill?id=${encodeURIComponent(skill.id)}`);
@@ -1395,6 +1494,66 @@ async function renderDetail() {
   });
 }
 
+function renderDetailPane(skill) {
+  const assignmentRows = state.data.targets
+    .map((target) => {
+      const status = target.skillStatuses[skill.id] || {};
+      const label = status.enabled ? "Disable" : "Enable";
+      const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
+      const pathText = status.linkPath || target.path;
+      const note = status.conflict
+        ? "Conflict"
+        : status.staleManifest
+          ? "Stale link"
+          : target.scope;
+      return `
+        <div class="assignment-row">
+          <div>
+            <strong>${escapeHtml(target.label)}</strong>
+            <span title="${escapeHtml(pathText || "")}">${escapeHtml(note)}${status.enabled ? ` via ${escapeHtml(pathText || "")}` : ""}</span>
+          </div>
+          <button
+            class="${classes}"
+            type="button"
+            title="${escapeHtml(label)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
+            data-skill-id="${escapeHtml(skill.id)}"
+            data-detail-target-id="${escapeHtml(target.id)}"
+            data-enabled="${status.enabled ? "true" : "false"}"
+          ><span></span></button>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="skill-detail">
+      <div class="detail-title-row">
+        <div>
+          <p class="eyebrow">${escapeHtml(skillType(skill))} / ${escapeHtml(skillAuthor(skill))}</p>
+          <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
+        </div>
+        <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
+      </div>
+      <p class="description">${escapeHtml(skill.description || "No description")}</p>
+      <section class="assignment-panel" aria-label="Agent assignment">
+        <h3>Agent Assignment</h3>
+        <div class="assignment-list">${assignmentRows}</div>
+      </section>
+      <dl class="path-list">
+        <div>
+          <dt>Vault path</dt>
+          <dd>${escapeHtml(skill.path)}</dd>
+        </div>
+        <div>
+          <dt>Relative id</dt>
+          <dd>${escapeHtml(skill.id)}</dd>
+        </div>
+      </dl>
+      <div class="skill-editor-host" data-skill-editor-root>Loading editor...</div>
+    </div>
+  `;
+}
+
 function copySelectedSkillPath() {
   return runAction(async () => {
     const skill = selectedSkill();
@@ -1415,11 +1574,49 @@ function cssEscape(value) {
 
 function filteredSkills() {
   const query = state.search.trim().toLowerCase();
-  return state.data.skills.filter((skill) => {
-    const matchesTag = state.activeTag === "All" || skill.tags.includes(state.activeTag);
-    const haystack = `${skill.name} ${skill.description} ${skill.tags.join(" ")} ${skill.id}`.toLowerCase();
-    return matchesTag && (!query || haystack.includes(query));
+  const filtered = state.data.skills.filter((skill) => {
+    const type = skillType(skill);
+    const matchesType = state.filterType === "all" || type === state.filterType;
+    const enabledTargets = state.data.targets.filter((target) => target.skillStatuses[skill.id]?.enabled);
+    const matchesTarget = state.filterTargetId === "all" || enabledTargets.some((target) => target.id === state.filterTargetId);
+    const matchesStatus = state.filterStatus === "all"
+      || (state.filterStatus === "enabled" && enabledTargets.length > 0)
+      || (state.filterStatus === "disabled" && enabledTargets.length === 0);
+    const haystack = `${skill.name} ${skill.description} ${skill.tags.join(" ")} ${skill.id} ${skillAuthor(skill)} ${type}`.toLowerCase();
+    return matchesType && matchesTarget && matchesStatus && (!query || haystack.includes(query));
   });
+
+  return filtered.sort((left, right) => {
+    if (state.sortBy === "name-desc") {
+      return right.name.localeCompare(left.name);
+    }
+    if (state.sortBy === "author-asc") {
+      return skillAuthor(left).localeCompare(skillAuthor(right)) || left.name.localeCompare(right.name);
+    }
+    if (state.sortBy === "author-desc") {
+      return skillAuthor(right).localeCompare(skillAuthor(left)) || left.name.localeCompare(right.name);
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function skillType(skill) {
+  return skill.type || (Array.isArray(skill.tags) && skill.tags[0]) || "General";
+}
+
+function skillAuthor(skill) {
+  return skill.author || (String(skill.id || "").split("/").filter(Boolean)[0] || "Local");
+}
+
+function activeFilterSummary() {
+  const parts = [];
+  if (state.filterTargetId !== "all") {
+    const target = state.data.targets.find((item) => item.id === state.filterTargetId);
+    if (target) parts.push(target.label);
+  }
+  if (state.filterStatus !== "all") parts.push(state.filterStatus === "enabled" ? "enabled" : "disabled");
+  if (state.filterType !== "all") parts.push(state.filterType);
+  return parts.length ? parts.join(" / ") : "All skills";
 }
 
 function selectedSkill() {
