@@ -1,11 +1,15 @@
 const { defineConfig } = require("vite");
 const react = require("@vitejs/plugin-react");
 const tailwindcss = require("@tailwindcss/vite").default;
+const path = require("path");
 
 const tauriHost = process.env.TAURI_DEV_HOST;
 
 module.exports = defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": path.resolve(__dirname, "public") },
+  },
   root: "public",
   publicDir: "../assets",
   clearScreen: false,
