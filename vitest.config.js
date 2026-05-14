@@ -5,5 +5,5 @@ const path = require("path");
 module.exports = defineConfig({
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(__dirname, "public") } },
-  test: { environment: "jsdom", globals: true, setupFiles: ["./tests/setup.js"], include: ["tests/**/*.{test,spec}.{js,jsx}"] },
+  test: { environment: "jsdom", globals: true, setupFiles: ["./tests/setup.js"], include: ["tests/lib/**/*.{test,spec}.{js,jsx}", "tests/components/**/*.{test,spec}.{js,jsx}"] },
 });
