@@ -48,14 +48,30 @@
         <symbol id="icon-folder" viewBox="0 0 24 24">
           <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" />
         </symbol>
+        <symbol id="icon-filter" viewBox="0 0 24 24">
+          <path d="M4 4h16l-6 8v6l-4 2v-8z" />
+        </symbol>
+        <symbol id="icon-chevron-left" viewBox="0 0 24 24">
+          <path d="M15 6l-6 6 6 6" />
+        </symbol>
+        <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+          <path d="M9 6l6 6-6 6" />
+        </symbol>
+        <symbol id="icon-x" viewBox="0 0 24 24">
+          <path d="M6 6l12 12" />
+          <path d="M18 6l-12 12" />
+        </symbol>
       </defs>
     </svg>
     <div class="app-shell">
+      <div class="app-header" data-app-header>
       <header class="topbar">
         <div class="brand-block">
-          <img class="brand-icon" src="/icon_256.png" alt="Skillworks icon" width="72" height="72" />
-          <p class="eyebrow">Skill workspace</p>
-          <h1>Skillworks</h1>
+          <img class="brand-icon" src="/icon_256.png" alt="Skillworks icon" width="56" height="56" />
+          <div class="brand-text">
+            <p class="eyebrow">Skill workspace</p>
+            <h1>Skillworks</h1>
+          </div>
         </div>
         <nav class="top-tabs" aria-label="Workspace sections">
           <button class="top-tab active" data-top-tab="manage" type="button">
@@ -96,95 +112,116 @@
         </nav>
       </header>
 
-      <section class="context-strip" aria-label="Workspace context">
-        <form class="context-field" id="pathForm">
-          <label for="projectInput"><span>Project</span></label>
-          <div class="context-row">
+      <section class="header-row header-row--project" aria-label="Project context">
+        <form class="project-form" id="pathForm">
+          <label class="header-field grow" for="projectInput">
+            <span>Project</span>
             <input id="projectInput" name="project" autocomplete="off" spellcheck="false" placeholder="/path/to/project" />
+          </label>
+          <div class="header-actions">
             <button class="button" id="browseProjectButton" type="button">Browse</button>
             <button class="button primary" type="submit">Load</button>
-          </div>
-        </form>
-        <div class="context-field">
-          <label for="vaultInput"><span>Vault</span></label>
-          <div class="context-row">
-            <input id="vaultInput" autocomplete="off" spellcheck="false" placeholder="~/.claude/skills" />
-            <button class="button" id="browseVaultButton" type="button">Browse</button>
-            <button class="button" id="saveVaultButton" type="button">Save</button>
             <button class="button ghost" id="refreshButton" type="button">Refresh</button>
           </div>
-        </div>
-        <dl class="context-summary" aria-label="Summary">
-          <div>
-            <dt>Vault skills</dt>
-            <dd><strong id="skillCount">0</strong></dd>
-          </div>
-          <div>
-            <dt>Links</dt>
-            <dd><strong id="enabledCount">0</strong></dd>
-          </div>
-          <div>
-            <dt>Unmanaged</dt>
-            <dd><strong id="unmanagedCount">0</strong></dd>
-          </div>
-        </dl>
+        </form>
       </section>
+
+      <section class="header-row header-row--manage" data-only-tab="manage" aria-label="Skill search">
+        <label class="search-wrap header-search">
+          <span class="sr-only">Search skills</span>
+          <svg class="icon field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg>
+          <input id="searchInput" placeholder="Search skills, tags, descriptions" autocomplete="off" />
+        </label>
+        <div class="header-actions">
+          <button class="button primary" id="openCreateSkillButton" type="button">New skill</button>
+        </div>
+      </section>
+      </div>
 
       <main class="workspace">
         <section class="tab-content" id="manageTab" data-top-tab-panel="manage" aria-label="Manage skills">
-          <div class="manage-grid">
-            <section class="main-surface">
-              <div class="toolbar">
-                <label class="search-wrap">
-                  <span class="sr-only">Search skills</span>
-                  <svg class="icon field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg>
-                  <input id="searchInput" placeholder="Search skills, tags, descriptions" autocomplete="off" />
-                </label>
-                <div class="segments" id="tagFilters" aria-label="Tag filters"></div>
+          <div class="manage-grid" data-sidebar-collapsed="true">
+            <aside class="skill-sidebar" data-skill-sidebar aria-label="Skill filters">
+              <button type="button" class="sidebar-toggle" data-action="sidebar-toggle" aria-expanded="false" aria-controls="sidebarBody" title="Filters & targets">
+                <svg class="icon sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-filter"></use></svg>
+                <span class="sidebar-toggle-label">Filters</span>
+                <svg class="icon sidebar-toggle-caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+              </button>
+              <div class="sidebar-body" id="sidebarBody">
+                <div class="sidebar-section">
+                  <h3 class="sidebar-heading">Filters</h3>
+                  <div class="filter-stack">
+                    <label class="inline-field">
+                      <span>Agent</span>
+                      <select id="agentFilterSelect"></select>
+                    </label>
+                    <label class="inline-field">
+                      <span>Status</span>
+                      <select id="statusFilterSelect">
+                        <option value="all">Any status</option>
+                        <option value="enabled">Enabled anywhere</option>
+                        <option value="disabled">Disabled everywhere</option>
+                      </select>
+                    </label>
+                    <label class="inline-field">
+                      <span>Type</span>
+                      <select id="typeFilterSelect"></select>
+                    </label>
+                    <label class="inline-field">
+                      <span>Sort</span>
+                      <select id="sortSelect">
+                        <option value="name-asc">Name A-Z</option>
+                        <option value="name-desc">Name Z-A</option>
+                        <option value="author-asc">Author A-Z</option>
+                        <option value="author-desc">Author Z-A</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                <div class="sidebar-section">
+                  <h3 class="sidebar-heading">Targets</h3>
+                  <p class="sidebar-hint">Click a target to filter the list to skills enabled there.</p>
+                  <div class="target-strip" id="targetStrip"></div>
+                </div>
               </div>
-
-              <section class="bulk-bar" aria-label="Bulk actions">
-                <div class="bulk-count">
-                  <strong id="bulkSelectedCount">0 selected</strong>
-                  <button class="button ghost" id="clearSelectionButton" type="button">Clear</button>
+            </aside>
+            <section class="main-surface">
+              <dl class="stats-strip" aria-label="Workspace summary">
+                <div>
+                  <dt>Vault skills</dt>
+                  <dd><strong id="skillCount">0</strong></dd>
                 </div>
-                <div class="bulk-controls">
-                  <label class="inline-field">
-                    <span>Target</span>
-                    <select id="bulkTargetSelect" aria-label="Bulk action target"></select>
-                  </label>
-                  <button class="button" id="bulkEnableButton" type="button">Enable</button>
-                  <button class="button" id="bulkDisableButton" type="button">Disable</button>
-                  <button class="button" id="bulkToggleButton" type="button">Toggle</button>
+                <div>
+                  <dt>Links</dt>
+                  <dd><strong id="enabledCount">0</strong></dd>
                 </div>
-                <div class="bulk-controls">
-                  <label class="inline-field grow">
-                    <span>Destination</span>
-                    <input id="bulkDestinationInput" placeholder="/path/to/folder" autocomplete="off" spellcheck="false" />
-                  </label>
-                  <button class="button" id="browseBulkDestinationButton" type="button">Browse</button>
-                  <button class="button" id="bulkCopyButton" type="button">Copy</button>
-                  <button class="button" id="bulkMoveButton" type="button">Move</button>
-                  <button class="button danger" id="bulkDeleteButton" type="button">Delete</button>
+                <div>
+                  <dt>Unmanaged</dt>
+                  <dd><strong id="unmanagedCount">0</strong></dd>
                 </div>
-              </section>
-
-              <div class="target-strip" id="targetStrip"></div>
+              </dl>
 
               <div class="drift-pill" data-drift hidden></div>
 
-              <div class="matrix-wrap">
-                <table class="skill-matrix">
-                  <thead id="matrixHead"></thead>
-                  <tbody id="matrixBody"></tbody>
-                </table>
+              <div class="skill-list-shell">
+                <div class="skill-list-head" id="matrixHead"></div>
+                <div class="skill-list" id="matrixBody"></div>
               </div>
             </section>
+            <aside class="detail-pane" aria-label="Skill details">
+              <section class="panel empty-detail" id="emptyDetail">
+                <h2>Select a skill</h2>
+                <p>Assignment switches and documentation open here.</p>
+              </section>
+              <section class="panel detail-card" id="skillDetail" hidden>
+                <div class="skill-detail-host" id="skillPreview"></div>
+              </section>
+            </aside>
           </div>
         </section>
 
         <section class="tab-content hidden" id="installTab" data-top-tab-panel="install" aria-label="Install skills">
-          <div class="tab-grid two-col">
+          <div class="tab-grid install-stack">
             <section class="panel">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>From local folder</span></h2>
@@ -221,9 +258,17 @@
                   <span>Branch or tag</span>
                   <input id="gitRefInput" placeholder="optional, defaults to main" autocomplete="off" spellcheck="false" />
                 </label>
-                <fieldset class="target-checkboxes" id="gitTargetCheckboxes">
-                  <legend>Install to (vault by default; pick any extra targets)</legend>
-                </fieldset>
+                <details class="target-picker" id="gitTargetPicker">
+                  <summary>
+                    <span>
+                      <strong>Install targets</strong>
+                      <small id="gitTargetSummary">Vault only</small>
+                    </span>
+                  </summary>
+                  <fieldset class="target-checkboxes" id="gitTargetCheckboxes">
+                    <legend>Extra targets</legend>
+                  </fieldset>
+                </details>
                 <div class="button-row">
                   <button class="button" id="gitPreviewButton" type="button">Preview</button>
                   <button class="button primary" type="submit">Clone and install</button>
@@ -272,7 +317,24 @@
         </section>
 
         <section class="tab-content hidden" id="configureTab" data-top-tab-panel="configure" aria-label="Configure workspace">
-          <div class="tab-grid two-col">
+          <div class="tab-grid configure-stack">
+            <section class="panel">
+              <div class="section-head">
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-stack"></use></svg><span>Vault</span></h2>
+                <p class="section-sub">Where Skillworks reads and writes skills. Save to update the workspace.</p>
+              </div>
+              <div class="field-stack">
+                <label>
+                  <span>Vault path</span>
+                  <input id="vaultInput" autocomplete="off" spellcheck="false" placeholder="~/.claude/skills" />
+                </label>
+                <div class="button-row">
+                  <button class="button" id="browseVaultButton" type="button">Browse</button>
+                  <button class="button primary" id="saveVaultButton" type="button">Save</button>
+                </div>
+              </div>
+            </section>
+
             <section class="panel">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>Projects</span></h2>
@@ -343,23 +405,6 @@
               <div class="unmanaged-list" id="unmanagedList"></div>
             </section>
 
-            <section class="panel">
-              <div class="section-head">
-                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>Create a skill</span></h2>
-                <p class="section-sub">Adds a new skill scaffold to the vault.</p>
-              </div>
-              <form class="field-stack" id="createSkillForm">
-                <label>
-                  <span>Skill name</span>
-                  <input id="newSkillName" placeholder="e.g. tidy-readme" autocomplete="off" />
-                </label>
-                <label>
-                  <span>Trigger description</span>
-                  <textarea id="newSkillDescription" placeholder="When should this skill activate?"></textarea>
-                </label>
-                <button class="button" type="submit">Create skill</button>
-              </form>
-            </section>
           </div>
         </section>
 
@@ -383,6 +428,43 @@
         </section>
       </main>
 
+      <aside class="bulk-floating" id="bulkFloating" data-bulk-floating hidden aria-label="Bulk actions">
+        <header class="bulk-floating-head">
+          <div class="bulk-count">
+            <strong id="bulkSelectedCount">0 selected</strong>
+          </div>
+          <button class="button ghost" id="clearSelectionButton" type="button" aria-label="Clear selection">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg>
+            <span>Clear</span>
+          </button>
+        </header>
+        <div class="bulk-floating-body">
+          <div class="bulk-controls">
+            <label class="inline-field">
+              <span>Target</span>
+              <select id="bulkTargetSelect" aria-label="Bulk action target"></select>
+            </label>
+            <div class="bulk-button-row">
+              <button class="button" id="bulkEnableButton" type="button">Enable</button>
+              <button class="button" id="bulkDisableButton" type="button">Disable</button>
+              <button class="button" id="bulkToggleButton" type="button">Toggle</button>
+            </div>
+          </div>
+          <div class="bulk-controls">
+            <label class="inline-field grow">
+              <span>Destination</span>
+              <input id="bulkDestinationInput" placeholder="/path/to/folder" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="bulk-button-row">
+              <button class="button" id="browseBulkDestinationButton" type="button">Browse</button>
+              <button class="button" id="bulkCopyButton" type="button">Copy</button>
+              <button class="button" id="bulkMoveButton" type="button">Move</button>
+              <button class="button danger" id="bulkDeleteButton" type="button">Delete</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
@@ -398,6 +480,16 @@
         <button type="button" class="button ghost" data-action="apply-cancel">Cancel</button>
         <button type="button" class="button primary" data-action="apply-confirm" disabled>Apply</button>
       </footer>
+    </dialog>
+
+    <dialog class="modal create-skill-modal" data-modal="create-skill" aria-labelledby="create-skill-title">
+      <header class="modal-header">
+        <h2 id="create-skill-title">New skill</h2>
+        <button type="button" class="modal-close" id="closeCreateSkillButton" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body create-skill-modal-body">
+        <div id="createSkillEditorRoot"></div>
+      </div>
     </dialog>
     </template>
 

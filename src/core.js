@@ -820,7 +820,7 @@ function createManager(options = {}) {
     return { enabled, errors };
   }
 
-  async function createSkill({ name, description = "" }) {
+  async function createSkill({ name, description = "", content }) {
     if (!name || !name.trim()) {
       throw new Error("Skill name is required");
     }
@@ -829,17 +829,19 @@ function createManager(options = {}) {
     await ensureDir(config.vaultRoot);
     const destination = await uniqueSkillDestination(config.vaultRoot, name);
     await ensureDir(destination);
-    const body = [
-      "---",
-      `name: ${name.trim()}`,
-      `description: ${description.trim() || "Describe when this skill should be used."}`,
-      "---",
-      "",
-      "# Workflow",
-      "",
-      "Add the operating instructions for this skill here.",
-      "",
-    ].join("\n");
+    const body = typeof content === "string" && content.trim()
+      ? content
+      : [
+          "---",
+          `name: ${name.trim()}`,
+          `description: ${description.trim() || "Describe when this skill should be used."}`,
+          "---",
+          "",
+          "# Workflow",
+          "",
+          "Add the operating instructions for this skill here.",
+          "",
+        ].join("\n");
     await fs.writeFile(path.join(destination, SKILL_FILE), body, "utf8");
     return { created: destination, state: await getState(process.cwd()) };
   }
@@ -1312,6 +1314,8 @@ async function discoverSkills(vaultRoot) {
       id,
       name: metadata.name || path.basename(root),
       description: metadata.description || "",
+      author: metadata.author || inferAuthor(id),
+      type: metadata.type || "",
       path: root,
       realPath: await realPath(root),
       relativePath: id,
@@ -1333,6 +1337,14 @@ async function discoverSkills(vaultRoot) {
   }
 
   return skills;
+}
+
+function inferAuthor(id) {
+  const parts = String(id || "").split("/").filter(Boolean);
+  if (parts.length > 1) {
+    return parts[0];
+  }
+  return "Local";
 }
 
 async function findSkillRoots(root) {
@@ -1435,6 +1447,8 @@ async function readSkillMetadata(skillRoot) {
   return {
     name: frontmatter.name,
     description: frontmatter.description,
+    author: frontmatter.author,
+    type: frontmatter.type || frontmatter.category,
   };
 }
 
