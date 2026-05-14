@@ -28,7 +28,10 @@
     "desktop:sidecar": "node scripts/build-tauri-sidecar.js",
     "desktop:build": "tauri build",
     "test": "node --test test/core.test.js && vitest run",
-    "test:ui": "vitest"
+    "test:ui": "vitest",
+    "test:visual": "playwright test tests/visual",
+    "test:visual:update": "playwright test tests/visual --update-snapshots",
+    "test:e2e": "playwright test tests/a11y"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
