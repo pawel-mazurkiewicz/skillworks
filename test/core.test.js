@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -81,6 +82,7 @@ test("adds projects manually and scans project roots with skill directories", as
 
   await writeSkill(path.join(projectA, ".agents", "skills", "agent-skill"), "Agent Skill", "Use in app A.");
   await writeSkill(path.join(projectB, "skills", "plain-skill"), "Plain Skill", "Use in app B.");
+  await fs.mkdir(path.join(projectB, ".git"), { recursive: true });
   await writeSkill(path.join(globalSkills, "global-skill"), "Global Skill", "Global only.");
   await writeSkill(path.join(pluginCache, "plugin-skill"), "Plugin Skill", "Plugin owned.");
 
@@ -876,10 +878,12 @@ test("creates a global set and a project-local set and getSet returns them", asy
 
   const g = await manager.createSet({
     name: "Global mode",
+    description: "Use for global agent defaults.",
     scope: "global",
     entries: [{ skillName: "alpha", targetKey: "claude-global" }],
   });
   assert.ok(g.set.id.startsWith("set_"));
+  assert.equal(g.set.description, "Use for global agent defaults.");
   assert.equal(g.set.scope, "global");
   assert.equal(g.set.entries.length, 1);
 
@@ -925,12 +929,14 @@ test("updates and deletes sets in both scopes", async () => {
 
   const updated = await manager.updateSet(g.id, {
     name: "G renamed",
+    description: "Use when the renamed set applies.",
     entries: [
       { skillName: "alpha", targetKey: "claude-global" },
       { skillName: "gamma", targetKey: "codex-global" },
     ],
   }, { projectPath: env.project });
   assert.equal(updated.set.name, "G renamed");
+  assert.equal(updated.set.description, "Use when the renamed set applies.");
   assert.equal(updated.set.entries.length, 2);
   assert.notEqual(updated.set.updatedAt, g.updatedAt);
   assert.equal(updated.set.createdAt, g.createdAt);
@@ -1072,10 +1078,12 @@ test("snapshotSet captures current managed symlinks and re-applies as a no-op", 
 
   const snap = await manager.snapshotSet({
     name: "Snapshot",
+    description: "Captured working state.",
     scope: "global",
     targetKeys: ["claude-global", "codex-global"],
     projectPath: env.project,
   });
+  assert.equal(snap.set.description, "Captured working state.");
   const names = snap.set.entries.map((e) => `${e.skillName}@${e.targetKey}`).sort();
   assert.deepEqual(names, ["alpha@claude-global", "beta@codex-global"]);
 
@@ -1103,6 +1111,62 @@ test("setProjectPinnedSets persists and missing ids are flagged on listSets", as
   assert.equal(result.pinned.resolved[0].id, g.id);
 });
 
+test("MCP server lists descriptions and activates a set", async () => {
+  const env = await makeEnv();
+  await writeSkill(path.join(env.vault, "alpha"), "alpha", "alpha desc");
+  const manager = createManager({ appHome: env.appHome, homeDir: env.root });
+  await manager.createSet({
+    name: "Agent choice",
+    description: "Activate when an agent needs alpha globally.",
+    scope: "global",
+    entries: [{ skillName: "alpha", targetKey: "claude-global" }],
+  });
+  await manager.createSet({
+    name: "Project cwd",
+    description: "Available only when the MCP server resolves the project from cwd.",
+    scope: "project",
+    projectPath: env.project,
+    entries: [{ skillName: "alpha", targetKey: "claude-project" }],
+  });
+
+  const child = spawn(
+    process.execPath,
+    [path.join(__dirname, "..", "src", "mcp-server.js"), "--project-from-cwd", "--home", env.root],
+    {
+      cwd: env.project,
+      env: { ...process.env, AGENT_SKILL_MANAGER_HOME: env.appHome, AGENT_SKILL_PROJECT: path.join(env.root, "wrong") },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
+  try {
+    const listResponse = await sendMcpRequest(child, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "list_skill_sets", arguments: {} },
+    });
+    const listed = JSON.parse(listResponse.result.content[0].text);
+    assert.equal(listed.global[0].description, "Activate when an agent needs alpha globally.");
+    assert.equal(listed.project[0].description, "Available only when the MCP server resolves the project from cwd.");
+
+    const applyResponse = await sendMcpRequest(child, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "activate_skill_set", arguments: { name: "Agent choice", projectPath: env.project } },
+    });
+    const applied = JSON.parse(applyResponse.result.content[0].text);
+    assert.equal(applied.perTargetResult[0].status, "applied");
+
+    const state = await manager.getState(env.project);
+    const claudeState = state.targets.find((t) => t.id === "claude-global");
+    assert.deepEqual(claudeState.enabledSkillIds, ["alpha"]);
+  } finally {
+    child.kill();
+  }
+});
+
 async function makeEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asm-sets-"));
   const appHome = path.join(root, "app");
@@ -1123,4 +1187,64 @@ async function fileExists(filePath) {
     .access(filePath)
     .then(() => true)
     .catch(() => false);
+}
+
+function sendMcpRequest(child, message) {
+  const response = readMcpResponse(child);
+  child.stdin.write(encodeMcpMessage(message));
+  return response;
+}
+
+function encodeMcpMessage(message) {
+  const body = JSON.stringify(message);
+  return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+}
+
+function readMcpResponse(child) {
+  let buffer = Buffer.alloc(0);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for MCP response"));
+    }, 5000);
+
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const message = parseMcpFrame(buffer);
+      if (!message) return;
+      cleanup();
+      resolve(message.parsed);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = () => {
+      cleanup();
+      reject(new Error("MCP server exited before responding"));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout.off("data", onData);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+
+    child.stdout.on("data", onData);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+function parseMcpFrame(buffer) {
+  const headerEnd = buffer.indexOf("\r\n\r\n");
+  if (headerEnd === -1) return null;
+  const header = buffer.slice(0, headerEnd).toString("utf8");
+  const match = header.match(/content-length:\s*(\d+)/i);
+  if (!match) return null;
+  const length = Number(match[1]);
+  const bodyStart = headerEnd + 4;
+  const bodyEnd = bodyStart + length;
+  if (buffer.length < bodyEnd) return null;
+  return { parsed: JSON.parse(buffer.slice(bodyStart, bodyEnd).toString("utf8")) };
 }

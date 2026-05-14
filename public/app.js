@@ -1,4 +1,7 @@
+import { mountSkillEditor, unmountAllSkillEditors } from "./skill-editor.jsx";
+
 const PROJECT_CACHE_KEY = "asm.projects";
+const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
 
 const state = {
   data: null,
@@ -26,8 +29,13 @@ let pendingApplySetId = null;
 let lastAppliedSet = null; // { id, name, touchedTargets, modified }
 
 const elements = {
+  appShell: document.querySelector(".app-shell"),
   topTabs: document.querySelectorAll("[data-top-tab]"),
   tabPanels: document.querySelectorAll("[data-top-tab-panel]"),
+  contextStrip: document.querySelector(".context-strip"),
+  mainSurface: document.querySelector(".main-surface"),
+  toolbar: document.querySelector(".toolbar"),
+  bulkBar: document.querySelector(".bulk-bar"),
   pathForm: document.querySelector("#pathForm"),
   projectInput: document.querySelector("#projectInput"),
   browseProjectButton: document.querySelector("#browseProjectButton"),
@@ -69,8 +77,12 @@ const elements = {
   bulkDeleteButton: document.querySelector("#bulkDeleteButton"),
   projectAddInput: document.querySelector("#projectAddInput"),
   browseProjectAddButton: document.querySelector("#browseProjectAddButton"),
+  projectScanRootInput: document.querySelector("#projectScanRootInput"),
+  browseProjectScanRootButton: document.querySelector("#browseProjectScanRootButton"),
   addProjectButton: document.querySelector("#addProjectButton"),
   scanProjectsButton: document.querySelector("#scanProjectsButton"),
+  scanDefaultProjectsButton: document.querySelector("#scanDefaultProjectsButton"),
+  clearScannedProjectsButton: document.querySelector("#clearScannedProjectsButton"),
   projectList: document.querySelector("#projectList"),
   customTargetForm: document.querySelector("#customTargetForm"),
   customTargetId: document.querySelector("#customTargetId"),
@@ -115,6 +127,7 @@ async function bootstrap() {
       }
     });
   });
+  window.addEventListener("resize", relocateManageControls);
   renderTopTabs();
 
   initSetsPanel();
@@ -134,6 +147,7 @@ async function bootstrap() {
   elements.browseImportButton.addEventListener("click", () => pickDirectoryInto(elements.importInput));
   elements.browseBulkDestinationButton.addEventListener("click", () => pickDirectoryInto(elements.bulkDestinationInput));
   elements.browseProjectAddButton.addEventListener("click", () => pickDirectoryInto(elements.projectAddInput));
+  elements.browseProjectScanRootButton.addEventListener("click", () => pickDirectoryInto(elements.projectScanRootInput));
 
   elements.saveVaultButton.addEventListener("click", () => runAction(async () => {
     await api("/api/config", {
@@ -281,7 +295,9 @@ async function bootstrap() {
   elements.bulkMoveButton.addEventListener("click", () => bulkMove());
   elements.bulkDeleteButton.addEventListener("click", () => bulkDelete());
   elements.addProjectButton.addEventListener("click", () => addProject());
-  elements.scanProjectsButton.addEventListener("click", () => scanProjects());
+  elements.scanProjectsButton.addEventListener("click", () => scanProjects({ scoped: true }));
+  elements.scanDefaultProjectsButton.addEventListener("click", () => scanProjects({ scoped: false }));
+  elements.clearScannedProjectsButton.addEventListener("click", () => clearScannedProjects());
   elements.dedupeScanButton.addEventListener("click", () => scanDuplicates());
   elements.dedupeApplyButton.addEventListener("click", () => applyDedupe());
 
@@ -297,14 +313,9 @@ async function bootstrap() {
     addCustomTarget();
   });
 
-  elements.copyPathButton.addEventListener("click", () => runAction(async () => {
-    const skill = selectedSkill();
-    if (!skill) {
-      return;
-    }
-    await navigator.clipboard.writeText(skill.path);
-    showToast("Path copied");
-  }));
+  if (elements.copyPathButton) {
+    elements.copyPathButton.addEventListener("click", () => copySelectedSkillPath());
+  }
 
   elements.projectInput.value = localStorage.getItem("asm.projectPath") || "";
   await runAction(() => loadState());
@@ -356,6 +367,18 @@ function writeCachedProjects(projects) {
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
+}
+
+function clearCachedProjects() {
+  try {
+    localStorage.removeItem(PROJECT_CACHE_KEY);
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+function removeCachedProject(projectPath) {
+  writeCachedProjects(readCachedProjects().filter((project) => project.path !== projectPath));
 }
 
 function mergeProjects(primaryProjects, fallbackProjects) {
@@ -434,10 +457,11 @@ function renderProjects() {
         <article class="project-item ${active ? "is-active" : ""}">
           <div class="project-item-head">
             <div>
-              <strong>${escapeHtml(project.name)}</strong>
+              <strong class="item-title">${iconSprite("folder", "icon item-icon")}${escapeHtml(project.name)}</strong>
               <span>${escapeHtml(project.source)} / ${project.skillSourceCount || 0} skill source${project.skillSourceCount === 1 ? "" : "s"}</span>
             </div>
             <button class="button ghost" type="button" data-load-project="${escapeHtml(project.path)}">Load</button>
+            <button class="button ghost" type="button" data-forget-project="${escapeHtml(project.path)}">Forget</button>
           </div>
           <div class="project-path">${escapeHtml(project.path)}</div>
         </article>
@@ -452,6 +476,10 @@ function renderProjects() {
       await loadState();
       showToast("Project loaded");
     }));
+  });
+
+  elements.projectList.querySelectorAll("[data-forget-project]").forEach((button) => {
+    button.addEventListener("click", () => forgetProject(button.dataset.forgetProject));
   });
 
   renderProjectPinnedControls();
@@ -531,7 +559,7 @@ function renderCustomTargets() {
         <article class="project-item">
           <div class="project-item-head">
             <div>
-              <strong>${escapeHtml(target.label)}</strong>
+              <strong class="item-title">${iconSprite("folder-cog", "icon item-icon")}${escapeHtml(target.label)}</strong>
               <span>${escapeHtml(target.scope)} / ${escapeHtml(target.harness || "Custom")} / id: ${escapeHtml(target.id)}</span>
             </div>
             <button class="button ghost" type="button" data-remove-custom-target="${escapeHtml(target.id)}">Remove</button>
@@ -647,7 +675,7 @@ function renderDiscovery() {
       return `
         <article class="discovery-item ${source.exists ? "" : "is-missing"}">
           <div>
-            <strong>${escapeHtml(source.label)}</strong>
+            <strong class="item-title">${iconSprite(source.exists ? "search" : "clear-all", "icon item-icon")}${escapeHtml(source.label)}</strong>
             <span>${escapeHtml(source.kind)} / ${escapeHtml(source.scope)} / ${escapeHtml(action)} / ${escapeHtml(status)}</span>
           </div>
           <div class="discovery-path">${escapeHtml(source.path)}</div>
@@ -839,6 +867,30 @@ function renderTopTabs() {
   elements.tabPanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.topTabPanel !== state.activeTopTab);
   });
+  relocateManageControls();
+}
+
+function relocateManageControls() {
+  if (!elements.appShell || !elements.toolbar || !elements.contextStrip || !elements.mainSurface || !elements.bulkBar || !elements.targetStrip) {
+    return;
+  }
+  const shouldDock = state.activeTopTab === "manage";
+  const shouldPromoteBulk = shouldDock;
+  if (shouldDock && elements.toolbar.parentElement !== elements.contextStrip) {
+    elements.contextStrip.appendChild(elements.toolbar);
+  } else if (!shouldDock && elements.toolbar.parentElement !== elements.mainSurface) {
+    elements.mainSurface.insertBefore(elements.toolbar, elements.bulkBar);
+  }
+  if (shouldDock && elements.targetStrip.parentElement !== elements.contextStrip) {
+    elements.contextStrip.appendChild(elements.targetStrip);
+  } else if (!shouldDock && elements.targetStrip.parentElement !== elements.mainSurface) {
+    elements.mainSurface.insertBefore(elements.targetStrip, elements.matrixBody.closest(".matrix-wrap"));
+  }
+  if (shouldPromoteBulk && elements.bulkBar.parentElement !== elements.appShell) {
+    elements.appShell.insertBefore(elements.bulkBar, elements.contextStrip.nextSibling);
+  } else if (!shouldPromoteBulk && elements.bulkBar.parentElement !== elements.mainSurface) {
+    elements.mainSurface.insertBefore(elements.bulkBar, elements.targetStrip);
+  }
 }
 
 async function scanDuplicates() {
@@ -981,6 +1033,10 @@ function escapeAttr(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
 }
 
+function iconSprite(name, className = "icon") {
+  return `<svg class="${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-${escapeAttr(name)}"></use></svg>`;
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value)) return "";
   if (value < 1024) return `${value} B`;
@@ -994,7 +1050,10 @@ function renderTargets() {
       const unmanaged = target.unmanaged.length ? `${target.unmanaged.length} unmanaged` : "clean";
       return `
         <article class="target-card">
-          <strong>${escapeHtml(target.label)}</strong>
+          <div class="target-card-head">
+            ${iconSprite("folder", "icon target-card-icon")}
+            <strong>${escapeHtml(target.label)}</strong>
+          </div>
           <span>${target.enabledSkillIds.length} linked, ${escapeHtml(unmanaged)}</span>
           <small title="${escapeHtml(target.path)}">${escapeHtml(target.path)}</small>
         </article>
@@ -1090,6 +1149,7 @@ function renderTags() {
 }
 
 function renderMatrix() {
+  unmountAllSkillEditors();
   const targets = state.data.targets;
   const skills = filteredSkills();
   const visibleSkillIds = skills.map((skill) => skill.id);
@@ -1133,7 +1193,7 @@ function renderMatrix() {
         })
         .join("");
 
-      return `
+      const row = `
         <tr class="${skill.id === state.selectedSkillId ? "selected-row" : ""}">
           <td class="checkbox-cell">
             <input
@@ -1155,6 +1215,9 @@ function renderMatrix() {
           ${cells}
         </tr>
       `;
+      return skill.id === state.selectedSkillId
+        ? `${row}${renderInlineDetailRow(skill, targets.length + 2)}`
+        : row;
     })
     .join("");
 
@@ -1168,16 +1231,23 @@ function renderMatrix() {
         state.selectedSkillIds.delete(checkbox.dataset.selectRow);
       }
       renderMatrix();
+      renderDetail();
       renderBulkBar();
     });
   });
 
   elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((button) => {
     button.addEventListener("click", async () => {
-      state.selectedSkillId = button.dataset.selectSkill;
-      await renderDetail();
+      state.selectedSkillId = state.selectedSkillId === button.dataset.selectSkill
+        ? null
+        : button.dataset.selectSkill;
       renderMatrix();
+      await renderDetail();
     });
+  });
+
+  elements.matrixBody.querySelectorAll("[data-copy-selected-path]").forEach((button) => {
+    button.addEventListener("click", () => copySelectedSkillPath());
   });
 
   elements.matrixBody.querySelectorAll("[data-target-id]").forEach((button) => {
@@ -1202,6 +1272,56 @@ function renderMatrix() {
   });
 }
 
+function renderInlineDetailRow(skill, colspan) {
+  const links = state.data.targets
+    .map((target) => ({ target, status: target.skillStatuses[skill.id] }))
+    .filter((item) => item.status.enabled || item.status.conflict || item.status.staleManifest);
+
+  const linkHtml = links.length
+    ? links
+        .map(
+          ({ target, status }) => `
+            <div class="link-pill">
+              <strong>${escapeHtml(target.label)}${status.conflict ? " conflict" : ""}${status.staleManifest ? " stale" : ""}</strong>
+              <span>${escapeHtml(status.linkPath)}</span>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="link-pill"><strong>Not linked</strong><span>No active target links for this skill.</span></div>`;
+
+  return `
+    <tr class="detail-row">
+      <td colspan="${colspan}">
+        <section class="panel detail-card inline-detail-card" data-inline-skill-detail="${escapeHtml(skill.id)}">
+          <div class="skill-detail">
+            <div class="detail-title-row">
+              <div>
+                <p class="eyebrow">${escapeHtml(skill.tags.join(" / "))}</p>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
+              </div>
+              <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
+            </div>
+            <p class="description">${escapeHtml(skill.description || "No description")}</p>
+            <dl class="path-list">
+              <div>
+                <dt>Vault path</dt>
+                <dd>${escapeHtml(skill.path)}</dd>
+              </div>
+              <div>
+                <dt>Relative id</dt>
+                <dd>${escapeHtml(skill.id)}</dd>
+              </div>
+            </dl>
+            <div class="detail-links">${linkHtml}</div>
+            <div class="skill-editor-host" data-skill-editor-root>Loading editor...</div>
+          </div>
+        </section>
+      </td>
+    </tr>
+  `;
+}
+
 function bindSelectVisible(visibleSkillIds) {
   const checkbox = document.querySelector("#selectVisibleCheckbox");
   if (!checkbox) {
@@ -1216,6 +1336,7 @@ function bindSelectVisible(visibleSkillIds) {
       }
     }
     renderMatrix();
+    renderDetail();
     renderBulkBar();
   });
 }
@@ -1223,38 +1344,57 @@ function bindSelectVisible(visibleSkillIds) {
 async function renderDetail() {
   const skill = selectedSkill();
   if (!skill) {
-    elements.emptyDetail.classList.remove("hidden");
-    elements.skillDetail.classList.add("hidden");
     return;
   }
 
-  elements.emptyDetail.classList.add("hidden");
-  elements.skillDetail.classList.remove("hidden");
-  elements.detailTags.textContent = skill.tags.join(" / ");
-  elements.detailName.textContent = skill.name;
-  elements.detailDescription.textContent = skill.description || "No description";
-  elements.detailPath.textContent = skill.path;
-  elements.detailId.textContent = skill.id;
+  const detail = document.querySelector(`[data-inline-skill-detail="${cssEscape(skill.id)}"]`);
+  const editorNode = detail?.querySelector("[data-skill-editor-root]");
+  if (!editorNode) {
+    return;
+  }
 
-  const links = state.data.targets
-    .map((target) => ({ target, status: target.skillStatuses[skill.id] }))
-    .filter((item) => item.status.enabled || item.status.conflict || item.status.staleManifest);
-
-  elements.detailLinks.innerHTML = links.length
-    ? links
-        .map(
-          ({ target, status }) => `
-            <div class="link-pill">
-              <strong>${escapeHtml(target.label)}${status.conflict ? " conflict" : ""}${status.staleManifest ? " stale" : ""}</strong>
-              <span>${escapeHtml(status.linkPath)}</span>
-            </div>
-          `,
-        )
-        .join("")
-    : `<div class="link-pill"><strong>Not linked</strong><span>No active target links for this skill.</span></div>`;
-
+  const activeSkillId = skill.id;
   const preview = await api(`/api/skill?id=${encodeURIComponent(skill.id)}`);
-  elements.skillPreview.textContent = preview.content.slice(0, 2200);
+  if (selectedSkill()?.id !== activeSkillId) {
+    return;
+  }
+
+  mountSkillEditor(editorNode, {
+    skill: preview.skill,
+    initialContent: preview.content,
+    onToast: showToast,
+    onSave: async (content) => {
+      const result = await api("/api/skill", {
+        method: "POST",
+        body: {
+          id: activeSkillId,
+          content,
+          projectPath: elements.projectInput.value,
+        },
+      });
+      applyState(result.state);
+      state.selectedSkillId = activeSkillId;
+      render();
+    },
+  });
+}
+
+function copySelectedSkillPath() {
+  return runAction(async () => {
+    const skill = selectedSkill();
+    if (!skill) {
+      return;
+    }
+    await navigator.clipboard.writeText(skill.path);
+    showToast("Path copied");
+  });
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
 }
 
 function filteredSkills() {
@@ -1293,12 +1433,51 @@ async function addProject() {
   });
 }
 
-async function scanProjects() {
+async function forgetProject(projectPath) {
   await runAction(async () => {
+    removeCachedProject(projectPath);
+    applyState(await api("/api/projects/remove", {
+      method: "POST",
+      body: {
+        projectPath,
+        currentProjectPath: elements.projectInput.value,
+      },
+    }));
+    const projects = state.data?.projects || [];
+    writeCachedProjects(projects);
+    render();
+    showToast("Project forgotten");
+  });
+}
+
+async function clearScannedProjects() {
+  await runAction(async () => {
+    clearCachedProjects();
+    applyState(await api("/api/projects/clear-scanned", {
+      method: "POST",
+      body: {
+        projectPath: elements.projectInput.value,
+      },
+    }));
+    const projects = state.data?.projects || [];
+    writeCachedProjects(projects);
+    render();
+    showToast("Scanned projects cleared");
+  });
+}
+
+async function scanProjects({ scoped } = { scoped: true }) {
+  await runAction(async () => {
+    const scanRoot = elements.projectScanRootInput.value.trim();
+    if (scoped && !scanRoot) {
+      showToast("Choose a folder to scan");
+      return;
+    }
     const result = await api("/api/projects/scan", {
       method: "POST",
       body: {
         projectPath: elements.projectInput.value,
+        roots: scoped ? [scanRoot] : undefined,
       },
     });
     applyState(result.state);
@@ -1397,7 +1576,7 @@ async function bulkDelete() {
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: options.method || "GET",
     headers: options.body ? { "content-type": "application/json" } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -1408,6 +1587,22 @@ async function api(url, options = {}) {
     throw new Error(payload.error || "Request failed");
   }
   return payload;
+}
+
+function apiUrl(url) {
+  const value = String(url);
+  if (/^https?:\/\//.test(value)) {
+    return value;
+  }
+  return isTauriDesktop() && value.startsWith("/api/")
+    ? `${DESKTOP_API_ORIGIN}${value}`
+    : value;
+}
+
+function isTauriDesktop() {
+  return Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__) ||
+    window.location.protocol === "tauri:" ||
+    window.location.hostname === "tauri.localhost";
 }
 
 async function pickDirectoryInto(input) {
@@ -1485,12 +1680,7 @@ function setsScope() {
 
 async function loadSets() {
   const project = encodeURIComponent((state.data && state.data.project && state.data.project.path) || "");
-  const response = await fetch(`/api/sets?project=${project}`);
-  const result = await response.json();
-  if (!response.ok) {
-    showToast(result.error || "Failed to load sets");
-    return;
-  }
+  const result = await api(`/api/sets?project=${project}`);
   setsState.global = Array.isArray(result.global) ? result.global : [];
   setsState.project = Array.isArray(result.project) ? result.project : [];
   setsState.pinned = result.pinned || { ids: [], resolved: [], missing: [] };
@@ -1511,7 +1701,7 @@ function initSetsPanel() {
     const action = t.dataset.action;
     const id = t.dataset.id;
     if (action === "set-new") {
-      setsState.draft = { id: null, name: "", scope: setsScope(), entries: [] };
+      setsState.draft = { id: null, name: "", description: "", scope: setsScope(), entries: [] };
       setsState.selectedId = null;
       renderSets();
     } else if (action === "set-edit") {
@@ -1520,6 +1710,7 @@ function initSetsPanel() {
       setsState.draft = {
         id: s.id,
         name: s.name,
+        description: s.description || "",
         scope: s.scope,
         entries: (s.entries || []).map((e) => ({ skillName: e.skillName, targetKey: e.targetKey })),
       };
@@ -1529,12 +1720,7 @@ function initSetsPanel() {
       if (!window.confirm("Delete this set?")) return;
       await runAction(async () => {
         const project = encodeURIComponent((state.data && state.data.project && state.data.project.path) || "");
-        const response = await fetch(`/api/sets/${encodeURIComponent(id)}?project=${project}`, { method: "DELETE" });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          showToast(payload.error || "Delete failed");
-          return;
-        }
+        await api(`/api/sets/${encodeURIComponent(id)}?project=${project}`, { method: "DELETE" });
         if (setsState.selectedId === id) {
           setsState.selectedId = null;
           setsState.draft = null;
@@ -1606,6 +1792,9 @@ function renderSets() {
         meta.appendChild(makeEl("span", { class: "muted" }, targetSummary));
       }
       li.appendChild(meta);
+      if (s.description) {
+        li.appendChild(makeEl("div", { class: "set-row-description" }, s.description));
+      }
       const actions = makeEl("div", { class: "set-row-actions" });
       actions.appendChild(makeEl("button", {
         type: "button", class: "button ghost", dataset: { action: "set-apply", id: s.id },
@@ -1643,6 +1832,10 @@ function renderSetReadOnly(editorEl, s) {
   head.appendChild(makeEl("h3", { class: "sets-editor-title" }, s.name));
   head.appendChild(makeEl("span", { class: `badge badge-${s.scope}` }, s.scope));
   editorEl.appendChild(head);
+
+  if (s.description) {
+    editorEl.appendChild(makeEl("p", { class: "set-description" }, s.description));
+  }
 
   if (!s.entries || s.entries.length === 0) {
     editorEl.appendChild(makeEl("p", { class: "muted" }, "No entries yet."));
@@ -1693,6 +1886,19 @@ function renderSetEditor(editorEl) {
   });
   nameField.appendChild(nameInput);
   form.appendChild(nameField);
+
+  const descriptionField = makeEl("label", { class: "set-field" });
+  descriptionField.appendChild(makeEl("span", {}, "Description"));
+  const descriptionInput = makeEl("textarea", {
+    placeholder: "When should an agent activate this set?",
+    rows: "3",
+  });
+  descriptionInput.value = draft.description || "";
+  descriptionInput.addEventListener("input", () => {
+    draft.description = descriptionInput.value;
+  });
+  descriptionField.appendChild(descriptionInput);
+  form.appendChild(descriptionField);
 
   // Scope: toggle when creating, locked when editing.
   const scopeField = makeEl("div", { class: "set-field" });
@@ -1810,10 +2016,12 @@ async function saveDraft() {
   }
   const entries = draft.entries.filter((e) => e.skillName && e.targetKey);
   const projectPath = (state.data && state.data.project && state.data.project.path) || "";
+  const description = (draft.description || "").trim();
   const payload = draft.id
-    ? { name, entries }
+    ? { name, description, entries }
     : {
         name,
+        description,
         scope: draft.scope,
         projectPath: draft.scope === "project" ? projectPath : undefined,
         entries,
@@ -1823,16 +2031,10 @@ async function saveDraft() {
   }
   const url = draft.id ? `/api/sets/${encodeURIComponent(draft.id)}` : "/api/sets";
   const method = draft.id ? "PATCH" : "POST";
-  const response = await fetch(url, {
+  const result = await api(url, {
     method,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: payload,
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    showToast(result.error || "Save failed");
-    return;
-  }
   setsState.draft = null;
   setsState.selectedId = result.set ? result.set.id : null;
   await loadSets();
@@ -1865,6 +2067,15 @@ function openSnapshotModal() {
   });
   nameField.appendChild(nameInput);
   form.appendChild(nameField);
+
+  const descriptionField = makeEl("label", { class: "set-field" });
+  descriptionField.appendChild(makeEl("span", {}, "Description"));
+  const descriptionInput = makeEl("textarea", {
+    placeholder: "When should an agent activate this snapshot?",
+    rows: "3",
+  });
+  descriptionField.appendChild(descriptionInput);
+  form.appendChild(descriptionField);
 
   const hasProject = !!(state.data && state.data.project && state.data.project.path);
   const scopeField = makeEl("fieldset", { class: "set-field snapshot-scope" });
@@ -1934,22 +2145,17 @@ function openSnapshotModal() {
     const projectPath = (state.data && state.data.project && state.data.project.path) || "";
     const payload = {
       name,
+      description: descriptionInput.value.trim(),
       scope,
       targetKeys,
     };
     if (scope === "project") payload.projectPath = projectPath;
 
     await runAction(async () => {
-      const response = await fetch("/api/sets/snapshot", {
+      const result = await api("/api/sets/snapshot", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: payload,
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        showToast(result.error || "Snapshot failed");
-        return;
-      }
       close();
       setsState.selectedId = result.set ? result.set.id : null;
       setsState.draft = null;
@@ -1997,17 +2203,10 @@ async function openApplyModal(setId) {
   const projectPath = (state.data && state.data.project && state.data.project.path) || "";
   let plan;
   try {
-    const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/plan`, {
+    plan = await api(`/api/sets/${encodeURIComponent(setId)}/plan`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectPath }),
+      body: { projectPath },
     });
-    plan = await response.json();
-    if (!response.ok) {
-      clearChildren(body);
-      body.appendChild(makeEl("p", { class: "muted" }, plan.error || "Failed to load plan"));
-      return;
-    }
   } catch (error) {
     clearChildren(body);
     body.appendChild(makeEl("p", { class: "muted" }, error.message || "Failed to load plan"));
@@ -2064,16 +2263,10 @@ document.addEventListener("click", async (event) => {
       const setId = pendingApplySetId;
       await runAction(async () => {
         const projectPath = (state.data && state.data.project && state.data.project.path) || "";
-        const response = await fetch(`/api/sets/${encodeURIComponent(setId)}/apply`, {
+        const result = await api(`/api/sets/${encodeURIComponent(setId)}/apply`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ projectPath }),
+          body: { projectPath },
         });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          showToast(result.error || "Apply failed");
-          return;
-        }
         applyState(result.state);
         lastAppliedSet = {
           id: setId,
@@ -2099,16 +2292,10 @@ document.addEventListener("click", async (event) => {
       const projectPath = (state.data && state.data.project && state.data.project.path) || "";
       if (!projectPath) return;
       const nextIds = ((setsState.pinned && setsState.pinned.ids) || []).filter((x) => x !== setId);
-      const response = await fetch("/api/projects/pinned-sets", {
+      await api("/api/projects/pinned-sets", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectPath, setIds: nextIds }),
+        body: { projectPath, setIds: nextIds },
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        showToast(payload.error || "Unpin failed");
-        return;
-      }
       await loadSets();
       renderProjectPinnedControls();
       showToast("Set unpinned");
@@ -2137,17 +2324,10 @@ document.addEventListener("change", async (event) => {
         return;
       }
       currentIds.push(setId);
-      const response = await fetch("/api/projects/pinned-sets", {
+      await api("/api/projects/pinned-sets", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectPath, setIds: currentIds }),
+        body: { projectPath, setIds: currentIds },
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        showToast(payload.error || "Pin failed");
-        t.value = "";
-        return;
-      }
       await loadSets();
       renderProjectPinnedControls();
       showToast("Set pinned");

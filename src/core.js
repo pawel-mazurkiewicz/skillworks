@@ -1,10 +1,14 @@
 const crypto = require("node:crypto");
+const syncFs = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
 
 const setsModule = require("./sets");
 
+const APP_NAME = "Skillworks";
+const APP_CONFIG_DIR = ".skillworks";
+const LEGACY_CONFIG_DIR = ".agent-skill-manager";
 const CONFIG_DIR = ".agent-skill-manager";
 const MANIFEST_FILE = ".agent-skill-manager.json";
 const SKILL_FILE = "SKILL.md";
@@ -174,8 +178,9 @@ function resolveInstallTargetIds(selector) {
 
 function createManager(options = {}) {
   const homeDir = path.resolve(expandHome(options.homeDir || os.homedir()));
+  const defaultAppHome = resolveDefaultAppHome(homeDir);
   const appHome = path.resolve(
-    expandHome(options.appHome || process.env.AGENT_SKILL_MANAGER_HOME || path.join(homeDir, CONFIG_DIR)),
+    expandHome(options.appHome || process.env.SKILLWORKS_HOME || process.env.AGENT_SKILL_MANAGER_HOME || defaultAppHome),
   );
 
   async function readConfig() {
@@ -183,7 +188,7 @@ function createManager(options = {}) {
     const configPath = path.join(appHome, "config.json");
     const config = await readJson(configPath, {});
     const vaultRoot = path.resolve(
-      expandHome(config.vaultRoot || process.env.AGENT_SKILL_VAULT || path.join(appHome, "vault")),
+      expandHome(config.vaultRoot || process.env.SKILLWORKS_VAULT || process.env.AGENT_SKILL_VAULT || path.join(appHome, "vault")),
     );
     return {
       configPath,
@@ -230,6 +235,21 @@ function createManager(options = {}) {
     const projects = mergeProjectRecords(config.projects, [record]);
     await writeConfig({ vaultRoot: config.vaultRoot, recentProjects: config.recentProjects, projects });
     return { project: record, state: await getState(projectPath) };
+  }
+
+  async function removeProject(projectPath, options = {}) {
+    const normalized = normalizeProjectPath(projectPath);
+    const config = await readConfig();
+    const projects = config.projects.filter((project) => project.path !== normalized);
+    await writeConfig({ ...config, projects });
+    return { state: await getState(options.projectPath || normalized) };
+  }
+
+  async function clearScannedProjects(options = {}) {
+    const config = await readConfig();
+    const projects = config.projects.filter((project) => project.source === "manual");
+    await writeConfig({ ...config, projects });
+    return { state: await getState(options.projectPath || process.cwd()) };
   }
 
   async function setProjectPinnedSets(projectPath, setIds) {
@@ -837,6 +857,27 @@ function createManager(options = {}) {
     };
   }
 
+  async function saveSkillFile(skillId, content, projectPath = process.cwd()) {
+    if (typeof content !== "string") {
+      throw new Error("Skill content must be a string");
+    }
+
+    const config = await readConfig();
+    const skills = await discoverSkills(config.vaultRoot);
+    const skill = skills.find((item) => item.id === skillId);
+    if (!skill) {
+      throw new Error(`Unknown skill: ${skillId}`);
+    }
+
+    await fs.writeFile(path.join(skill.path, SKILL_FILE), content, "utf8");
+
+    return {
+      skill,
+      content,
+      state: await getState(projectPath),
+    };
+  }
+
   async function findVaultDuplicates() {
     const config = await readConfig();
     const skills = await discoverSkills(config.vaultRoot);
@@ -984,7 +1025,7 @@ function createManager(options = {}) {
     return { global, project, pinned };
   }
 
-  async function createSet({ name, scope, projectPath, entries }) {
+  async function createSet({ name, description, scope, projectPath, entries }) {
     if (!name || !name.trim()) throw new Error("Set name is required");
     if (scope !== "global" && scope !== "project") throw new Error("Invalid scope");
     if (scope === "project" && !projectPath) throw new Error("projectPath required for project-scoped set");
@@ -993,6 +1034,7 @@ function createManager(options = {}) {
     const record = {
       id: setsModule.newSetId(),
       name: name.trim(),
+      description: typeof description === "string" ? description.trim() : "",
       scope,
       ...(scope === "project" ? { projectPath: normalizeProjectPath(projectPath) } : {}),
       entries: setsModule.normalizeEntries(entries),
@@ -1034,6 +1076,7 @@ function createManager(options = {}) {
       const next = {
         ...existing,
         ...(patch.name !== undefined ? { name: String(patch.name).trim() } : {}),
+        ...(patch.description !== undefined ? { description: String(patch.description).trim() } : {}),
         ...(patch.entries !== undefined ? { entries: setsModule.normalizeEntries(patch.entries) } : {}),
         updatedAt: nextTimestamp(existing.updatedAt),
       };
@@ -1051,6 +1094,7 @@ function createManager(options = {}) {
         const next = {
           ...existing,
           ...(patch.name !== undefined ? { name: String(patch.name).trim() } : {}),
+          ...(patch.description !== undefined ? { description: String(patch.description).trim() } : {}),
           ...(patch.entries !== undefined ? { entries: setsModule.normalizeEntries(patch.entries) } : {}),
           updatedAt: nextTimestamp(existing.updatedAt),
         };
@@ -1194,7 +1238,7 @@ function createManager(options = {}) {
     };
   }
 
-  async function snapshotSet({ name, scope, projectPath, targetKeys }) {
+  async function snapshotSet({ name, description, scope, projectPath, targetKeys }) {
     if (!Array.isArray(targetKeys) || targetKeys.length === 0) {
       throw new Error("targetKeys must be a non-empty array");
     }
@@ -1219,7 +1263,7 @@ function createManager(options = {}) {
       }
     }
 
-    return createSet({ name, scope, projectPath, entries });
+    return createSet({ name, description, scope, projectPath, entries });
   }
 
   return {
@@ -1235,6 +1279,8 @@ function createManager(options = {}) {
     applySet,
     snapshotSet,
     addProject,
+    removeProject,
+    clearScannedProjects,
     setProjectPinnedSets,
     scanProjects,
     getState,
@@ -1249,6 +1295,7 @@ function createManager(options = {}) {
     previewInstall,
     createSkill,
     readSkillFile,
+    saveSkillFile,
     findVaultDuplicates,
     dedupeVaultSkills,
   };
@@ -1973,13 +2020,21 @@ function normalizeScanRoots(roots, homeDir) {
 }
 
 function defaultScanRoots(homeDir) {
+  const workspaceRoots = [
+    path.join(homeDir, "code"),
+    path.join(homeDir, "projects"),
+    path.join(homeDir, "dev"),
+    path.join(homeDir, "src"),
+    path.join(homeDir, "work"),
+    path.join(homeDir, "Developer"),
+  ];
   if (process.platform === "win32") {
-    return [homeDir, path.join(path.parse(homeDir).root, "Users")];
+    return workspaceRoots;
   }
   if (process.platform === "darwin") {
-    return [homeDir, path.dirname(homeDir)];
+    return workspaceRoots;
   }
-  return [homeDir, "/home"];
+  return workspaceRoots;
 }
 
 function inferProjectRootFromSkillDir(skillDir) {
@@ -2049,6 +2104,45 @@ function shouldSkipScanDir(current, context) {
 async function shouldSkipProjectRoot(projectRoot, context) {
   if (projectRoot === context.homeDir || isInsidePath(projectRoot, context.appHome) || isInsidePath(projectRoot, context.vaultRoot)) {
     return true;
+  }
+  if (hasHiddenPathSegment(projectRoot, context.homeDir)) {
+    return true;
+  }
+  if (!(await hasProjectMarker(projectRoot))) {
+    return true;
+  }
+  return false;
+}
+
+function hasHiddenPathSegment(projectRoot, homeDir) {
+  const relative = path.relative(homeDir, projectRoot);
+  if (!relative || relative.startsWith("..")) {
+    return false;
+  }
+  return relative.split(path.sep).some((segment) => segment.startsWith("."));
+}
+
+async function hasProjectMarker(projectRoot) {
+  const markers = [
+    ".git",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "settings.gradle",
+    "Package.swift",
+    "Gemfile",
+    "composer.json",
+    "mix.exs",
+    "deno.json",
+    "bun.lockb",
+  ];
+  for (const marker of markers) {
+    if (await exists(path.join(projectRoot, marker))) {
+      return true;
+    }
   }
   return false;
 }
@@ -2216,7 +2310,7 @@ function buildDiscoveryDefinitions(projectPath, homeDir, appHome, vaultRoot) {
     ...configFiles,
     {
       id: "vault",
-      label: "Skill Manager vault",
+      label: `${APP_NAME} vault`,
       path: vaultRoot,
       kind: "vault",
       scope: "global",
@@ -2224,6 +2318,15 @@ function buildDiscoveryDefinitions(projectPath, homeDir, appHome, vaultRoot) {
       importMode: "scan",
     },
   ];
+}
+
+function resolveDefaultAppHome(homeDir) {
+  const preferredPath = path.join(homeDir, APP_CONFIG_DIR);
+  const legacyPath = path.join(homeDir, LEGACY_CONFIG_DIR);
+  if (syncFs.existsSync(legacyPath) && !syncFs.existsSync(preferredPath)) {
+    return legacyPath;
+  }
+  return preferredPath;
 }
 
 async function inspectDiscoverySource(definition) {

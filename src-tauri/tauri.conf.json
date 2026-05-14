@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Skillworks",
+  "version": "0.1.0",
+  "identifier": "dev.skillworks.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build && npm run desktop:sidecar",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Skillworks",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 720
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:5179; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/skillworks-server"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

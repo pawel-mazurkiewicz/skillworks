@@ -11,8 +11,9 @@ const execFileAsync = promisify(execFile);
 const args = parseArgs(process.argv.slice(2));
 const host = args.host || "127.0.0.1";
 const port = Number(args.port || process.env.PORT || 5179);
-const initialProject = args.project || process.env.AGENT_SKILL_PROJECT || process.cwd();
+const initialProject = args.project || process.env.SKILLWORKS_PROJECT || process.env.AGENT_SKILL_PROJECT || process.cwd();
 const publicDir = path.join(__dirname, "..", "public");
+const assetsDir = path.join(__dirname, "..", "assets");
 const manager = createManager();
 
 const server = http.createServer(async (request, response) => {
@@ -32,11 +33,16 @@ const server = http.createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   const address = `http://${host}:${port}`;
-  console.log(`Agent Skill Manager running at ${address}`);
+  console.log(`Skillworks running at ${address}`);
   console.log(`Initial project: ${path.resolve(initialProject)}`);
 });
 
 async function handleApi(request, response, url) {
+  if (request.method === "OPTIONS") {
+    sendNoContent(response, 204);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/state") {
     const projectPath = url.searchParams.get("project") || initialProject;
     sendJson(response, 200, await manager.getState(projectPath));
@@ -46,6 +52,12 @@ async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/skill") {
     const skillId = url.searchParams.get("id");
     sendJson(response, 200, await manager.readSkillFile(skillId));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/skill") {
+    const body = await readJsonBody(request);
+    sendJson(response, 200, await manager.saveSkillFile(body.id, body.content, body.projectPath || initialProject));
     return;
   }
 
@@ -99,6 +111,24 @@ async function handleApi(request, response, url) {
   if (request.method === "POST" && url.pathname === "/api/projects/add") {
     const body = await readJsonBody(request);
     const result = await manager.addProject(body.projectPath || body.path, { source: "manual", name: body.name });
+    sendJson(response, 200, result.state);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/projects/remove") {
+    const body = await readJsonBody(request);
+    const result = await manager.removeProject(body.projectPath || body.path, {
+      projectPath: body.currentProjectPath || initialProject,
+    });
+    sendJson(response, 200, result.state);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/projects/clear-scanned") {
+    const body = await readJsonBody(request);
+    const result = await manager.clearScannedProjects({
+      projectPath: body.projectPath || initialProject,
+    });
     sendJson(response, 200, result.state);
     return;
   }
@@ -198,6 +228,7 @@ async function handleApi(request, response, url) {
     const body = await readJsonBody(request);
     const result = await manager.createSet({
       name: body.name,
+      description: body.description,
       scope: body.scope,
       projectPath: body.projectPath || (body.scope === "project" ? initialProject : undefined),
       entries: body.entries,
@@ -210,6 +241,7 @@ async function handleApi(request, response, url) {
     const body = await readJsonBody(request);
     const result = await manager.snapshotSet({
       name: body.name,
+      description: body.description,
       scope: body.scope,
       projectPath: body.projectPath || (body.scope === "project" ? initialProject : undefined),
       targetKeys: body.targetKeys,
@@ -262,9 +294,11 @@ async function handleApi(request, response, url) {
 
 async function serveStatic(response, pathname) {
   const relativePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const filePath = path.resolve(publicDir, relativePath);
-  const publicRelativePath = path.relative(publicDir, filePath);
-  if (publicRelativePath.startsWith("..") || path.isAbsolute(publicRelativePath)) {
+  const rootDir = relativePath.startsWith("assets/") ? assetsDir : publicDir;
+  const localRelativePath = relativePath.startsWith("assets/") ? relativePath.slice("assets/".length) : relativePath;
+  const filePath = path.resolve(rootDir, localRelativePath);
+  const safeRelativePath = path.relative(rootDir, filePath);
+  if (safeRelativePath.startsWith("..") || path.isAbsolute(safeRelativePath)) {
     sendJson(response, 403, { error: "Forbidden" });
     return;
   }
@@ -292,6 +326,7 @@ function contentType(filePath) {
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
     ".svg": "image/svg+xml",
   }[extension] || "application/octet-stream";
 }
@@ -313,8 +348,25 @@ function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...corsHeaders(),
   });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function sendNoContent(response, statusCode) {
+  response.writeHead(statusCode, {
+    "cache-control": "no-store",
+    ...corsHeaders(),
+  });
+  response.end();
+}
+
+function corsHeaders() {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "access-control-allow-headers": "content-type",
+  };
 }
 
 function parseArgs(rawArgs) {
@@ -340,7 +392,7 @@ async function pickDirectory() {
   if (process.platform === "darwin") {
     const { stdout } = await execFileAsync("osascript", [
       "-e",
-      'POSIX path of (choose folder with prompt "Choose a folder for Agent Skill Manager")',
+      'POSIX path of (choose folder with prompt "Choose a folder for Skillworks")',
     ]);
     return stdout.trim();
   }
@@ -349,7 +401,7 @@ async function pickDirectory() {
     const command = [
       "Add-Type -AssemblyName System.Windows.Forms;",
       "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog;",
-      "$dialog.Description = 'Choose a folder for Agent Skill Manager';",
+      "$dialog.Description = 'Choose a folder for Skillworks';",
       "$dialog.ShowNewFolderButton = $true;",
       "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.SelectedPath }",
     ].join(" ");
@@ -368,7 +420,7 @@ async function pickDirectory() {
 
 async function installFromGit({ repoUrl, ref, targetIds, targetId, perSkillTargets, projectPath }) {
   const source = parseGitSource(repoUrl, ref);
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-skill-manager-git-"));
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "skillworks-git-"));
   const clonePath = path.join(tempRoot, "repo");
 
   try {
@@ -411,7 +463,7 @@ async function installFromGit({ repoUrl, ref, targetIds, targetId, perSkillTarge
 
 async function previewGitInstall({ repoUrl, ref, targetIds, targetId, projectPath }) {
   const source = parseGitSource(repoUrl, ref);
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-skill-manager-git-preview-"));
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "skillworks-git-preview-"));
   const clonePath = path.join(tempRoot, "repo");
 
   try {
