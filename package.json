@@ -27,7 +27,7 @@
     "desktop:dev": "tauri dev",
     "desktop:sidecar": "node scripts/build-tauri-sidecar.js",
     "desktop:build": "tauri build",
-    "test": "node --test && vitest run",
+    "test": "node --test test/core.test.js && vitest run",
     "test:ui": "vitest"
   },
   "devDependencies": {

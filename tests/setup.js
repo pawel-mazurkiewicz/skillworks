@@ -23,3 +23,10 @@ Object.defineProperty(globalThis, "matchMedia", {
   }),
   writable: true,
 });
+
+// Mock pointer capture APIs for Radix UI (jsdom doesn't implement them)
+["hasPointerCapture", "setPointerCapture", "releasePointerCapture"].forEach((method) => {
+  if (!Element.prototype[method]) {
+    Element.prototype[method] = () => {};
+  }
+});
