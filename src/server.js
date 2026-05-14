@@ -13,6 +13,7 @@ const host = args.host || "127.0.0.1";
 const port = Number(args.port || process.env.PORT || 5179);
 const initialProject = args.project || process.env.SKILLWORKS_PROJECT || process.env.AGENT_SKILL_PROJECT || process.cwd();
 const publicDir = path.join(__dirname, "..", "public");
+const distDir = path.join(__dirname, "..", "dist");
 const assetsDir = path.join(__dirname, "..", "assets");
 const manager = createManager();
 
@@ -294,29 +295,40 @@ async function handleApi(request, response, url) {
 
 async function serveStatic(response, pathname) {
   const relativePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const rootDir = relativePath.startsWith("assets/") ? assetsDir : publicDir;
-  const localRelativePath = relativePath.startsWith("assets/") ? relativePath.slice("assets/".length) : relativePath;
-  const filePath = path.resolve(rootDir, localRelativePath);
-  const safeRelativePath = path.relative(rootDir, filePath);
-  if (safeRelativePath.startsWith("..") || path.isAbsolute(safeRelativePath)) {
-    sendJson(response, 403, { error: "Forbidden" });
-    return;
-  }
+  const candidates = relativePath.startsWith("assets/")
+    ? [
+        { rootDir: distDir, localRelativePath: relativePath },
+        { rootDir: assetsDir, localRelativePath: relativePath.slice("assets/".length) },
+      ]
+    : [
+        { rootDir: distDir, localRelativePath: relativePath },
+        { rootDir: publicDir, localRelativePath: relativePath },
+      ];
 
-  try {
-    const body = await fs.readFile(filePath);
-    response.writeHead(200, {
-      "content-type": contentType(filePath),
-      "cache-control": "no-store",
-    });
-    response.end(body);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      sendJson(response, 404, { error: "Not found" });
+  for (const candidate of candidates) {
+    const filePath = path.resolve(candidate.rootDir, candidate.localRelativePath);
+    const safeRelativePath = path.relative(candidate.rootDir, filePath);
+    if (safeRelativePath.startsWith("..") || path.isAbsolute(safeRelativePath)) {
+      sendJson(response, 403, { error: "Forbidden" });
       return;
     }
-    throw error;
+
+    try {
+      const body = await fs.readFile(filePath);
+      response.writeHead(200, {
+        "content-type": contentType(filePath),
+        "cache-control": "no-store",
+      });
+      response.end(body);
+      return;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
   }
+
+  sendJson(response, 404, { error: "Not found" });
 }
 
 function contentType(filePath) {
