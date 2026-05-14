@@ -30,11 +30,13 @@ function normalizeSet(raw, scope, projectPath) {
   if (!raw || typeof raw !== "object") return null;
   const id = typeof raw.id === "string" && raw.id ? raw.id : newSetId();
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const description = typeof raw.description === "string" ? raw.description.trim() : "";
   if (!name) return null;
   const now = new Date().toISOString();
   return {
     id,
     name,
+    description,
     scope,
     ...(scope === "project" ? { projectPath } : {}),
     entries: normalizeEntries(raw.entries),

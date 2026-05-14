@@ -4,35 +4,92 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f4f5f1" />
-    <title>Agent Skill Manager</title>
+    <title>Skillworks</title>
+    <link rel="icon" type="image/png" sizes="256x256" href="/icon_256.png" />
+    <link rel="apple-touch-icon" href="/icon_256.png" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <svg class="ui-sprite" aria-hidden="true">
+      <defs>
+        <symbol id="icon-search" viewBox="0 0 24 24">
+          <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+          <path d="M21 21l-6 -6" />
+        </symbol>
+        <symbol id="icon-tool" viewBox="0 0 24 24">
+          <path d="M7 10h3v-3l-3.5 -3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1 -3 3l-6 -6a6 6 0 0 1 -8 -8l3.5 3.5" />
+        </symbol>
+        <symbol id="icon-file-upload" viewBox="0 0 24 24">
+          <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+          <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+          <path d="M12 11v6" />
+          <path d="M9.5 13.5l2.5 -2.5l2.5 2.5" />
+        </symbol>
+        <symbol id="icon-stack" viewBox="0 0 24 24">
+          <path d="M14 12l6 -3l-8 -4l-8 4l6 3" />
+          <path d="M10 12l-6 3l8 4l8 -4l-6 -3l-2 1l-2 -1" fill="currentColor" stroke="none" />
+        </symbol>
+        <symbol id="icon-folder-cog" viewBox="0 0 24 24">
+          <path d="M12.5 19h-7.5a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v3" />
+          <path d="M17.001 19a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+          <path d="M19.001 15.5v1.5" />
+          <path d="M19.001 21v1.5" />
+          <path d="M22.032 17.25l-1.299 .75" />
+          <path d="M17.27 20l-1.3 .75" />
+          <path d="M15.97 17.25l1.3 .75" />
+          <path d="M20.733 20l1.3 .75" />
+        </symbol>
+        <symbol id="icon-clear-all" viewBox="0 0 24 24">
+          <path d="M8 6h12" />
+          <path d="M6 12h12" />
+          <path d="M4 18h12" />
+        </symbol>
+        <symbol id="icon-folder" viewBox="0 0 24 24">
+          <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" />
+        </symbol>
+      </defs>
+    </svg>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <p class="eyebrow">Skill portfolio</p>
-          <h1>Agent Skill Manager</h1>
+          <img class="brand-icon" src="/icon_256.png" alt="Skillworks icon" width="72" height="72" />
+          <p class="eyebrow">Skill workspace</p>
+          <h1>Skillworks</h1>
         </div>
         <nav class="top-tabs" aria-label="Workspace sections">
           <button class="top-tab active" data-top-tab="manage" type="button">
-            <span class="top-tab-label">Manage</span>
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg>
+              <span class="top-tab-label">Manage</span>
+            </span>
             <span class="top-tab-hint">Browse, toggle, organize</span>
           </button>
           <button class="top-tab" data-top-tab="install" type="button">
-            <span class="top-tab-label">Install</span>
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-file-upload"></use></svg>
+              <span class="top-tab-label">Install</span>
+            </span>
             <span class="top-tab-hint">Bring skills in</span>
           </button>
           <button class="top-tab" data-top-tab="sets" type="button">
-            <span class="top-tab-label">Sets</span>
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-stack"></use></svg>
+              <span class="top-tab-label">Sets</span>
+            </span>
             <span class="top-tab-hint">Curated skill bundles</span>
           </button>
           <button class="top-tab" data-top-tab="configure" type="button">
-            <span class="top-tab-label">Configure</span>
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder-cog"></use></svg>
+              <span class="top-tab-label">Configure</span>
+            </span>
             <span class="top-tab-hint">Projects, targets, vault</span>
           </button>
           <button class="top-tab" data-top-tab="cleanup" type="button">
-            <span class="top-tab-label">Cleanup</span>
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clear-all"></use></svg>
+              <span class="top-tab-label">Cleanup</span>
+            </span>
             <span class="top-tab-hint">Find &amp; merge duplicates</span>
           </button>
         </nav>
@@ -79,6 +136,7 @@
               <div class="toolbar">
                 <label class="search-wrap">
                   <span class="sr-only">Search skills</span>
+                  <svg class="icon field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg>
                   <input id="searchInput" placeholder="Search skills, tags, descriptions" autocomplete="off" />
                 </label>
                 <div class="segments" id="tagFilters" aria-label="Tag filters"></div>
@@ -121,37 +179,6 @@
                 </table>
               </div>
             </section>
-
-            <aside class="detail-pane" aria-label="Skill details">
-              <section class="panel detail-card">
-                <div class="empty-detail" id="emptyDetail">
-                  <h2>No skill selected</h2>
-                  <p>Select a row to inspect its paths and active links.</p>
-                </div>
-                <div class="skill-detail hidden" id="skillDetail">
-                  <div class="detail-title-row">
-                    <div>
-                      <p class="eyebrow" id="detailTags"></p>
-                      <h2 id="detailName"></h2>
-                    </div>
-                    <button class="button ghost" id="copyPathButton" type="button">Copy path</button>
-                  </div>
-                  <p id="detailDescription" class="description"></p>
-                  <dl class="path-list">
-                    <div>
-                      <dt>Vault path</dt>
-                      <dd id="detailPath"></dd>
-                    </div>
-                    <div>
-                      <dt>Relative id</dt>
-                      <dd id="detailId"></dd>
-                    </div>
-                  </dl>
-                  <div class="detail-links" id="detailLinks"></div>
-                  <pre class="skill-preview" id="skillPreview"></pre>
-                </div>
-              </section>
-            </aside>
           </div>
         </section>
 
@@ -159,7 +186,7 @@
           <div class="tab-grid two-col">
             <section class="panel">
               <div class="section-head">
-                <h2>From local folder</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>From local folder</span></h2>
                 <p class="section-sub">Move skills from another location into the vault.</p>
               </div>
               <div class="field-stack">
@@ -181,7 +208,7 @@
 
             <section class="panel">
               <div class="section-head">
-                <h2>From Git</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-file-upload"></use></svg><span>From Git</span></h2>
                 <p class="section-sub">Clone a repo and install the skills it ships.</p>
               </div>
               <form class="field-stack" id="gitInstallForm">
@@ -206,7 +233,7 @@
 
             <section class="panel span-2">
               <div class="section-head">
-                <h2>Discovery</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg><span>Discovery</span></h2>
                 <p class="section-sub">Skills detected on this machine that aren't in the vault yet.</p>
               </div>
               <div class="discovery-summary" id="discoverySummary"></div>
@@ -218,7 +245,7 @@
         <section class="tab-content hidden" id="setsTab" data-top-tab-panel="sets" aria-label="Skill sets">
           <section class="panel">
             <div class="section-head">
-              <h2>Sets</h2>
+              <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-stack"></use></svg><span>Sets</span></h2>
               <p class="section-sub">Curated bundles of skills and targets you can apply on demand.</p>
             </div>
             <div class="sets-layout">
@@ -247,7 +274,7 @@
           <div class="tab-grid two-col">
             <section class="panel">
               <div class="section-head">
-                <h2>Projects</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>Projects</span></h2>
                 <p class="section-sub">Projects this vault links into.</p>
               </div>
               <div class="field-stack">
@@ -258,7 +285,16 @@
                 <div class="button-row">
                   <button class="button" id="browseProjectAddButton" type="button">Browse</button>
                   <button class="button" id="addProjectButton" type="button">Add</button>
-                  <button class="button primary" id="scanProjectsButton" type="button">Scan system</button>
+                </div>
+                <label>
+                  <span>Scan folder</span>
+                  <input id="projectScanRootInput" placeholder="~/code or another workspace folder" autocomplete="off" spellcheck="false" />
+                </label>
+                <div class="button-row">
+                  <button class="button" id="browseProjectScanRootButton" type="button">Browse</button>
+                  <button class="button primary" id="scanProjectsButton" type="button">Scan folder</button>
+                  <button class="button" id="scanDefaultProjectsButton" type="button">Scan workspaces</button>
+                  <button class="button danger" id="clearScannedProjectsButton" type="button">Clear scanned</button>
                 </div>
               </div>
               <div class="project-list" id="projectList"></div>
@@ -266,7 +302,7 @@
 
             <section class="panel">
               <div class="section-head">
-                <h2>Custom targets</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder-cog"></use></svg><span>Custom targets</span></h2>
                 <p class="section-sub">Extra destinations beyond the default Claude paths.</p>
               </div>
               <form class="field-stack" id="customTargetForm">
@@ -300,7 +336,7 @@
 
             <section class="panel">
               <div class="section-head">
-                <h2>Unmanaged folders</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clear-all"></use></svg><span>Unmanaged folders</span></h2>
                 <p class="section-sub">Skill folders Claude can see but the vault doesn't track.</p>
               </div>
               <div class="unmanaged-list" id="unmanagedList"></div>
@@ -308,7 +344,7 @@
 
             <section class="panel">
               <div class="section-head">
-                <h2>Create a skill</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>Create a skill</span></h2>
                 <p class="section-sub">Adds a new skill scaffold to the vault.</p>
               </div>
               <form class="field-stack" id="createSkillForm">
@@ -330,7 +366,7 @@
           <section class="panel cleanup-panel">
             <div class="section-head cleanup-head">
               <div>
-                <h2>Duplicate skills</h2>
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clear-all"></use></svg><span>Duplicate skills</span></h2>
                 <p class="section-sub">Groups of skills with byte-identical SKILL.md content. Pick one to keep per group; the rest are deleted and any enabled links repoint to the keeper.</p>
               </div>
               <div class="button-row no-wrap">
@@ -363,6 +399,6 @@
       </footer>
     </dialog>
 
-    <script src="/app.js" defer></script>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>
