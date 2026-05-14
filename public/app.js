@@ -1,4 +1,9 @@
+import React from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
 import { mountSkillEditor, unmountAllSkillEditors } from "./skill-editor.jsx";
+import "./styles.css";
 
 const PROJECT_CACHE_KEY = "asm.projects";
 const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
@@ -27,6 +32,17 @@ let setsState = {
 
 let pendingApplySetId = null;
 let lastAppliedSet = null; // { id, name, touchedTargets, modified }
+
+const rootElement = document.querySelector("#root");
+if (!rootElement) {
+  throw new Error("Missing #root element");
+}
+
+flushSync(() => {
+  createRoot(rootElement).render(
+    React.createElement(React.StrictMode, null, React.createElement(App)),
+  );
+});
 
 const elements = {
   appShell: document.querySelector(".app-shell"),
