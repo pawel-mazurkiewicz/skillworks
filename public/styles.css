@@ -4114,6 +4114,28 @@ body {
   flex-wrap: wrap;
 }
 
+.project-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 560px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 580;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.project-select:focus {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+  border-color: var(--green);
+}
+
 .header-field {
   display: flex;
   align-items: center;
