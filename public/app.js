@@ -23,6 +23,17 @@ const state = {
   preview: null,
   dedupe: null,
   dedupeChoices: new Map(),
+  activeInstallTab: "marketplace",
+  marketplace: {
+    query: "",
+    view: "trending",
+    page: 0,
+    perPage: 24,
+    items: [],
+    pagination: null,
+    loaded: false,
+    error: "",
+  },
 };
 
 let setsState = {
@@ -87,6 +98,17 @@ const elements = {
   gitTargetCheckboxes: document.querySelector("#gitTargetCheckboxes"),
   gitPreviewButton: document.querySelector("#gitPreviewButton"),
   gitPreviewResult: document.querySelector("#gitPreviewResult"),
+  installTabs: document.querySelectorAll("[data-install-tab]"),
+  installPanels: document.querySelectorAll("[data-install-panel]"),
+  marketplaceSearchInput: document.querySelector("#marketplaceSearchInput"),
+  marketplaceViewSelect: document.querySelector("#marketplaceViewSelect"),
+  marketplaceRefreshButton: document.querySelector("#marketplaceRefreshButton"),
+  marketplaceTargetSummary: document.querySelector("#marketplaceTargetSummary"),
+  marketplaceTargetCheckboxes: document.querySelector("#marketplaceTargetCheckboxes"),
+  marketplaceStatus: document.querySelector("#marketplaceStatus"),
+  marketplaceResults: document.querySelector("#marketplaceResults"),
+  marketplacePreviousButton: document.querySelector("#marketplacePreviousButton"),
+  marketplaceNextButton: document.querySelector("#marketplaceNextButton"),
   searchInput: document.querySelector("#searchInput"),
   agentFilterSelect: document.querySelector("#agentFilterSelect"),
   statusFilterSelect: document.querySelector("#statusFilterSelect"),
@@ -155,6 +177,8 @@ async function bootstrap() {
           await loadSets();
           renderSets();
         });
+      } else if (state.activeTopTab === "install" && !state.marketplace.loaded) {
+        runAction(() => loadMarketplace());
       }
     });
   });
@@ -227,6 +251,40 @@ async function bootstrap() {
     const report = result.report || { imported: 0, skipped: 0, errors: 0 };
     showToast(`Moved ${report.imported}, skipped ${report.skipped}, errors ${report.errors}`);
   }));
+
+  elements.installTabs.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeInstallTab = button.dataset.installTab;
+      renderInstallTabs();
+      if (state.activeInstallTab === "marketplace" && !state.marketplace.loaded) {
+        runAction(() => loadMarketplace());
+      }
+    });
+  });
+
+  elements.marketplaceSearchInput.addEventListener("input", () => {
+    state.marketplace.query = elements.marketplaceSearchInput.value;
+    state.marketplace.page = 0;
+    window.clearTimeout(elements.marketplaceSearchInput.searchTimeout);
+    elements.marketplaceSearchInput.searchTimeout = window.setTimeout(() => {
+      runAction(() => loadMarketplace());
+    }, 260);
+  });
+
+  elements.marketplaceViewSelect.addEventListener("change", () => {
+    state.marketplace.view = elements.marketplaceViewSelect.value;
+    state.marketplace.page = 0;
+    runAction(() => loadMarketplace());
+  });
+
+  elements.marketplaceRefreshButton.addEventListener("click", () => runAction(() => loadMarketplace()));
+  elements.marketplacePreviousButton.addEventListener("click", () => runAction(() => loadMarketplacePage(-1)));
+  elements.marketplaceNextButton.addEventListener("click", () => runAction(() => loadMarketplacePage(1)));
+  elements.marketplaceTargetCheckboxes.addEventListener("change", (event) => {
+    if (event.target.matches("input[type=checkbox]")) {
+      updateMarketplaceTargetSummary();
+    }
+  });
 
   elements.openCreateSkillButton.addEventListener("click", () => openCreateSkillModal());
   elements.closeCreateSkillButton.addEventListener("click", () => closeCreateSkillModal());
@@ -531,6 +589,8 @@ function render() {
   renderTargetVisibility();
   renderDiscovery();
   renderInstallTargets();
+  renderInstallTabs();
+  renderMarketplace();
   renderBulkTargets();
   renderBulkBar();
   renderTopTabs();
@@ -891,11 +951,18 @@ function renderInstallTargets() {
     elements.gitTargetCheckboxes.innerHTML =
       `<legend>Extra targets</legend>` +
       `<p class="empty-copy">No targets available.</p>`;
+    elements.marketplaceTargetCheckboxes.innerHTML =
+      `<legend>Extra targets</legend>` +
+      `<p class="empty-copy">No targets available.</p>`;
     updateGitTargetSummary();
+    updateMarketplaceTargetSummary();
     return;
   }
   const previouslyChecked = new Set(
     Array.from(elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
+  );
+  const marketplaceChecked = new Set(
+    Array.from(elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
   );
   const items = targets
     .map((target) => {
@@ -912,9 +979,27 @@ function renderInstallTargets() {
       `;
     })
     .join("");
+  const marketplaceItems = targets
+    .map((target) => {
+      const checked = marketplaceChecked.has(target.id) ? "checked" : "";
+      const locator = target.scope === "project" ? "Project target" : "Global target";
+      return `
+        <label class="target-checkbox">
+          <input type="checkbox" value="${escapeHtml(target.id)}" ${checked} />
+          <span>
+            <strong>${escapeHtml(target.label)}</strong>
+            <small>${escapeHtml(locator)}</small>
+          </span>
+        </label>
+      `;
+    })
+    .join("");
   elements.gitTargetCheckboxes.innerHTML =
     `<legend>Extra targets</legend>${items}`;
+  elements.marketplaceTargetCheckboxes.innerHTML =
+    `<legend>Extra targets</legend>${marketplaceItems}`;
   updateGitTargetSummary();
+  updateMarketplaceTargetSummary();
 }
 
 function updateGitTargetSummary() {
@@ -932,6 +1017,172 @@ function updateGitTargetSummary() {
   const names = checked.map((input) => labelsById.get(input.value) || input.value);
   elements.gitTargetSummary.textContent =
     names.length <= 2 ? `Vault + ${names.join(", ")}` : `Vault + ${names.length} targets`;
+}
+
+function updateMarketplaceTargetSummary() {
+  if (!elements.marketplaceTargetSummary || !elements.marketplaceTargetCheckboxes) {
+    return;
+  }
+  const checked = Array.from(
+    elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  );
+  if (!checked.length) {
+    elements.marketplaceTargetSummary.textContent = "Vault only";
+    return;
+  }
+  const labelsById = new Map((state.data?.targets || []).map((target) => [target.id, target.label]));
+  const names = checked.map((input) => labelsById.get(input.value) || input.value);
+  elements.marketplaceTargetSummary.textContent =
+    names.length <= 2 ? `Vault + ${names.join(", ")}` : `Vault + ${names.length} targets`;
+}
+
+function renderInstallTabs() {
+  elements.installTabs.forEach((button) => {
+    const active = button.dataset.installTab === state.activeInstallTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  elements.installPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.installPanel !== state.activeInstallTab);
+  });
+}
+
+async function loadMarketplacePage(delta) {
+  const nextPage = Math.max(0, state.marketplace.page + delta);
+  if (nextPage === state.marketplace.page) {
+    return;
+  }
+  state.marketplace.page = nextPage;
+  await loadMarketplace();
+}
+
+async function loadMarketplace() {
+  state.marketplace.query = elements.marketplaceSearchInput.value.trim();
+  state.marketplace.view = elements.marketplaceViewSelect.value;
+  const params = new URLSearchParams({
+    view: state.marketplace.view,
+    page: String(state.marketplace.page),
+    per_page: String(state.marketplace.perPage),
+  });
+  if (state.marketplace.query) {
+    params.set("q", state.marketplace.query);
+  }
+  elements.marketplaceStatus.textContent = "Loading skills.sh...";
+  try {
+    const payload = await api(`/api/marketplace/skills?${params.toString()}`);
+    state.marketplace.items = Array.isArray(payload.data) ? payload.data : [];
+    state.marketplace.pagination = payload.pagination || null;
+    state.marketplace.loaded = true;
+    state.marketplace.error = "";
+    renderMarketplace();
+  } catch (error) {
+    elements.marketplaceStatus.textContent = error.message || "Marketplace unavailable.";
+    state.marketplace.items = [];
+    state.marketplace.pagination = null;
+    state.marketplace.loaded = true;
+    state.marketplace.error = error.message || "Marketplace unavailable.";
+    renderMarketplace();
+    throw error;
+  }
+}
+
+function renderMarketplace() {
+  if (!elements.marketplaceResults) {
+    return;
+  }
+  const items = state.marketplace.items || [];
+  const pagination = state.marketplace.pagination;
+  const query = state.marketplace.query.trim();
+  const mode = query.length >= 2 ? `Search: ${query}` : marketplaceViewLabel(state.marketplace.view);
+  const count = pagination?.total || items.length;
+  const scraped = items.some((item) => item.scraped);
+  elements.marketplaceStatus.textContent = state.marketplace.error
+    ? state.marketplace.error
+    : state.marketplace.loaded
+    ? `${mode} / ${count} skill${count === 1 ? "" : "s"}${pagination ? ` / page ${pagination.page + 1}` : ""}${scraped ? " / parsed from public pages" : ""}`
+    : "Load marketplace skills to begin.";
+  elements.marketplacePreviousButton.disabled = !pagination || pagination.page <= 0 || query.length >= 2;
+  elements.marketplaceNextButton.disabled = !pagination || !pagination.hasMore || query.length >= 2;
+
+  if (!items.length) {
+    elements.marketplaceResults.innerHTML = state.marketplace.error
+      ? `<p class="empty-copy">skills.sh returned <code>401 authentication_required</code> for a public API request. Their docs say unauthenticated access should work with lower rate limits, so this looks like an upstream docs/API mismatch. Optional <code>SKILLS_SH_API_KEY</code> can work around it if you have one.</p>`
+      : `<p class="empty-copy">No marketplace skills found.</p>`;
+    return;
+  }
+
+  elements.marketplaceResults.innerHTML = items.map((skill) => renderMarketplaceSkill(skill)).join("");
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-install]").forEach((button) => {
+    button.addEventListener("click", () => installMarketplaceSkill(button.dataset.marketplaceInstall));
+  });
+}
+
+function renderMarketplaceSkill(skill) {
+  const installed = isMarketplaceInstalled(skill);
+  const installCount = Number(skill.installs);
+  return `
+    <article class="marketplace-card">
+      <div class="marketplace-card-main">
+        <header>
+          <strong>${escapeHtml(skill.name || skill.slug || skill.id)}</strong>
+          <span>${escapeHtml(skill.source || "")}</span>
+        </header>
+        <p>${escapeHtml(skill.description || skill.id || "")}</p>
+        <div class="marketplace-card-meta">
+          ${Number.isFinite(installCount) ? `<span>${installCount.toLocaleString()} installs</span>` : ""}
+          <span>${escapeHtml(skill.sourceType || "source")}</span>
+          ${skill.scraped ? "<span>public page</span>" : ""}
+          ${skill.isDuplicate ? "<span>duplicate</span>" : ""}
+        </div>
+      </div>
+      <div class="marketplace-card-actions">
+        ${skill.url ? `<a class="button ghost marketplace-link" href="${escapeAttr(skill.url)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+        <button class="button primary" type="button" data-marketplace-install="${escapeHtml(skill.id)}">${installed ? "Use Git again" : "Use Git"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function marketplaceViewLabel(view) {
+  return {
+    "all-time": "All time",
+    trending: "Trending",
+    hot: "Hot",
+    official: "Official",
+  }[view] || "Marketplace";
+}
+
+function isMarketplaceInstalled(skill) {
+  const source = String(skill.source || "").toLowerCase();
+  const slug = String(skill.slug || "").toLowerCase();
+  return (state.data?.skills || []).some((item) => {
+    const haystack = `${item.id} ${item.name} ${item.path}`.toLowerCase();
+    return (slug && haystack.includes(slug)) || (source && haystack.includes(source.replace("/", "-")));
+  });
+}
+
+async function installMarketplaceSkill(id) {
+  const skill = (state.marketplace.items || []).find((item) => item.id === id);
+  if (!skill || !skill.installUrl) {
+    showToast("GitHub source not available");
+    return;
+  }
+  elements.gitRepoInput.value = skill.installUrl;
+  elements.gitRefInput.value = "";
+  copyMarketplaceTargetsToGitTargets();
+  state.activeInstallTab = "git";
+  renderInstallTabs();
+  updateGitTargetSummary();
+  showToast(`Ready in From Git: ${skill.source}`);
+}
+
+function copyMarketplaceTargetsToGitTargets() {
+  const selected = new Set(
+    Array.from(elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
+  );
+  elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]").forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
 }
 
 function renderInstallPreview(plan, options = {}) {
@@ -1297,6 +1548,26 @@ function iconSprite(name, className = "icon") {
   return `<svg class="${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-${escapeAttr(name)}"></use></svg>`;
 }
 
+function harnessIconName(harness) {
+  const normalized = String(harness || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const icons = {
+    agents: "harness-agents",
+    antigravity: "harness-antigravity",
+    claude: "harness-claude",
+    codebuddy: "harness-codebuddy",
+    codex: "harness-codex",
+    copilot: "harness-copilot",
+    cursor: "harness-cursor",
+    gemini: "harness-gemini",
+    kiro: "harness-kiro",
+    openclaw: "harness-openclaw",
+    opencode: "harness-opencode",
+    qoder: "harness-qoder",
+    trae: "harness-trae",
+  };
+  return icons[normalized] || "harness-custom";
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value)) return "";
   if (value < 1024) return `${value} B`;
@@ -1450,7 +1721,7 @@ function renderMatrix() {
   `;
 
   if (!skills.length) {
-    elements.matrixBody.innerHTML = `<div class="empty-state">No skills match the current filter.</div>`;
+    elements.matrixBody.innerHTML = `<div class="empty-state">No skills match these filters. Clear search or widen the filters to bring the list back.</div>`;
     bindSelectVisible(visibleSkillIds);
     return;
   }
@@ -1668,6 +1939,7 @@ function renderDetailPane(skill) {
   const assignmentRows = harnessOrder
     .map((harness) => {
       const group = harnessGroups.get(harness);
+      const iconName = harnessIconName(harness);
       const cells = [
         renderScopeCell(group.global, "Global"),
         renderScopeCell(group.project, "Project"),
@@ -1678,6 +1950,9 @@ function renderDetailPane(skill) {
       return `
         <div class="assignment-row">
           <div class="assignment-label">
+            <span class="assignment-harness-icon assignment-harness-icon--${escapeAttr(iconName.replace("harness-", ""))}">
+              ${iconSprite(iconName, "icon")}
+            </span>
             <strong>${escapeHtml(harness)}</strong>
           </div>
           <div class="assignment-scopes">${cells.join("")}${extras}</div>
@@ -1989,20 +2264,43 @@ async function pickDirectoryInto(input) {
 }
 
 async function runAction(action) {
+  setBusy(true);
   try {
     await action();
   } catch (error) {
     showToast(error.message || "Action failed");
+  } finally {
+    setBusy(false);
   }
 }
 
 function showToast(message) {
+  const tone = toastTone(message);
   elements.toast.textContent = message;
+  elements.toast.dataset.tone = tone;
   elements.toast.classList.add("visible");
   window.clearTimeout(showToast.timeout);
   showToast.timeout = window.setTimeout(() => {
     elements.toast.classList.remove("visible");
   }, 2600);
+}
+
+function setBusy(isBusy) {
+  setBusy.count = Math.max(0, (setBusy.count || 0) + (isBusy ? 1 : -1));
+  const busy = setBusy.count > 0;
+  elements.appShell.classList.toggle("is-busy", busy);
+  elements.appShell.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function toastTone(message) {
+  const normalized = String(message || "").toLowerCase();
+  if (/(fail|failed|error|required|choose|select|missing|warning|nothing)/.test(normalized)) {
+    return "attention";
+  }
+  if (/(saved|created|moved|installed|enabled|disabled|loaded|copied|applied|updated|added|removed|deleted|merged|pinned|restored|cleared|discovered)/.test(normalized)) {
+    return "success";
+  }
+  return "neutral";
 }
 
 function escapeHtml(value) {
@@ -2149,7 +2447,7 @@ function renderSets() {
   const filtered = all.filter((s) => setsState.filter === "all" || s._scope === setsState.filter);
 
   if (filtered.length === 0) {
-    rowsEl.appendChild(makeEl("li", { class: "muted set-row-empty" }, "No sets yet."));
+    rowsEl.appendChild(makeEl("li", { class: "muted set-row-empty" }, "No sets yet. Snapshot current links or create a set."));
   } else {
     for (const s of filtered) {
       const li = makeEl("li", {
