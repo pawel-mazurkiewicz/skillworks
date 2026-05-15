@@ -73,3 +73,28 @@
 
 /* Tailwind v4 dark variant */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Collapsible animations — used by Sidebar and other collapsible surfaces */
+@keyframes collapsible-down {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height, var(--radix-collapse-content-height, auto)); opacity: 1; }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height, var(--radix-collapse-content-height, auto)); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
+.animate-collapsible-down {
+  animation: collapsible-down 200ms var(--ease-paper);
+}
+.animate-collapsible-up {
+  animation: collapsible-up 150ms var(--ease-paper);
+}
+
+/* Reduced motion: skip animations */
+@media (prefers-reduced-motion: reduce) {
+  .animate-collapsible-down,
+  .animate-collapsible-up {
+    animation: none;
+  }
+}

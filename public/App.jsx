@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Header } from "@/components/Header";
+import { ManageGrid } from "@/components/Manage/ManageGrid";
 import { events, emit } from "@/lib/state";
 
 /**
@@ -8,6 +9,10 @@ import { events, emit } from "@/lib/state";
  *
  * During migration the header is React; the main content still renders
  * from the legacy `#appShellTemplate`. The event bus bridges React → app.js.
+ *
+ * PR3: ManageGrid replaces the legacy manage tab surface. The legacy
+ * `#manageTab` section is hidden when ManageGrid renders, keeping app.js
+ * DOM queries intact for non-manage elements (modals, bulk floating, etc.).
  */
 function AppShell() {
   const template = document.querySelector("#appShellTemplate");
@@ -20,6 +25,29 @@ function AppShell() {
     () => localStorage.getItem("asm.projectPath") || ""
   );
   const [searchValue, setSearchValue] = useState("");
+
+  // Hide legacy manage tab when ManageGrid renders
+  useEffect(() => {
+    const manageTab = document.getElementById("manageTab");
+    if (!manageTab) return;
+
+    const applyVisibility = () => {
+      const currentTab = window.__skillworksState?.activeTopTab || activeTab;
+      if (currentTab === "manage") {
+        manageTab.style.display = "none";
+      } else {
+        manageTab.style.display = "";
+      }
+    };
+
+    applyVisibility();
+    const handler = () => applyVisibility();
+    events.on("tab:change", handler);
+    return () => {
+      events.off("tab:change", handler);
+      manageTab.style.display = "";
+    };
+  }, [activeTab]);
 
   // Bridge: React tab changes → legacy app.js state
   useEffect(() => {
@@ -107,7 +135,14 @@ function AppShell() {
         searchValue={searchValue}
         onSearchChange={setSearchValue}
       />
-      {/* Legacy workspace template — header already stripped from index.html */}
+      {/* PR3: ManageGrid renders for the manage tab surface */}
+      {activeTab === "manage" && (
+        <div className="flex-1 p-[clamp(12px,1.6vw,24px)]">
+          <ManageGrid />
+        </div>
+      )}
+
+      {/* Legacy workspace template — manage tab hidden when ManageGrid renders */}
       <div dangerouslySetInnerHTML={{ __html: template?.innerHTML.trim() || "" }} />
     </div>
   );

@@ -212,6 +212,43 @@ async function bootstrap() {
     openCreateSkillModal();
   });
 
+  // PR3: filter:change — React FilterSelects → legacy state + re-render
+  events.on("filter:change", (changes) => {
+    if (changes.agent !== undefined) state.filterTargetId = changes.agent;
+    if (changes.status !== undefined) state.filterStatus = changes.status;
+    if (changes.type !== undefined) state.filterType = changes.type;
+    if (changes.sort !== undefined) state.sortBy = changes.sort;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  // PR3: filter:target-toggle — React TargetChips → legacy state + re-render
+  events.on("filter:target-toggle", ({ targetId }) => {
+    state.filterTargetId = targetId;
+    renderMatrix();
+    renderBulkBar();
+    renderTargets();
+  });
+
+  // PR3: selection:toggle — React SkillRow checkbox → legacy state + re-render
+  events.on("selection:toggle", ({ skillId, checked }) => {
+    if (checked) {
+      state.selectedSkillIds.add(skillId);
+    } else {
+      state.selectedSkillIds.delete(skillId);
+    }
+    renderMatrix();
+    renderDetail();
+    renderBulkBar();
+  });
+
+  // PR3: selection:select — React SkillRow click → legacy state + re-render
+  events.on("selection:select", (skillId) => {
+    state.selectedSkillId = skillId;
+    renderMatrix();
+    renderDetail();
+  });
+
   initSidebarToggle();
   renderTopTabs();
 
@@ -599,6 +636,16 @@ function render() {
   renderMatrix();
   renderDrift();
   renderDetail();
+
+  // PR3: emit state snapshot so React chrome re-renders with fresh data
+  events.emit("state:snapshot", {
+    activeTopTab: state.activeTopTab,
+    search: state.search,
+    filterTargetId: state.filterTargetId,
+    filterStatus: state.filterStatus,
+    filterType: state.filterType,
+    sortBy: state.sortBy,
+  });
 }
 
 function renderProjects() {
