@@ -3985,15 +3985,64 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
+  /* Force the single grid row to fill the grid's height so column
+     `max-height: 100%` resolves against the available space, not the
+     content height. */
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .app-shell[data-active-tab="manage"] .manage-grid > .skill-sidebar,
-.app-shell[data-active-tab="manage"] .manage-grid > .main-surface,
 .app-shell[data-active-tab="manage"] .manage-grid > .detail-pane {
   max-height: 100%;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* Main surface itself doesn't scroll — its inner skill list is the
+   scroller. We flex-fill the surface and let the list take what's left. */
+.app-shell[data-active-tab="manage"] .manage-grid > .main-surface {
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell[data-active-tab="manage"] .main-surface > .stats-strip,
+.app-shell[data-active-tab="manage"] .main-surface > .drift-pill {
+  flex: 0 0 auto;
+}
+
+.app-shell[data-active-tab="manage"] .main-surface > .skill-list-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell[data-active-tab="manage"] .skill-list-shell > .skill-list-head {
+  flex: 0 0 auto;
+}
+
+.app-shell[data-active-tab="manage"] .skill-list-shell > .skill-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+/* Breathing room at the bottom of each scrolling region, rendered as
+   an in-flow spacer so it scrolls with the content (not as outer
+   padding that would shrink the viewport). */
+.app-shell[data-active-tab="manage"] .manage-grid > .skill-sidebar::after,
+.app-shell[data-active-tab="manage"] .manage-grid > .detail-pane::after,
+.app-shell[data-active-tab="manage"] .skill-list-shell > .skill-list::after {
+  content: "";
+  display: block;
+  flex: 0 0 auto;
+  height: 16px;
+  width: 100%;
 }
 
 /* Disable the legacy sticky behavior on the detail pane in this layout
