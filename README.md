@@ -230,3 +230,105 @@ that the server connected.
 ```bash
 npm test
 ```
+
+## Frontend Architecture
+
+### Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Framework | React 19 |
+| Styling | Tailwind CSS v4 (via `@tailwindcss/vite`) |
+| Design System | shadcn/ui primitives |
+| Accessibility | Radix UI + axe-core |
+| Testing | Vitest + Playwright |
+
+### Component Structure
+
+```
+public/
+├── components/
+│   ├── Header/           # Permanent header (PR2)
+│   │   ├── BrandBlock.jsx
+│   │   ├── TopTabs.jsx
+│   │   ├── ProjectRow.jsx
+│   │   └── SearchRow.jsx
+│   ├── Manage/           # Skill management grid (PR3)
+│   │   ├── ManageGrid.jsx
+│   │   ├── Sidebar.jsx
+│   │   ├── FilterSelects.jsx
+│   │   ├── StatsStrip.jsx
+│   │   ├── SkillList.jsx
+│   │   ├── SkillRow.jsx
+│   │   ├── DetailPane.jsx
+│   │   ├── BulkFloating.jsx
+│   │   ├── TargetChips.jsx
+│   │   └── NewSkillDialog.jsx
+│   ├── Install/          # Skill installation (PR4)
+│   │   ├── index.jsx
+│   │   ├── FromFolder.jsx
+│   │   ├── FromGit.jsx
+│   │   └── FromURL.jsx
+│   ├── Sets/             # Skill sets (PR5)
+│   │   ├── index.jsx
+│   │   ├── SetsList.jsx
+│   │   └── SetEditor.jsx
+│   ├── Configure/        # Workspace config (PR5)
+│   │   ├── index.jsx
+│   │   ├── VaultPanel.jsx
+│   │   ├── ProjectsPanel.jsx
+│   │   ├── CustomTargetsPanel.jsx
+│   │   └── UnmanagedPanel.jsx
+│   ├── Cleanup/          # Deduplication (PR5)
+│   │   └── index.jsx
+│   └── ui/               # shadcn-style primitives
+│       ├── button.jsx
+│       ├── card.jsx
+│       ├── input.jsx
+│       ├── select.jsx
+│       ├── toggle.jsx
+│       ├── tabs.jsx
+│       ├── dialog.jsx
+│       ├── collapsible.jsx
+│       ├── resizable.jsx
+│       ├── scroll-area.jsx
+│       ├── sonner.jsx
+│       ├── typography.jsx
+│       ├── theme-provider.jsx
+│       └── theme-toggle.jsx
+├── lib/
+│   ├── utils.js          # cn() helper, class composition
+│   └── state.js          # Event bus + React hooks bridge
+└── theme.css             # Tailwind v4 @theme tokens
+```
+
+### Design Tokens
+
+All colors, fonts, radii, and shadows are defined in `public/theme.css` via Tailwind v4's `@theme` directive. Components must use utility classes that resolve to these tokens (e.g., `text-ink`, `bg-surface`, `font-display`, `shadow-soft`) rather than raw hex values.
+
+### Event Bus Pattern
+
+React components communicate with legacy `app.js` via an event bus:
+
+```javascript
+// React → Legacy
+events.emit("tab:change", "install");
+events.emit("project:load", "/path/to/project");
+
+// Legacy → React (via window.__skillworksState)
+window.__skillworksState.activeTopTab = "manage";
+```
+
+### Accessibility
+
+- WCAG 2.2 AA compliance required for all new components
+- Visible focus rings on all interactive elements
+- `prefers-reduced-motion` respected via `motion-safe:` variant
+- axe-core scans in `tests/a11y/all-tabs.spec.js`
+
+### Visual Regression
+
+Baseline screenshots in `tests/visual/baseline.spec.js-snapshots/`. Update with:
+```bash
+npm run test:visual:update
+```

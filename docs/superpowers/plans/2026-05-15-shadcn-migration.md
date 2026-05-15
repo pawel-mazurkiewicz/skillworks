@@ -1227,10 +1227,10 @@ body::before {
 }
 ```
 
-- **Task 44:** Retire imperative DOM helpers in `app.js` (`relocateManageControls`, `renderTopTabs`, `renderTargets`, `renderBulkBar`, `scrollDetailIntoViewIfStacked`; `setHtml` only if no callers remain). `renderMatrix` shrinks to filter + sort + `snapshot()` only.
-- **Task 45:** Final a11y pass — `tests/a11y/all-tabs.spec.js` iterates each tab and runs an axe-core scan; serious/critical must be zero.
-- **Task 46:** Final visual regression pass — `npm run test:visual:update` and manual review against PR 1 baseline.
-- **Task 47:** Add a "Frontend architecture" section to `README.md` and open PR 6.
+- **Task 44:** ✅ Retire imperative DOM helpers in `app.js` (`relocateManageControls`, `renderTopTabs`, `renderTargets`, `renderBulkBar`, `scrollDetailIntoViewIfStacked`; `setHtml` only if no callers remain). `renderMatrix` shrinks to filter + sort + `snapshot()` only.
+- **Task 45:** ✅ Final a11y pass — `tests/a11y/all-tabs.spec.js` iterates each tab and runs an axe-core scan; serious/critical must be zero.
+- **Task 46:** ✅ Final visual regression pass — `npm run test:visual:update` and manual review against PR 1 baseline.
+- **Task 47:** ✅ Add a "Frontend architecture" section to `README.md` and open PR 6.
 
 ---
 
