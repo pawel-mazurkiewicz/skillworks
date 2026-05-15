@@ -119,6 +119,7 @@ const elements = {
   customTargetScope: document.querySelector("#customTargetScope"),
   customTargetPath: document.querySelector("#customTargetPath"),
   customTargetList: document.querySelector("#customTargetList"),
+  targetVisibilityList: document.querySelector("#targetVisibilityList"),
   targetStrip: document.querySelector("#targetStrip"),
   matrixHead: document.querySelector("#matrixHead"),
   matrixBody: document.querySelector("#matrixBody"),
@@ -434,9 +435,16 @@ function applyState(nextData) {
   const serverProjects = normalizeProjectCache(nextData?.projects || []);
   const projects = mergeProjects(serverProjects, cachedProjects);
 
+  const hiddenIds = new Set(Array.isArray(nextData?.hiddenTargetIds) ? nextData.hiddenTargetIds : []);
+  const allTargets = Array.isArray(nextData?.targets) ? nextData.targets : [];
+  const visibleTargets = allTargets.filter((target) => !hiddenIds.has(target.id));
+
   state.data = {
     ...nextData,
     projects,
+    allTargets,
+    targets: visibleTargets,
+    hiddenTargetIds: Array.from(hiddenIds),
   };
 
   writeCachedProjects(projects);
@@ -520,6 +528,7 @@ function render() {
   renderImports();
   renderProjects();
   renderCustomTargets();
+  renderTargetVisibility();
   renderDiscovery();
   renderInstallTargets();
   renderBulkTargets();
@@ -662,6 +671,106 @@ function renderCustomTargets() {
 
   elements.customTargetList.querySelectorAll("[data-remove-custom-target]").forEach((button) => {
     button.addEventListener("click", () => removeCustomTarget(button.dataset.removeCustomTarget));
+  });
+}
+
+function renderTargetVisibility() {
+  if (!elements.targetVisibilityList) return;
+  const all = state.data?.allTargets || [];
+  const builtins = all.filter((target) => !target.custom);
+  if (!builtins.length) {
+    elements.targetVisibilityList.innerHTML = `<p class="empty-copy">No built-in harnesses available.</p>`;
+    return;
+  }
+
+  const hiddenIds = new Set(state.data?.hiddenTargetIds || []);
+  const groups = new Map();
+  const order = [];
+  for (const target of builtins) {
+    const harness = (target.harness && target.harness.trim()) || "Custom";
+    if (!groups.has(harness)) {
+      order.push(harness);
+      groups.set(harness, { harness, global: null, project: null, extras: [] });
+    }
+    const group = groups.get(harness);
+    if (target.scope === "global" && !group.global) {
+      group.global = target;
+    } else if (target.scope === "project" && !group.project) {
+      group.project = target;
+    } else {
+      group.extras.push(target);
+    }
+  }
+
+  const renderScopeBox = (target, fallbackLabel) => {
+    if (!target) {
+      return `<label class="visibility-scope is-empty" aria-hidden="true"><span class="scope-name">${escapeHtml(fallbackLabel)}</span></label>`;
+    }
+    const isVisible = !hiddenIds.has(target.id);
+    const scopeLabel = target.scope === "global" ? "Global" : "Project";
+    return `
+      <label class="visibility-scope" title="${escapeHtml(target.label)}">
+        <input
+          type="checkbox"
+          data-visibility-toggle="${escapeHtml(target.id)}"
+          ${isVisible ? "checked" : ""}
+        />
+        <span class="scope-name">${escapeHtml(scopeLabel)}</span>
+      </label>
+    `;
+  };
+
+  elements.targetVisibilityList.innerHTML = order
+    .map((harness) => {
+      const group = groups.get(harness);
+      const cells = [
+        renderScopeBox(group.global, "Global"),
+        renderScopeBox(group.project, "Project"),
+      ];
+      const extras = group.extras
+        .map((target) => renderScopeBox(target, target.scope === "global" ? "Global" : "Project"))
+        .join("");
+      return `
+        <div class="visibility-row">
+          <div class="visibility-label">
+            <strong>${escapeHtml(harness)}</strong>
+          </div>
+          <div class="visibility-scopes">${cells.join("")}${extras}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  elements.targetVisibilityList.querySelectorAll("[data-visibility-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const targetId = input.dataset.visibilityToggle;
+      const nextHidden = !input.checked;
+      setTargetVisibility(targetId, nextHidden);
+    });
+  });
+}
+
+async function setTargetVisibility(targetId, hidden) {
+  await runAction(async () => {
+    const current = new Set(state.data?.hiddenTargetIds || []);
+    if (hidden) {
+      current.add(targetId);
+    } else {
+      current.delete(targetId);
+    }
+    const nextHidden = Array.from(current);
+    await api("/api/config", {
+      method: "POST",
+      body: {
+        vaultRoot: state.data?.vaultRoot,
+        recentProjects: state.data?.recentProjects || [],
+        projects: state.data?.projects || readCachedProjects(),
+        customTargets: state.data?.customTargets || [],
+        hiddenTargetIds: nextHidden,
+      },
+    });
+    await loadState();
+    showToast(hidden ? "Harness hidden" : "Harness restored");
   });
 }
 

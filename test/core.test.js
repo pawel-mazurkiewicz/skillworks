@@ -442,7 +442,7 @@ test("persists custom targets and resolves global-absolute and project-relative 
     recentProjects: [],
     customTargets: [
       {
-        id: "cursor-global",
+        id: "custom-cursor-rules",
         label: "Cursor global",
         harness: "Cursor",
         scope: "global",
@@ -460,11 +460,11 @@ test("persists custom targets and resolves global-absolute and project-relative 
 
   const config = await manager.readConfig();
   assert.equal(config.customTargets.length, 2);
-  assert.equal(config.customTargets[0].id, "cursor-global");
+  assert.equal(config.customTargets[0].id, "custom-cursor-rules");
 
   await fs.mkdir(project, { recursive: true });
   const state = await manager.getState(project);
-  const cursorTarget = state.targets.find((target) => target.id === "cursor-global");
+  const cursorTarget = state.targets.find((target) => target.id === "custom-cursor-rules");
   const teamTarget = state.targets.find((target) => target.id === "team-rules");
   assert.ok(cursorTarget, "custom global target should be in state.targets");
   assert.ok(teamTarget, "custom project target should be in state.targets");
@@ -487,7 +487,7 @@ test("enables and disables a skill through a custom target at an arbitrary path"
     recentProjects: [],
     customTargets: [
       {
-        id: "cursor-global",
+        id: "custom-cursor-rules",
         label: "Cursor global",
         harness: "Cursor",
         scope: "global",
@@ -511,7 +511,7 @@ test("enables and disables a skill through a custom target at an arbitrary path"
 
   await manager.toggleSkill({
     projectPath: project,
-    targetId: "cursor-global",
+    targetId: "custom-cursor-rules",
     skillId: skill.id,
     enabled: true,
   });
@@ -529,12 +529,12 @@ test("enables and disables a skill through a custom target at an arbitrary path"
   assert.equal((await fs.lstat(projectLink)).isSymbolicLink(), true);
 
   state = await manager.getState(project);
-  assert.equal(state.targets.find((t) => t.id === "cursor-global").skillStatuses[skill.id].enabled, true);
+  assert.equal(state.targets.find((t) => t.id === "custom-cursor-rules").skillStatuses[skill.id].enabled, true);
   assert.equal(state.targets.find((t) => t.id === "team-rules").skillStatuses[skill.id].enabled, true);
 
   await manager.toggleSkill({
     projectPath: project,
-    targetId: "cursor-global",
+    targetId: "custom-cursor-rules",
     skillId: skill.id,
     enabled: false,
   });
@@ -578,7 +578,7 @@ test("installing from a source links imported skills to every requested target i
     recentProjects: [],
     customTargets: [
       {
-        id: "cursor-global",
+        id: "custom-cursor-rules",
         label: "Cursor global",
         scope: "global",
         path: cursorRules,
@@ -588,13 +588,13 @@ test("installing from a source links imported skills to every requested target i
   await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
 
   const result = await manager.installSkills(source, project, {
-    targetIds: ["agents-project", "cursor-global"],
+    targetIds: ["agents-project", "custom-cursor-rules"],
   });
 
   assert.equal(result.imported.length, 1);
   assert.equal(result.enabled.length, 2);
   const targetIds = result.enabled.map((entry) => entry.targetId).sort();
-  assert.deepEqual(targetIds, ["agents-project", "cursor-global"]);
+  assert.deepEqual(targetIds, ["agents-project", "custom-cursor-rules"]);
 
   const state = await manager.getState(project);
   const skill = state.skills[0];
@@ -647,14 +647,14 @@ test("previewInstall reports planned vault moves and per-target links without ch
     vaultRoot: vault,
     recentProjects: [],
     customTargets: [
-      { id: "cursor-global", label: "Cursor global", scope: "global", path: cursorRules },
+      { id: "custom-cursor-rules", label: "Cursor global", scope: "global", path: cursorRules },
     ],
   });
   await writeSkill(path.join(source, "swiftui"), "SwiftUI Patterns", "Use for SwiftUI iOS views.");
   await writeSkill(path.join(source, "react-ui"), "React UI Patterns", "Use for React frontend work.");
 
   const plan = await manager.previewInstall(source, project, {
-    targetIds: ["agents-project", "cursor-global"],
+    targetIds: ["agents-project", "custom-cursor-rules"],
   });
 
   assert.equal(plan.candidates.length, 2);
@@ -664,7 +664,7 @@ test("previewInstall reports planned vault moves and per-target links without ch
   assert.equal(path.dirname(swiftui.vaultDestination), vault);
   assert.equal(swiftui.willDedupe, false);
   const swiftuiTargets = swiftui.targetLinks.map((link) => link.targetId).sort();
-  assert.deepEqual(swiftuiTargets, ["agents-project", "cursor-global"]);
+  assert.deepEqual(swiftuiTargets, ["agents-project", "custom-cursor-rules"]);
   assert.ok(swiftui.targetLinks.every((link) => link.linkPath && link.linkName));
 
   // Nothing was actually moved
