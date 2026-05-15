@@ -71,10 +71,12 @@ const elements = {
   pathForm: document.querySelector("#pathForm"),
   projectInput: document.querySelector("#projectInput"),
   browseProjectButton: document.querySelector("#browseProjectButton"),
+  projectSelect: document.querySelector("#projectSelect"),
   vaultInput: document.querySelector("#vaultInput"),
   browseVaultButton: document.querySelector("#browseVaultButton"),
   saveVaultButton: document.querySelector("#saveVaultButton"),
   refreshButton: document.querySelector("#refreshButton"),
+  configureProjectsButton: document.querySelector("#configureProjectsButton"),
   skillCount: document.querySelector("#skillCount"),
   enabledCount: document.querySelector("#enabledCount"),
   unmanagedCount: document.querySelector("#unmanagedCount"),
@@ -195,7 +197,24 @@ async function bootstrap() {
     });
   });
 
+  elements.projectSelect.addEventListener("change", () => {
+    const path = elements.projectSelect.value;
+    if (!path) return;
+    runAction(async () => {
+      elements.projectInput.value = path;
+      localStorage.setItem("asm.projectPath", path);
+      await loadState();
+      showToast("Project loaded");
+    });
+  });
+
   elements.refreshButton.addEventListener("click", () => runAction(() => loadState()));
+
+  elements.configureProjectsButton.addEventListener("click", () => {
+    state.activeTopTab = "configure";
+    renderTopTabs();
+    document.getElementById("projectsPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   elements.browseProjectButton.addEventListener("click", () => pickDirectoryInto(elements.projectInput));
   elements.browseVaultButton.addEventListener("click", () => pickDirectoryInto(elements.vaultInput));
@@ -578,6 +597,21 @@ function render() {
   }
 
   elements.projectInput.value = data.project.path;
+
+  // Populate the project selector dropdown
+  const _allProjects = data.projects || [];
+  const _currentPath = data.project.path || "";
+  const _projectsForSelect = _allProjects.some((p) => p.path === _currentPath)
+    ? _allProjects
+    : (_currentPath ? [{ name: projectNameFromPath(_currentPath), path: _currentPath }, ..._allProjects] : _allProjects);
+  if (_projectsForSelect.length) {
+    elements.projectSelect.innerHTML = _projectsForSelect
+      .map((p) => `<option value="${escapeAttr(p.path)}"${p.path === _currentPath ? " selected" : ""}>${escapeHtml(p.name)} — ${escapeHtml(p.path)}</option>`)
+      .join("");
+  } else {
+    elements.projectSelect.innerHTML = `<option value="${escapeAttr(_currentPath)}" selected>${escapeHtml(_currentPath || "No project loaded")}</option>`;
+  }
+
   elements.vaultInput.value = data.vaultRoot;
   elements.skillCount.textContent = data.summary.skillCount;
   elements.enabledCount.textContent = data.summary.enabledCount;

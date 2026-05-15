@@ -183,17 +183,20 @@
       </header>
 
       <section class="header-row header-row--project" aria-label="Project context">
-        <form class="project-form" id="pathForm">
-          <label class="header-field grow" for="projectInput">
-            <span>Project</span>
-            <input id="projectInput" name="project" autocomplete="off" spellcheck="false" placeholder="/path/to/project" />
-          </label>
-          <div class="header-actions">
-            <button class="button" id="browseProjectButton" type="button">Browse</button>
-            <button class="button primary" type="submit">Load</button>
-            <button class="button ghost" id="refreshButton" type="button">Refresh</button>
-          </div>
+        <!-- Hidden legacy elements kept for JS compatibility -->
+        <form id="pathForm" hidden>
+          <input id="projectInput" name="project" autocomplete="off" spellcheck="false" />
+          <button id="browseProjectButton" type="button">Browse</button>
         </form>
+        <select id="projectSelect" class="project-select" aria-label="Active project">
+          <option value="">No project loaded</option>
+        </select>
+        <div class="header-actions">
+          <button class="button ghost" id="configureProjectsButton" type="button" title="Manage projects">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder-cog"></use></svg>
+          </button>
+          <button class="button ghost" id="refreshButton" type="button">Refresh</button>
+        </div>
       </section>
 
       <section class="header-row header-row--manage" data-only-tab="manage" aria-label="Skill search">
@@ -453,7 +456,7 @@
               </div>
             </section>
 
-            <section class="panel">
+            <section class="panel" id="projectsPanel">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>Projects</span></h2>
                 <p class="section-sub">Projects this vault links into.</p>
