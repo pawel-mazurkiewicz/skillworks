@@ -431,37 +431,53 @@
       <aside class="bulk-floating" id="bulkFloating" data-bulk-floating hidden aria-label="Bulk actions">
         <header class="bulk-floating-head">
           <div class="bulk-count">
-            <strong id="bulkSelectedCount">0 selected</strong>
+            <span class="bulk-count-pill" aria-hidden="true">
+              <span class="bulk-count-dot"></span>
+              <strong id="bulkSelectedCount">0 selected</strong>
+            </span>
+            <span class="bulk-count-label">Bulk actions</span>
           </div>
-          <button class="button ghost" id="clearSelectionButton" type="button" aria-label="Clear selection">
+          <button class="button ghost bulk-clear" id="clearSelectionButton" type="button" aria-label="Clear selection">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg>
             <span>Clear</span>
           </button>
         </header>
         <div class="bulk-floating-body">
-          <div class="bulk-controls">
-            <label class="inline-field">
-              <span>Target</span>
-              <select id="bulkTargetSelect" aria-label="Bulk action target"></select>
-            </label>
-            <div class="bulk-button-row">
-              <button class="button" id="bulkEnableButton" type="button">Enable</button>
-              <button class="button" id="bulkDisableButton" type="button">Disable</button>
-              <button class="button" id="bulkToggleButton" type="button">Toggle</button>
+          <section class="bulk-group" aria-labelledby="bulkAssignHead">
+            <header class="bulk-group-head">
+              <h3 id="bulkAssignHead" class="bulk-group-title">Assignment</h3>
+              <p class="bulk-group-sub">Enable, disable, or flip the selected skills on a target.</p>
+            </header>
+            <div class="bulk-controls">
+              <label class="inline-field grow">
+                <span>Target</span>
+                <select id="bulkTargetSelect" aria-label="Bulk action target"></select>
+              </label>
+              <div class="bulk-button-row">
+                <button class="button" id="bulkEnableButton" type="button">Enable</button>
+                <button class="button" id="bulkDisableButton" type="button">Disable</button>
+                <button class="button" id="bulkToggleButton" type="button">Toggle</button>
+              </div>
             </div>
-          </div>
-          <div class="bulk-controls">
-            <label class="inline-field grow">
-              <span>Destination</span>
-              <input id="bulkDestinationInput" placeholder="/path/to/folder" autocomplete="off" spellcheck="false" />
-            </label>
-            <div class="bulk-button-row">
+          </section>
+          <section class="bulk-group bulk-group--ops" aria-labelledby="bulkOpsHead">
+            <header class="bulk-group-head">
+              <h3 id="bulkOpsHead" class="bulk-group-title">Vault ops</h3>
+              <p class="bulk-group-sub">Move, copy, or remove the selected skills.</p>
+            </header>
+            <div class="bulk-controls">
+              <label class="inline-field grow">
+                <span>Destination</span>
+                <input id="bulkDestinationInput" placeholder="/path/to/folder" autocomplete="off" spellcheck="false" />
+              </label>
               <button class="button" id="browseBulkDestinationButton" type="button">Browse</button>
+            </div>
+            <div class="bulk-ops-actions">
               <button class="button" id="bulkCopyButton" type="button">Copy</button>
               <button class="button" id="bulkMoveButton" type="button">Move</button>
-              <button class="button danger" id="bulkDeleteButton" type="button">Delete</button>
+              <button class="button danger bulk-delete" id="bulkDeleteButton" type="button">Delete</button>
             </div>
-          </div>
+          </section>
         </div>
       </aside>
 
