@@ -1165,7 +1165,7 @@ Tasks 23–31 ✅ Complete — Commit `562216a`
   - Wraps CreateSkillEditor component
 
 - **Task 35:** ✅ Sonner toasts replace the imperative `.toast` element. Created `public/lib/toasts.js` with `showToast()` wrapper; wired in `app.js` to use `sonnerToast`. Toasts now use Radix-based Sonner under the hood while preserving the 2600ms duration and similar visual style.
-- **Task 36:** ✅ Open PR 4. (Waiting for Task 35 completion)
+- **Task 36:** ✅ Open PR 4. Merged PR #1 with all Tasks 32–36 changes.
 
 ---
 

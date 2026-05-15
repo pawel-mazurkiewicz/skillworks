@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Header } from "@/components/Header";
 import { ManageGrid } from "@/components/Manage/ManageGrid";
+import { InstallTab } from "@/components/Install";
 import { events, emit } from "@/lib/state";
 
 /**
@@ -141,6 +142,9 @@ function AppShell() {
           <ManageGrid />
         </div>
       )}
+
+      {/* Install tab - new React implementation */}
+      {activeTab === "install" && <InstallTab />}
 
       {/* Legacy workspace template — manage tab hidden when ManageGrid renders */}
       <div dangerouslySetInnerHTML={{ __html: template?.innerHTML.trim() || "" }} />
