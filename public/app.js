@@ -9,6 +9,15 @@ const PROJECT_CACHE_KEY = "asm.projects";
 const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
 const SIDEBAR_COLLAPSE_KEY = "skillworks.sidebarCollapsed";
 
+// ── State helpers (bridge DOM ↔ localStorage for migration) ────
+function getProjectPath() {
+  return elements.projectInput?.value || localStorage.getItem("asm.projectPath") || "";
+}
+function setProjectPath(path) {
+  if (elements.projectInput) elements.projectInput.value = path;
+  localStorage.setItem("asm.projectPath", path);
+}
+
 const state = {
   data: null,
   selectedSkillId: null,
@@ -144,35 +153,88 @@ const elements = {
 
 bootstrap();
 
+// Import event bus (for React → app.js bridge)
+import { events } from "./lib/state";
+
 async function bootstrap() {
-  elements.topTabs.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeTopTab = button.dataset.topTab;
-      renderTopTabs();
-      if (state.activeTopTab === "sets") {
-        runAction(async () => {
-          await loadSets();
-          renderSets();
-        });
-      }
+  // Legacy tab click handlers — only if elements exist (migrated to React in PR2)
+  if (elements.topTabs.length > 0) {
+    elements.topTabs.forEach((button) => {
+      button.addEventListener("click", () => {
+        state.activeTopTab = button.dataset.topTab;
+        renderTopTabs();
+        if (state.activeTopTab === "sets") {
+          runAction(async () => {
+            await loadSets();
+            renderSets();
+          });
+        }
+      });
+    });
+  }
+
+  // React → app.js event bus bridge (PR2)
+  events.on("tab:change", (tab) => {
+    state.activeTopTab = tab;
+    renderTopTabs();
+    if (tab === "sets") {
+      runAction(async () => {
+        await loadSets();
+        renderSets();
+      });
+    }
+  });
+
+  events.on("project:load", async (path) => {
+    if (path) localStorage.setItem("asm.projectPath", path);
+    await runAction(async () => {
+      await loadState();
     });
   });
+
+  events.on("project:browse", async () => {
+    // Find the project input in either legacy DOM or React-rendered DOM
+    const input = document.getElementById("projectInput");
+    if (input) await pickDirectoryInto(input);
+  });
+
+  events.on("project:refresh", async () => {
+    await runAction(() => loadState());
+  });
+
+  events.on("search:input", (value) => {
+    state.search = value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  events.on("create-skill:open", () => {
+    openCreateSkillModal();
+  });
+
   initSidebarToggle();
   renderTopTabs();
 
   initSetsPanel();
 
-  elements.pathForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await runAction(async () => {
-      localStorage.setItem("asm.projectPath", elements.projectInput.value);
-      await loadState();
+  // Legacy form submit — only if element exists
+  if (elements.pathForm) {
+    elements.pathForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await runAction(async () => {
+        localStorage.setItem("asm.projectPath", getProjectPath());
+        await loadState();
+      });
     });
-  });
+  }
 
-  elements.refreshButton.addEventListener("click", () => runAction(() => loadState()));
-
-  elements.browseProjectButton.addEventListener("click", () => pickDirectoryInto(elements.projectInput));
+  // Legacy button handlers — only if elements exist
+  if (elements.refreshButton) {
+    elements.refreshButton.addEventListener("click", () => runAction(() => loadState()));
+  }
+  if (elements.browseProjectButton) {
+    elements.browseProjectButton.addEventListener("click", () => pickDirectoryInto(elements.projectInput));
+  }
   elements.browseVaultButton.addEventListener("click", () => pickDirectoryInto(elements.vaultInput));
   elements.browseImportButton.addEventListener("click", () => pickDirectoryInto(elements.importInput));
   elements.browseBulkDestinationButton.addEventListener("click", () => pickDirectoryInto(elements.bulkDestinationInput));
@@ -206,7 +268,7 @@ async function bootstrap() {
       method: "POST",
       body: {
         sourcePath,
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
       },
     }));
     render();
@@ -217,7 +279,7 @@ async function bootstrap() {
     const result = await api("/api/import-suggested", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         sourcePaths: state.data?.suggestedImports || [],
       },
     });
@@ -227,7 +289,10 @@ async function bootstrap() {
     showToast(`Moved ${report.imported}, skipped ${report.skipped}, errors ${report.errors}`);
   }));
 
-  elements.openCreateSkillButton.addEventListener("click", () => openCreateSkillModal());
+  // Legacy button handlers — only if elements exist (migrated to React in PR2)
+  if (elements.openCreateSkillButton) {
+    elements.openCreateSkillButton.addEventListener("click", () => openCreateSkillModal());
+  }
   elements.closeCreateSkillButton.addEventListener("click", () => closeCreateSkillModal());
   elements.createSkillModal.addEventListener("cancel", (event) => {
     event.preventDefault();
@@ -254,7 +319,7 @@ async function bootstrap() {
         repoUrl,
         ref: elements.gitRefInput.value.trim(),
         targetIds,
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
       },
     });
     renderInstallPreview(plan, { repoUrl });
@@ -282,7 +347,7 @@ async function bootstrap() {
         repoUrl,
         ref: elements.gitRefInput.value.trim(),
         targetIds,
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
       };
       if (state.preview && state.preview.repoUrl === repoUrl) {
         body.perSkillTargets = state.preview.perSkillTargets;
@@ -301,11 +366,14 @@ async function bootstrap() {
     });
   });
 
-  elements.searchInput.addEventListener("input", () => {
-    state.search = elements.searchInput.value;
-    renderMatrix();
-    renderBulkBar();
-  });
+  // Legacy search handler — only if element exists (migrated to React in PR2)
+  if (elements.searchInput) {
+    elements.searchInput.addEventListener("input", () => {
+      state.search = elements.searchInput.value;
+      renderMatrix();
+      renderBulkBar();
+    });
+  }
 
   elements.agentFilterSelect.addEventListener("change", () => {
     state.filterTargetId = elements.agentFilterSelect.value;
@@ -365,7 +433,7 @@ async function bootstrap() {
     elements.copyPathButton.addEventListener("click", () => copySelectedSkillPath());
   }
 
-  elements.projectInput.value = localStorage.getItem("asm.projectPath") || "";
+  setProjectPath(localStorage.getItem("asm.projectPath") || "");
   await runAction(() => loadState());
 }
 
@@ -379,7 +447,7 @@ function openCreateSkillModal() {
         body: {
           name,
           content,
-          projectPath: elements.projectInput.value,
+          projectPath: getProjectPath(),
         },
       }));
       state.selectedSkillId = state.data.skills.find((skill) => skill.name === name)?.id || state.selectedSkillId;
@@ -412,7 +480,7 @@ function unmountCreateSkillModal() {
 }
 
 async function loadState() {
-  const project = elements.projectInput.value.trim();
+  const project = getProjectPath().trim();
   const url = new URL("/api/state", window.location.origin);
   if (project) {
     url.searchParams.set("project", project);
@@ -511,7 +579,7 @@ function render() {
     return;
   }
 
-  elements.projectInput.value = data.project.path;
+  setProjectPath(data.project.path);
   elements.vaultInput.value = data.vaultRoot;
   elements.skillCount.textContent = data.summary.skillCount;
   elements.enabledCount.textContent = data.summary.enabledCount;
@@ -561,8 +629,8 @@ function renderProjects() {
 
   elements.projectList.querySelectorAll("[data-load-project]").forEach((button) => {
     button.addEventListener("click", () => runAction(async () => {
-      elements.projectInput.value = button.dataset.loadProject;
-      localStorage.setItem("asm.projectPath", elements.projectInput.value);
+      setProjectPath(button.dataset.loadProject);
+      localStorage.setItem("asm.projectPath", getProjectPath());
       await loadState();
       showToast("Project loaded");
     }));
@@ -1066,7 +1134,7 @@ async function applyDedupe() {
   await runAction(async () => {
     const result = await api("/api/dedupe", {
       method: "POST",
-      body: { groups, projectPath: elements.projectInput.value || undefined },
+      body: { groups, projectPath: getProjectPath() || undefined },
     });
     if (result.state) {
       state.data = result.state;
@@ -1279,7 +1347,7 @@ function renderUnmanaged() {
         method: "POST",
         body: {
           sourcePath: button.dataset.importPath,
-          projectPath: elements.projectInput.value,
+          projectPath: getProjectPath(),
         },
       }));
       render();
@@ -1452,7 +1520,7 @@ async function renderDetail() {
       applyState(await api("/api/toggle", {
         method: "POST",
         body: {
-          projectPath: elements.projectInput.value,
+          projectPath: getProjectPath(),
           targetId,
           skillId: button.dataset.skillId,
           enabled: nextEnabled,
@@ -1484,7 +1552,7 @@ async function renderDetail() {
         body: {
           id: activeSkillId,
           content,
-          projectPath: elements.projectInput.value,
+          projectPath: getProjectPath(),
         },
       });
       applyState(result.state);
@@ -1629,7 +1697,7 @@ function selectedSkillIds() {
 
 async function addProject() {
   await runAction(async () => {
-    const projectPath = elements.projectAddInput.value.trim() || elements.projectInput.value.trim();
+    const projectPath = elements.projectAddInput.value.trim() || getProjectPath().trim();
     if (!projectPath) {
       showToast("Project path is required");
       return;
@@ -1653,7 +1721,7 @@ async function forgetProject(projectPath) {
       method: "POST",
       body: {
         projectPath,
-        currentProjectPath: elements.projectInput.value,
+        currentProjectPath: getProjectPath(),
       },
     }));
     const projects = state.data?.projects || [];
@@ -1669,7 +1737,7 @@ async function clearScannedProjects() {
     applyState(await api("/api/projects/clear-scanned", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
       },
     }));
     const projects = state.data?.projects || [];
@@ -1689,7 +1757,7 @@ async function scanProjects({ scoped } = { scoped: true }) {
     const result = await api("/api/projects/scan", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         roots: scoped ? [scanRoot] : undefined,
       },
     });
@@ -1710,7 +1778,7 @@ async function bulkToggle(mode) {
     const result = await api("/api/bulk-toggle", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         targetId: elements.bulkTargetSelect.value,
         skillIds: ids,
         mode,
@@ -1732,7 +1800,7 @@ async function bulkCopy() {
     const result = await api("/api/bulk-copy", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         skillIds: ids,
         destinationPath: elements.bulkDestinationInput.value,
       },
@@ -1753,7 +1821,7 @@ async function bulkMove() {
     const result = await api("/api/bulk-move", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         skillIds: ids,
         destinationPath: elements.bulkDestinationInput.value,
       },
@@ -1777,7 +1845,7 @@ async function bulkDelete() {
     const result = await api("/api/bulk-delete", {
       method: "POST",
       body: {
-        projectPath: elements.projectInput.value,
+        projectPath: getProjectPath(),
         skillIds: ids,
       },
     });
@@ -2458,6 +2526,15 @@ function closeApplyModal() {
   if (modal && modal.open) modal.close();
   pendingApplySetId = null;
 }
+
+// ── Bridge exports for React → app.js communication ───────────
+// These are exposed on window so the React event bus can call them.
+
+window.__skillworksState = state;
+window.__renderTopTabs = renderTopTabs;
+window.__loadState = loadState;
+window.__pickDirectoryInto = pickDirectoryInto;
+window.__openCreateSkillModal = openCreateSkillModal;
 
 // Global delegated handlers for apply modal, project pinned-sets, etc.
 document.addEventListener("click", async (event) => {
