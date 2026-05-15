@@ -957,6 +957,17 @@ function renderBulkBar() {
 
   const count = state.selectedSkillIds.size;
   if (elements.bulkSelectedCount) {
+    const prev = Number(elements.bulkSelectedCount.dataset.value || "0");
+    if (prev !== count) {
+      const pill = elements.bulkSelectedCount.closest(".bulk-count-pill");
+      if (pill) {
+        pill.classList.remove("is-bumped");
+        // eslint-disable-next-line no-unused-expressions
+        pill.offsetHeight;
+        pill.classList.add("is-bumped");
+      }
+      elements.bulkSelectedCount.dataset.value = String(count);
+    }
     elements.bulkSelectedCount.textContent = `${count} selected`;
   }
   const disabled = count === 0;
@@ -1495,31 +1506,72 @@ async function renderDetail() {
 }
 
 function renderDetailPane(skill) {
-  const assignmentRows = state.data.targets
-    .map((target) => {
-      const status = target.skillStatuses[skill.id] || {};
-      const label = status.enabled ? "Disable" : "Enable";
-      const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
-      const pathText = status.linkPath || target.path;
-      const note = status.conflict
-        ? "Conflict"
-        : status.staleManifest
-          ? "Stale link"
-          : target.scope;
+  const harnessOrder = [];
+  const harnessGroups = new Map();
+  for (const target of state.data.targets) {
+    const harness = (target.harness && target.harness.trim()) || "Custom";
+    if (!harnessGroups.has(harness)) {
+      harnessOrder.push(harness);
+      harnessGroups.set(harness, { harness, global: null, project: null, extras: [] });
+    }
+    const group = harnessGroups.get(harness);
+    if (target.scope === "global" && !group.global) {
+      group.global = target;
+    } else if (target.scope === "project" && !group.project) {
+      group.project = target;
+    } else {
+      group.extras.push(target);
+    }
+  }
+
+  function renderScopeCell(target, scopeLabel) {
+    if (!target) {
+      return `<div class="assignment-scope is-empty" aria-hidden="true"><span class="scope-name">${escapeHtml(scopeLabel)}</span></div>`;
+    }
+    const status = target.skillStatuses[skill.id] || {};
+    const pathText = status.linkPath || target.path || "";
+    const toggleLabel = status.enabled ? "Disable" : "Enable";
+    const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
+    const note = status.conflict
+      ? "Conflict"
+      : status.staleManifest
+        ? "Stale link"
+        : status.enabled
+          ? "Enabled"
+          : "Disabled";
+    const tooltip = pathText ? `${target.label} — ${pathText}` : target.label;
+    return `
+      <div class="assignment-scope" title="${escapeHtml(tooltip)}">
+        <span class="scope-name">${escapeHtml(scopeLabel)}</span>
+        <button
+          class="${classes}"
+          type="button"
+          title="${escapeHtml(toggleLabel)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
+          data-skill-id="${escapeHtml(skill.id)}"
+          data-detail-target-id="${escapeHtml(target.id)}"
+          data-enabled="${status.enabled ? "true" : "false"}"
+        ><span></span></button>
+        <span class="scope-status">${escapeHtml(note)}</span>
+      </div>
+    `;
+  }
+
+  const assignmentRows = harnessOrder
+    .map((harness) => {
+      const group = harnessGroups.get(harness);
+      const cells = [
+        renderScopeCell(group.global, "Global"),
+        renderScopeCell(group.project, "Project"),
+      ];
+      const extras = group.extras
+        .map((target) => renderScopeCell(target, target.scope === "global" ? "Global" : "Project"))
+        .join("");
       return `
         <div class="assignment-row">
-          <div>
-            <strong>${escapeHtml(target.label)}</strong>
-            <span title="${escapeHtml(pathText || "")}">${escapeHtml(note)}${status.enabled ? ` via ${escapeHtml(pathText || "")}` : ""}</span>
+          <div class="assignment-label">
+            <strong>${escapeHtml(harness)}</strong>
           </div>
-          <button
-            class="${classes}"
-            type="button"
-            title="${escapeHtml(label)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
-            data-skill-id="${escapeHtml(skill.id)}"
-            data-detail-target-id="${escapeHtml(target.id)}"
-            data-enabled="${status.enabled ? "true" : "false"}"
-          ><span></span></button>
+          <div class="assignment-scopes">${cells.join("")}${extras}</div>
         </div>
       `;
     })

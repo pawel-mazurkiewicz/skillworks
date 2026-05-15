@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
@@ -18,9 +19,10 @@ function classNames(...values) {
 
 function SkillEditor({ skill, initialContent, onSave, onToast }) {
   const [content, setContent] = useState(initialContent);
-  const [mode, setMode] = useState("split");
+  const [mode, setMode] = useState("write");
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => () => {
@@ -31,6 +33,21 @@ function SkillEditor({ skill, initialContent, onSave, onToast }) {
     setContent(initialContent);
     setLastSavedAt(null);
   }, [initialContent, skill.id]);
+
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        setIsExpanded(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("skill-editor-locked");
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("skill-editor-locked");
+    };
+  }, [isExpanded]);
 
   const isDirty = content !== initialContent;
 
@@ -59,13 +76,12 @@ function SkillEditor({ skill, initialContent, onSave, onToast }) {
     }
   }
 
-  return (
-    <div className="skill-editor-shell">
+  const editorShell = (
+    <div className={classNames("skill-editor-shell", isExpanded && "is-expanded")}>
       <div className="skill-editor-toolbar">
         <div className="skill-editor-modes" role="tablist" aria-label="Skill editor mode">
           {[
             ["write", "Write"],
-            ["split", "Split"],
             ["preview", "Preview"],
           ].map(([value, label]) => (
             <button
@@ -80,6 +96,43 @@ function SkillEditor({ skill, initialContent, onSave, onToast }) {
           ))}
         </div>
         <div className="skill-editor-actions">
+          <button
+            className="button ghost skill-editor-expand"
+            type="button"
+            aria-pressed={isExpanded}
+            title={isExpanded ? "Collapse editor (Esc)" : "Expand editor"}
+            onClick={() => setIsExpanded((v) => !v)}
+          >
+            <svg
+              className="icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {isExpanded ? (
+                <>
+                  <path d="M15 9h6" />
+                  <path d="M21 9V3" />
+                  <path d="M15 9l6-6" />
+                  <path d="M9 15H3" />
+                  <path d="M3 15v6" />
+                  <path d="M9 15l-6 6" />
+                </>
+              ) : (
+                <>
+                  <path d="M4 14v6h6" />
+                  <path d="M20 10V4h-6" />
+                  <path d="M14 4l6 6" />
+                  <path d="M10 20l-6-6" />
+                </>
+              )}
+            </svg>
+            <span>{isExpanded ? "Collapse" : "Expand"}</span>
+          </button>
           <span className="skill-editor-status">
             {isSaving ? "Saving…" : isDirty ? "Unsaved changes" : lastSavedAt ? "Saved" : "No changes"}
           </span>
@@ -120,6 +173,21 @@ function SkillEditor({ skill, initialContent, onSave, onToast }) {
       </div>
     </div>
   );
+
+  if (isExpanded && typeof document !== "undefined") {
+    return createPortal(
+      <>
+        <div
+          className="skill-editor-backdrop"
+          role="presentation"
+          onClick={() => setIsExpanded(false)}
+        />
+        {editorShell}
+      </>,
+      document.body,
+    );
+  }
+  return editorShell;
 }
 
 function skillTemplate(name) {
