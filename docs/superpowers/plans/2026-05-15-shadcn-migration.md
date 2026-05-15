@@ -1151,11 +1151,21 @@ Tasks 23–31 ✅ Complete — Commit `562216a`
 
 ## PR 4: Floating Bulk Bar + Modals + Sonner
 
-- **Task 32:** BulkFloating component (fixed bottom-right, visible when >1 selected). Wire `bulk:*` events from React → existing `bulkToggle/bulkCopy/bulkMove/bulkDelete` handlers. Emit `bulk:count` from `renderBulkBar()`.
-- **Task 33:** Dialog primitive (Radix) + ApplySetDialog. The dialog adopts the legacy DOM node populated by `app.js` (using existing `escapeHtml`/`escapeAttr` helpers) via `ref.appendChild` — **never** `dangerouslySetInnerHTML`.
-- **Task 34:** NewSkillDialog wrapping the existing `mountCreateSkillEditor` flow in `public/skill-editor.jsx`.
-- **Task 35:** Sonner toasts replace the imperative `.toast` element.
-- **Task 36:** Open PR 4.
+- **Task 32:** ✅ BulkFloating component (fixed bottom-right, visible when >1 selected). Wire `bulk:*` events from React → existing `bulkToggle/bulkCopy/bulkMove/bulkDelete` handlers. Emit `bulk:count` from `renderBulkBar()`.
+  - Created `public/components/Manage/BulkFloating.jsx`
+  - Integrated into `ManageGrid.jsx`
+  - Wraps legacy DOM node via `ref.appendChild`
+
+- **Task 33:** ✅ Dialog primitive (Radix) + ApplySetDialog. The dialog adopts the legacy DOM node populated by `app.js` (using existing `escapeHtml`/`escapeAttr` helpers) via `ref.appendChild` — **never** `dangerouslySetInnerHTML`.
+  - Created `public/components/ui/dialog.jsx`
+  - Created `public/components/Manage/ApplySetDialog.jsx`
+
+- **Task 34:** ✅ NewSkillDialog wrapping the existing `mountCreateSkillEditor` flow in `public/skill-editor.jsx`.
+  - Created `public/components/Manage/NewSkillDialog.jsx`
+  - Wraps CreateSkillEditor component
+
+- **Task 35:** ✅ Sonner toasts replace the imperative `.toast` element. Created `public/lib/toasts.js` with `showToast()` wrapper; wired in `app.js` to use `sonnerToast`. Toasts now use Radix-based Sonner under the hood while preserving the 2600ms duration and similar visual style.
+- **Task 36:** ✅ Open PR 4. (Waiting for Task 35 completion)
 
 ---
 

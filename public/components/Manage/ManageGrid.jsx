@@ -5,6 +5,22 @@ import { TargetChips } from "./TargetChips";
 import { StatsStrip } from "./StatsStrip";
 import { SkillList } from "./SkillList";
 import { DetailPane } from "./DetailPane";
+import { BulkFloating, registerBulkHandlers } from "./BulkFloating";
+
+// Wire up bulk handlers to legacy app.js functions
+if (typeof window !== "undefined" && window.__skillworksState) {
+  const state = window.__skillworksState;
+  registerBulkHandlers({
+    toggle: (action) => {
+      if (action === "enable") state.bulkEnableButton?.click();
+      else if (action === "disable") state.bulkDisableButton?.click();
+      else if (action === "toggle") state.bulkToggleButton?.click();
+    },
+    copy: () => state.bulkCopyButton?.click(),
+    move: () => state.bulkMoveButton?.click(),
+    delete: () => state.bulkDeleteButton?.click(),
+  });
+}
 
 /**
  * ManageGrid — Composed layout for the Manage tab.
@@ -73,8 +89,10 @@ export function ManageGrid({ className }) {
             <DetailPane className="sticky top-4" />
           </aside>
         </div>
+        
+        {/* Floating bulk action panel */}
+        <BulkFloating />
       </div>
     </div>
   );
 }
-

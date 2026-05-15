@@ -1,0 +1,2266 @@
+# Instructions
+
+- Following Playwright test failed.
+- Explain why, be concise, respect Playwright best practices.
+- Provide a snippet of code with the fix, if possible.
+
+# Test info
+
+- Name: visual/baseline.spec.js >> baseline:manage-empty
+- Location: tests/visual/baseline.spec.js:11:3
+
+# Error details
+
+```
+Error: expect(page).toHaveScreenshot(expected) failed
+
+  195654 pixels (ratio 0.08 of all image pixels) are different.
+
+  Snapshot: manage-empty.png
+
+Call log:
+  - Expect "toHaveScreenshot(manage-empty.png)" with timeout 5000ms
+    - verifying given screenshot expectation
+  - taking page screenshot
+    - disabled all CSS animations
+  - waiting for fonts to load...
+  - fonts loaded
+  - 195654 pixels (ratio 0.08 of all image pixels) are different.
+  - waiting 100ms before taking screenshot
+  - taking page screenshot
+    - disabled all CSS animations
+  - waiting for fonts to load...
+  - fonts loaded
+  - captured a stable screenshot
+  - 195654 pixels (ratio 0.08 of all image pixels) are different.
+
+```
+
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img "Skillworks icon" [ref=e7]
+        - generic [ref=e8]:
+          - paragraph [ref=e9]: Skill workspace
+          - heading "Skillworks" [level=1] [ref=e10]
+      - navigation "Workspace sections" [ref=e11]:
+        - tablist "Workspace sections" [ref=e12]:
+          - tab "Manage" [selected] [ref=e13] [cursor=pointer]:
+            - img [ref=e14]
+            - generic [ref=e16]: Manage
+          - tab "Install" [ref=e17] [cursor=pointer]:
+            - img [ref=e18]
+            - generic [ref=e21]: Install
+          - tab "Sets" [ref=e22] [cursor=pointer]:
+            - img [ref=e23]
+            - generic [ref=e27]: Sets
+          - tab "Configure" [ref=e28] [cursor=pointer]:
+            - img [ref=e29]
+            - generic [ref=e32]: Configure
+          - tab "Cleanup" [ref=e33] [cursor=pointer]:
+            - img [ref=e34]
+            - generic [ref=e37]: Cleanup
+    - form "Project context" [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]: Project
+        - textbox "Project" [ref=e42]:
+          - /placeholder: /path/to/project
+      - generic [ref=e43]:
+        - button "Browse" [ref=e44] [cursor=pointer]
+        - button "Load" [ref=e45] [cursor=pointer]
+        - button "Refresh" [ref=e46] [cursor=pointer]
+    - generic "Skill search" [ref=e48]:
+      - generic [ref=e49]:
+        - generic:
+          - img
+        - textbox "Search skills, tags, descriptions" [ref=e50]
+      - button "New skill" [ref=e52] [cursor=pointer]
+  - generic [ref=e56]:
+    - complementary "Skill filters" [ref=e58]:
+      - generic [ref=e59]:
+        - button "Filters & targets ▾" [expanded] [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Filters & targets
+          - generic [ref=e64]: ▾
+        - generic [ref=e66]:
+          - generic [ref=e67]:
+            - heading "Filters" [level=3] [ref=e68]
+            - generic [ref=e69]:
+              - generic [ref=e70]: Agent
+              - combobox "Filter by agent" [ref=e71] [cursor=pointer]:
+                - generic: Any agent
+                - img [ref=e72]
+            - generic [ref=e74]:
+              - generic [ref=e75]: Status
+              - combobox "Filter by status" [ref=e76] [cursor=pointer]:
+                - generic: Any status
+                - img [ref=e77]
+            - generic [ref=e79]:
+              - generic [ref=e80]: Type
+              - combobox "Filter by type" [ref=e81] [cursor=pointer]:
+                - generic: Any type
+                - img [ref=e82]
+            - generic [ref=e84]:
+              - generic [ref=e85]: Sort
+              - combobox "Sort order" [ref=e86] [cursor=pointer]:
+                - generic: Name A-Z
+                - img [ref=e87]
+          - generic [ref=e90]:
+            - heading "Targets" [level=3] [ref=e91]
+            - paragraph [ref=e92]: Click a target to filter the list to skills enabled there.
+            - generic [ref=e93]:
+              - radio "Codex global 0 linked /Users/pawelma/.codex/skills" [ref=e94] [cursor=pointer]:
+                - generic [ref=e95]:
+                  - img [ref=e96]
+                  - strong [ref=e98]: Codex global
+                - generic [ref=e99]: 0 linked
+                - generic [ref=e100]: /Users/pawelma/.codex/skills
+              - radio "Claude global 0 linked /Users/pawelma/.claude/skills" [ref=e101] [cursor=pointer]:
+                - generic [ref=e102]:
+                  - img [ref=e103]
+                  - strong [ref=e105]: Claude global
+                - generic [ref=e106]: 0 linked
+                - generic [ref=e107]: /Users/pawelma/.claude/skills
+              - radio "Agents global 0 linked /Users/pawelma/.agents/skills" [ref=e108] [cursor=pointer]:
+                - generic [ref=e109]:
+                  - img [ref=e110]
+                  - strong [ref=e112]: Agents global
+                - generic [ref=e113]: 0 linked
+                - generic [ref=e114]: /Users/pawelma/.agents/skills
+              - radio "Codex project 0 linked /Users/pawelma/code/ai/Skillworks/.codex/skills" [ref=e115] [cursor=pointer]:
+                - generic [ref=e116]:
+                  - img [ref=e117]
+                  - strong [ref=e119]: Codex project
+                - generic [ref=e120]: 0 linked
+                - generic [ref=e121]: /Users/pawelma/code/ai/Skillworks/.codex/skills
+              - radio "Claude project 0 linked /Users/pawelma/code/ai/Skillworks/.claude/skills" [ref=e122] [cursor=pointer]:
+                - generic [ref=e123]:
+                  - img [ref=e124]
+                  - strong [ref=e126]: Claude project
+                - generic [ref=e127]: 0 linked
+                - generic [ref=e128]: /Users/pawelma/code/ai/Skillworks/.claude/skills
+              - radio "Agents project 0 linked /Users/pawelma/code/ai/Skillworks/.agents/skills" [ref=e129] [cursor=pointer]:
+                - generic [ref=e130]:
+                  - img [ref=e131]
+                  - strong [ref=e133]: Agents project
+                - generic [ref=e134]: 0 linked
+                - generic [ref=e135]: /Users/pawelma/code/ai/Skillworks/.agents/skills
+    - generic [ref=e136]:
+      - list "Workspace summary" [ref=e137]:
+        - listitem [ref=e138]:
+          - generic [ref=e139]: Vault skills
+          - generic [ref=e140]: "137"
+        - listitem [ref=e141]:
+          - generic [ref=e142]: Links
+          - generic [ref=e143]: "0"
+        - listitem [ref=e144]:
+          - generic [ref=e145]: Unmanaged
+          - generic [ref=e146]: "0"
+      - generic [ref=e147]:
+        - generic [ref=e148]:
+          - generic [ref=e149]:
+            - checkbox "Select visible skills" [ref=e150]
+            - generic [ref=e151]: 137 skills
+          - generic [ref=e152]: All skills
+        - generic [ref=e155]:
+          - article [ref=e156]:
+            - generic "Select adapt" [ref=e157] [cursor=pointer]:
+              - checkbox "Select adapt" [ref=e158]
+            - button "adapt Local Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments. General General" [ref=e159] [cursor=pointer]:
+              - generic [ref=e160]:
+                - strong [ref=e161]: adapt
+                - generic [ref=e162]: Local
+              - generic [ref=e163]: Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments.
+              - generic [ref=e164]:
+                - generic [ref=e165]: General
+                - generic [ref=e166]: General
+            - generic [ref=e167]: Disabled
+          - article [ref=e168]:
+            - generic "Select alembic" [ref=e169] [cursor=pointer]:
+              - checkbox "Select alembic" [ref=e170]
+            - button "alembic Customer Support Tech Enablement Team Comprehensive Alembic database migration management for customer support systems Backend Backend" [ref=e171] [cursor=pointer]:
+              - generic [ref=e172]:
+                - strong [ref=e173]: alembic
+                - generic [ref=e174]: Customer Support Tech Enablement Team
+              - generic [ref=e175]: Comprehensive Alembic database migration management for customer support systems
+              - generic [ref=e176]:
+                - generic [ref=e177]: Backend
+                - generic [ref=e178]: Backend
+            - generic [ref=e179]: Disabled
+          - article [ref=e180]:
+            - generic "Select angular-development" [ref=e181] [cursor=pointer]:
+              - checkbox "Select angular-development" [ref=e182]
+            - button "angular-development Local Comprehensive Angular framework development covering components, directives, services, dependency injection, routing, and reactive programming based on official Angular documentation frontend General" [ref=e183] [cursor=pointer]:
+              - generic [ref=e184]:
+                - strong [ref=e185]: angular-development
+                - generic [ref=e186]: Local
+              - generic [ref=e187]: Comprehensive Angular framework development covering components, directives, services, dependency injection, routing, and reactive programming based on official Angular documentation
+              - generic [ref=e188]:
+                - generic [ref=e189]: frontend
+                - generic [ref=e190]: General
+            - generic [ref=e191]: Disabled
+          - article [ref=e192]:
+            - generic "Select animate" [ref=e193] [cursor=pointer]:
+              - checkbox "Select animate" [ref=e194]
+            - button "animate Local Review a feature and enhance it with purposeful animations, micro-interactions, and motion effects that improve usability and delight. General General" [ref=e195] [cursor=pointer]:
+              - generic [ref=e196]:
+                - strong [ref=e197]: animate
+                - generic [ref=e198]: Local
+              - generic [ref=e199]: Review a feature and enhance it with purposeful animations, micro-interactions, and motion effects that improve usability and delight.
+              - generic [ref=e200]:
+                - generic [ref=e201]: General
+                - generic [ref=e202]: General
+            - generic [ref=e203]: Disabled
+          - article [ref=e204]:
+            - generic "Select apache-airflow-orchestration" [ref=e205] [cursor=pointer]:
+              - checkbox "Select apache-airflow-orchestration" [ref=e206]
+            - button "apache-airflow-orchestration Local Complete guide for Apache Airflow orchestration including DAGs, operators, sensors, XComs, task dependencies, dynamic workflows, and production deployment General General" [ref=e207] [cursor=pointer]:
+              - generic [ref=e208]:
+                - strong [ref=e209]: apache-airflow-orchestration
+                - generic [ref=e210]: Local
+              - generic [ref=e211]: Complete guide for Apache Airflow orchestration including DAGs, operators, sensors, XComs, task dependencies, dynamic workflows, and production deployment
+              - generic [ref=e212]:
+                - generic [ref=e213]: General
+                - generic [ref=e214]: General
+            - generic [ref=e215]: Disabled
+          - article [ref=e216]:
+            - generic "Select apache-spark-data-processing" [ref=e217] [cursor=pointer]:
+              - checkbox "Select apache-spark-data-processing" [ref=e218]
+            - button "apache-spark-data-processing Local Complete guide for Apache Spark data processing including RDDs, DataFrames, Spark SQL, streaming, MLlib, and production deployment General General" [ref=e219] [cursor=pointer]:
+              - generic [ref=e220]:
+                - strong [ref=e221]: apache-spark-data-processing
+                - generic [ref=e222]: Local
+              - generic [ref=e223]: Complete guide for Apache Spark data processing including RDDs, DataFrames, Spark SQL, streaming, MLlib, and production deployment
+              - generic [ref=e224]:
+                - generic [ref=e225]: General
+                - generic [ref=e226]: General
+            - generic [ref=e227]: Disabled
+          - article [ref=e228]:
+            - generic "Select api-gateway-patterns" [ref=e229] [cursor=pointer]:
+              - checkbox "Select api-gateway-patterns" [ref=e230]
+            - button "api-gateway-patterns Local Comprehensive API gateway patterns skill covering Kong, routing, rate limiting, authentication, load balancing, traffic management, and production gateway architecture Backend Backend" [ref=e231] [cursor=pointer]:
+              - generic [ref=e232]:
+                - strong [ref=e233]: api-gateway-patterns
+                - generic [ref=e234]: Local
+              - generic [ref=e235]: Comprehensive API gateway patterns skill covering Kong, routing, rate limiting, authentication, load balancing, traffic management, and production gateway architecture
+              - generic [ref=e236]:
+                - generic [ref=e237]: Backend
+                - generic [ref=e238]: Backend
+            - generic [ref=e239]: Disabled
+          - article [ref=e240]:
+            - generic "Select asyncio-concurrency-patterns" [ref=e241] [cursor=pointer]:
+              - checkbox "Select asyncio-concurrency-patterns" [ref=e242]
+            - button "asyncio-concurrency-patterns Local Complete guide for asyncio concurrency patterns including event loops, coroutines, tasks, futures, async context managers, and performance optimization General General" [ref=e243] [cursor=pointer]:
+              - generic [ref=e244]:
+                - strong [ref=e245]: asyncio-concurrency-patterns
+                - generic [ref=e246]: Local
+              - generic [ref=e247]: Complete guide for asyncio concurrency patterns including event loops, coroutines, tasks, futures, async context managers, and performance optimization
+              - generic [ref=e248]:
+                - generic [ref=e249]: General
+                - generic [ref=e250]: General
+            - generic [ref=e251]: Disabled
+          - article [ref=e252]:
+            - generic "Select atheros-add-admin-command" [ref=e253] [cursor=pointer]:
+              - checkbox "Select atheros-add-admin-command" [ref=e254]
+            - 'button "atheros-add-admin-command Local Use when adding a new admin command to Atheros. Covers the full pipeline: switch case in executeCommand(), handler method implementation, argument validation, player lookup, logging, and unit test. Invoke this skill whenever the user asks to add, create, or implement a slash command, admin command, or /command in the backend. Backend Backend" [ref=e255] [cursor=pointer]':
+              - generic [ref=e256]:
+                - strong [ref=e257]: atheros-add-admin-command
+                - generic [ref=e258]: Local
+              - generic [ref=e259]: "Use when adding a new admin command to Atheros. Covers the full pipeline: switch case in executeCommand(), handler method implementation, argument validation, player lookup, logging, and unit test. Invoke this skill whenever the user asks to add, create, or implement a slash command, admin command, or /command in the backend."
+              - generic [ref=e260]:
+                - generic [ref=e261]: Backend
+                - generic [ref=e262]: Backend
+            - generic [ref=e263]: Disabled
+          - article [ref=e264]:
+            - generic "Select atheros-add-admin-command" [ref=e265] [cursor=pointer]:
+              - checkbox "Select atheros-add-admin-command" [ref=e266]
+            - 'button "atheros-add-admin-command Local Use when adding a new admin command to Atheros. Covers the full pipeline: switch case in executeCommand(), handler method implementation, argument validation, player lookup, logging, and unit test. Invoke this skill whenever the user asks to add, create, or implement a slash command, admin command, or /command in the backend. Backend Backend" [ref=e267] [cursor=pointer]':
+              - generic [ref=e268]:
+                - strong [ref=e269]: atheros-add-admin-command
+                - generic [ref=e270]: Local
+              - generic [ref=e271]: "Use when adding a new admin command to Atheros. Covers the full pipeline: switch case in executeCommand(), handler method implementation, argument validation, player lookup, logging, and unit test. Invoke this skill whenever the user asks to add, create, or implement a slash command, admin command, or /command in the backend."
+              - generic [ref=e272]:
+                - generic [ref=e273]: Backend
+                - generic [ref=e274]: Backend
+            - generic [ref=e275]: Disabled
+          - article [ref=e276]:
+            - generic "Select atheros-add-gamesetting" [ref=e277] [cursor=pointer]:
+              - checkbox "Select atheros-add-gamesetting" [ref=e278]
+            - button "atheros-add-gamesetting Local Use when adding a new user-facing game setting to Atheros. Covers GameSettings manager, SettingsModal UI, and consumer wiring. General General" [ref=e279] [cursor=pointer]:
+              - generic [ref=e280]:
+                - strong [ref=e281]: atheros-add-gamesetting
+                - generic [ref=e282]: Local
+              - generic [ref=e283]: Use when adding a new user-facing game setting to Atheros. Covers GameSettings manager, SettingsModal UI, and consumer wiring.
+              - generic [ref=e284]:
+                - generic [ref=e285]: General
+                - generic [ref=e286]: General
+            - generic [ref=e287]: Disabled
+          - article [ref=e288]:
+            - generic "Select atheros-add-item" [ref=e289] [cursor=pointer]:
+              - checkbox "Select atheros-add-item" [ref=e290]
+            - button "atheros-add-item Local Use when adding a new equippable or stackable item to Atheros. Covers the database row, model registration (procedural or loaded GLTF), and optional bone-attachment calibration. Backend Backend" [ref=e291] [cursor=pointer]:
+              - generic [ref=e292]:
+                - strong [ref=e293]: atheros-add-item
+                - generic [ref=e294]: Local
+              - generic [ref=e295]: Use when adding a new equippable or stackable item to Atheros. Covers the database row, model registration (procedural or loaded GLTF), and optional bone-attachment calibration.
+              - generic [ref=e296]:
+                - generic [ref=e297]: Backend
+                - generic [ref=e298]: Backend
+            - generic [ref=e299]: Disabled
+          - article [ref=e300]:
+            - generic "Select atheros-add-mob" [ref=e301] [cursor=pointer]:
+              - checkbox "Select atheros-add-mob" [ref=e302]
+            - 'button "atheros-add-mob Local Use when adding a new enemy mob type to Atheros. Covers the full pipeline: database definition, spawn zones, model registration, AI behavior, and frontend rendering. Web Web Backend" [ref=e303] [cursor=pointer]':
+              - generic [ref=e304]:
+                - strong [ref=e305]: atheros-add-mob
+                - generic [ref=e306]: Local
+              - generic [ref=e307]: "Use when adding a new enemy mob type to Atheros. Covers the full pipeline: database definition, spawn zones, model registration, AI behavior, and frontend rendering."
+              - generic [ref=e308]:
+                - generic [ref=e309]: Web
+                - generic [ref=e310]: Web
+                - generic [ref=e311]: Backend
+            - generic [ref=e312]: Disabled
+          - article [ref=e313]:
+            - generic "Select atheros-add-mob" [ref=e314] [cursor=pointer]:
+              - checkbox "Select atheros-add-mob" [ref=e315]
+            - 'button "atheros-add-mob Local Use when adding a new enemy mob type to Atheros. Covers the full pipeline: database definition, spawn zones, model registration, AI behavior, and frontend rendering. Web Web Backend" [ref=e316] [cursor=pointer]':
+              - generic [ref=e317]:
+                - strong [ref=e318]: atheros-add-mob
+                - generic [ref=e319]: Local
+              - generic [ref=e320]: "Use when adding a new enemy mob type to Atheros. Covers the full pipeline: database definition, spawn zones, model registration, AI behavior, and frontend rendering."
+              - generic [ref=e321]:
+                - generic [ref=e322]: Web
+                - generic [ref=e323]: Web
+                - generic [ref=e324]: Backend
+            - generic [ref=e325]: Disabled
+          - article [ref=e326]:
+            - generic "Select atheros-add-model" [ref=e327] [cursor=pointer]:
+              - checkbox "Select atheros-add-model" [ref=e328]
+            - button "atheros-add-model Local Use when adding a 3D model asset (mob, item, building, environment prop) to Atheros. Covers manifest registration, model instances, animations, and attachment points. General General" [ref=e329] [cursor=pointer]:
+              - generic [ref=e330]:
+                - strong [ref=e331]: atheros-add-model
+                - generic [ref=e332]: Local
+              - generic [ref=e333]: Use when adding a 3D model asset (mob, item, building, environment prop) to Atheros. Covers manifest registration, model instances, animations, and attachment points.
+              - generic [ref=e334]:
+                - generic [ref=e335]: General
+                - generic [ref=e336]: General
+            - generic [ref=e337]: Disabled
+          - article [ref=e338]:
+            - generic "Select atheros-add-spell" [ref=e339] [cursor=pointer]:
+              - checkbox "Select atheros-add-spell" [ref=e340]
+            - button "atheros-add-spell Local Use when adding a new spell, ability, or skill to Atheros. Covers database tables (abilities + ability_effects), frontend registry, and optional spell visuals. Web Web Backend" [ref=e341] [cursor=pointer]:
+              - generic [ref=e342]:
+                - strong [ref=e343]: atheros-add-spell
+                - generic [ref=e344]: Local
+              - generic [ref=e345]: Use when adding a new spell, ability, or skill to Atheros. Covers database tables (abilities + ability_effects), frontend registry, and optional spell visuals.
+              - generic [ref=e346]:
+                - generic [ref=e347]: Web
+                - generic [ref=e348]: Web
+                - generic [ref=e349]: Backend
+            - generic [ref=e350]: Disabled
+          - article [ref=e351]:
+            - generic "Select atheros-design" [ref=e352] [cursor=pointer]:
+              - checkbox "Select atheros-design" [ref=e353]
+            - button "atheros-design Local Use when starting a new feature concept for Atheros, before any implementation. Covers brainstorming through architecture doc and task decomposition. General General" [ref=e354] [cursor=pointer]:
+              - generic [ref=e355]:
+                - strong [ref=e356]: atheros-design
+                - generic [ref=e357]: Local
+              - generic [ref=e358]: Use when starting a new feature concept for Atheros, before any implementation. Covers brainstorming through architecture doc and task decomposition.
+              - generic [ref=e359]:
+                - generic [ref=e360]: General
+                - generic [ref=e361]: General
+            - generic [ref=e362]: Disabled
+          - article [ref=e363]:
+            - generic "Select atheros-execute" [ref=e364] [cursor=pointer]:
+              - checkbox "Select atheros-execute" [ref=e365]
+            - button "atheros-execute Local Use when an Atheros architecture doc and task breakdown are ready for implementation. Orchestrates agent execution with quality gates. General General" [ref=e366] [cursor=pointer]:
+              - generic [ref=e367]:
+                - strong [ref=e368]: atheros-execute
+                - generic [ref=e369]: Local
+              - generic [ref=e370]: Use when an Atheros architecture doc and task breakdown are ready for implementation. Orchestrates agent execution with quality gates.
+              - generic [ref=e371]:
+                - generic [ref=e372]: General
+                - generic [ref=e373]: General
+            - generic [ref=e374]: Disabled
+          - article [ref=e375]:
+            - generic "Select atheros-logging" [ref=e376] [cursor=pointer]:
+              - checkbox "Select atheros-logging" [ref=e377]
+            - button "atheros-logging Local Use when writing any logging code in Atheros. Enforces PII safety rules and correct log patterns for production compliance. General General" [ref=e378] [cursor=pointer]:
+              - generic [ref=e379]:
+                - strong [ref=e380]: atheros-logging
+                - generic [ref=e381]: Local
+              - generic [ref=e382]: Use when writing any logging code in Atheros. Enforces PII safety rules and correct log patterns for production compliance.
+              - generic [ref=e383]:
+                - generic [ref=e384]: General
+                - generic [ref=e385]: General
+            - generic [ref=e386]: Disabled
+          - article [ref=e387]:
+            - generic "Select atheros-migration" [ref=e388] [cursor=pointer]:
+              - checkbox "Select atheros-migration" [ref=e389]
+            - button "atheros-migration Local Use when making any database schema change in Atheros (add column, new table, alter policy, add constraint). Enforces the never-edit-applied-migrations rule. Backend Backend" [ref=e390] [cursor=pointer]:
+              - generic [ref=e391]:
+                - strong [ref=e392]: atheros-migration
+                - generic [ref=e393]: Local
+              - generic [ref=e394]: Use when making any database schema change in Atheros (add column, new table, alter policy, add constraint). Enforces the never-edit-applied-migrations rule.
+              - generic [ref=e395]:
+                - generic [ref=e396]: Backend
+                - generic [ref=e397]: Backend
+            - generic [ref=e398]: Disabled
+          - article [ref=e399]:
+            - generic "Select atheros-props" [ref=e400] [cursor=pointer]:
+              - checkbox "Select atheros-props" [ref=e401]
+            - 'button "atheros-props Local Use when adding, modifying, or debugging world props and blueprints in Atheros. Covers the full pipeline: GLB → collider sidecar → propModels catalog → blueprint JSON → Supabase world_props placement. General General" [ref=e402] [cursor=pointer]':
+              - generic [ref=e403]:
+                - strong [ref=e404]: atheros-props
+                - generic [ref=e405]: Local
+              - generic [ref=e406]: "Use when adding, modifying, or debugging world props and blueprints in Atheros. Covers the full pipeline: GLB → collider sidecar → propModels catalog → blueprint JSON → Supabase world_props placement."
+              - generic [ref=e407]:
+                - generic [ref=e408]: General
+                - generic [ref=e409]: General
+            - generic [ref=e410]: Disabled
+          - article [ref=e411]:
+            - generic "Select atheros-props" [ref=e412] [cursor=pointer]:
+              - checkbox "Select atheros-props" [ref=e413]
+            - 'button "atheros-props Local Use when adding, modifying, or debugging world props and blueprints in Atheros. Covers the full pipeline: GLB → collider sidecar → propModels catalog → blueprint JSON → Supabase world_props placement. General General" [ref=e414] [cursor=pointer]':
+              - generic [ref=e415]:
+                - strong [ref=e416]: atheros-props
+                - generic [ref=e417]: Local
+              - generic [ref=e418]: "Use when adding, modifying, or debugging world props and blueprints in Atheros. Covers the full pipeline: GLB → collider sidecar → propModels catalog → blueprint JSON → Supabase world_props placement."
+              - generic [ref=e419]:
+                - generic [ref=e420]: General
+                - generic [ref=e421]: General
+            - generic [ref=e422]: Disabled
+          - article [ref=e423]:
+            - generic "Select atheros-ui" [ref=e424] [cursor=pointer]:
+              - checkbox "Select atheros-ui" [ref=e425]
+            - button "atheros-ui Local Use when designing or redesigning a UI panel/screen/modal in Atheros using the BurnbladeUI asset family. Two paths — REDESIGN (existing panel, visual-only swap, well-validated against 12 examples) and DESIGN-NEW (build from scratch, defers architectural decisions to atheros-design). Apply for any HUD panel, modal, full-screen flow, or in-game window. Triggers — \"redesign\", \"restyle\", \"facelift\", \"burnblade\", \"new panel\", \"new modal\", \"build a UI for\". General General" [ref=e426] [cursor=pointer]:
+              - generic [ref=e427]:
+                - strong [ref=e428]: atheros-ui
+                - generic [ref=e429]: Local
+              - generic [ref=e430]: Use when designing or redesigning a UI panel/screen/modal in Atheros using the BurnbladeUI asset family. Two paths — REDESIGN (existing panel, visual-only swap, well-validated against 12 examples) and DESIGN-NEW (build from scratch, defers architectural decisions to atheros-design). Apply for any HUD panel, modal, full-screen flow, or in-game window. Triggers — "redesign", "restyle", "facelift", "burnblade", "new panel", "new modal", "build a UI for".
+              - generic [ref=e431]:
+                - generic [ref=e432]: General
+                - generic [ref=e433]: General
+            - generic [ref=e434]: Disabled
+          - article [ref=e435]:
+            - generic "Select audit" [ref=e436] [cursor=pointer]:
+              - checkbox "Select audit" [ref=e437]
+            - button "audit Local Perform comprehensive audit of interface quality across accessibility, performance, theming, and responsive design. Generates detailed report of issues with severity ratings and recommendations. General General" [ref=e438] [cursor=pointer]:
+              - generic [ref=e439]:
+                - strong [ref=e440]: audit
+                - generic [ref=e441]: Local
+              - generic [ref=e442]: Perform comprehensive audit of interface quality across accessibility, performance, theming, and responsive design. Generates detailed report of issues with severity ratings and recommendations.
+              - generic [ref=e443]:
+                - generic [ref=e444]: General
+                - generic [ref=e445]: General
+            - generic [ref=e446]: Disabled
+          - article [ref=e447]:
+            - generic "Select aws-cloud-architecture" [ref=e448] [cursor=pointer]:
+              - checkbox "Select aws-cloud-architecture" [ref=e449]
+            - button "aws-cloud-architecture Local Comprehensive guide to AWS cloud architecture covering compute, storage, databases, networking, security, serverless, and cost optimization with production-ready patterns cloud-infrastructure General" [ref=e450] [cursor=pointer]:
+              - generic [ref=e451]:
+                - strong [ref=e452]: aws-cloud-architecture
+                - generic [ref=e453]: Local
+              - generic [ref=e454]: Comprehensive guide to AWS cloud architecture covering compute, storage, databases, networking, security, serverless, and cost optimization with production-ready patterns
+              - generic [ref=e455]:
+                - generic [ref=e456]: cloud-infrastructure
+                - generic [ref=e457]: General
+            - generic [ref=e458]: Disabled
+          - article [ref=e459]:
+            - generic "Select aws-cloud-services" [ref=e460] [cursor=pointer]:
+              - checkbox "Select aws-cloud-services" [ref=e461]
+            - button "aws-cloud-services Local Comprehensive AWS cloud services skill covering S3, Lambda, DynamoDB, EC2, RDS, IAM, CloudFormation, and enterprise cloud architecture patterns with AWS SDK General General" [ref=e462] [cursor=pointer]:
+              - generic [ref=e463]:
+                - strong [ref=e464]: aws-cloud-services
+                - generic [ref=e465]: Local
+              - generic [ref=e466]: Comprehensive AWS cloud services skill covering S3, Lambda, DynamoDB, EC2, RDS, IAM, CloudFormation, and enterprise cloud architecture patterns with AWS SDK
+              - generic [ref=e467]:
+                - generic [ref=e468]: General
+                - generic [ref=e469]: General
+            - generic [ref=e470]: Disabled
+          - article [ref=e471]:
+            - generic "Select axum-web-framework" [ref=e472] [cursor=pointer]:
+              - checkbox "Select axum-web-framework" [ref=e473]
+            - button "axum-web-framework Local Complete guide for Axum web framework including routing, extractors, middleware, state management, error handling, and production deployment General General" [ref=e474] [cursor=pointer]:
+              - generic [ref=e475]:
+                - strong [ref=e476]: axum-web-framework
+                - generic [ref=e477]: Local
+              - generic [ref=e478]: Complete guide for Axum web framework including routing, extractors, middleware, state management, error handling, and production deployment
+              - generic [ref=e479]:
+                - generic [ref=e480]: General
+                - generic [ref=e481]: General
+            - generic [ref=e482]: Disabled
+          - article [ref=e483]:
+            - generic "Select azure-observability" [ref=e484] [cursor=pointer]:
+              - checkbox "Select azure-observability" [ref=e485]
+            - 'button "azure-observability Local >- Azure Observability Services including Azure Monitor, Application Insights, Log Analytics, Alerts, and Workbooks. Provides metrics, APM, distributed tracing, KQL queries, and interactive reports. USE FOR: Azure Monitor, Application Insights, Log Analytics, Alerts, Workbooks, metrics, APM, distributed tracing, KQL queries, interactive reports, observability, monitoring dashboards. DO NOT USE FOR: instrumenting apps with App Insights SDK (use appinsights-instrumentation), querying Kusto/ADX clusters (use azure-kusto), cost analysis (use azure-cost-optimization). General General" [ref=e486] [cursor=pointer]':
+              - generic [ref=e487]:
+                - strong [ref=e488]: azure-observability
+                - generic [ref=e489]: Local
+              - generic [ref=e490]: ">- Azure Observability Services including Azure Monitor, Application Insights, Log Analytics, Alerts, and Workbooks. Provides metrics, APM, distributed tracing, KQL queries, and interactive reports. USE FOR: Azure Monitor, Application Insights, Log Analytics, Alerts, Workbooks, metrics, APM, distributed tracing, KQL queries, interactive reports, observability, monitoring dashboards. DO NOT USE FOR: instrumenting apps with App Insights SDK (use appinsights-instrumentation), querying Kusto/ADX clusters (use azure-kusto), cost analysis (use azure-cost-optimization)."
+              - generic [ref=e491]:
+                - generic [ref=e492]: General
+                - generic [ref=e493]: General
+            - generic [ref=e494]: Disabled
+          - article [ref=e495]:
+            - generic "Select bolder" [ref=e496] [cursor=pointer]:
+              - checkbox "Select bolder" [ref=e497]
+            - button "bolder Local Amplify safe or boring designs to make them more visually interesting and stimulating. Increases impact while maintaining usability. General General" [ref=e498] [cursor=pointer]:
+              - generic [ref=e499]:
+                - strong [ref=e500]: bolder
+                - generic [ref=e501]: Local
+              - generic [ref=e502]: Amplify safe or boring designs to make them more visually interesting and stimulating. Increases impact while maintaining usability.
+              - generic [ref=e503]:
+                - generic [ref=e504]: General
+                - generic [ref=e505]: General
+            - generic [ref=e506]: Disabled
+          - article [ref=e507]:
+            - generic "Select ci-cd-pipeline-patterns" [ref=e508] [cursor=pointer]:
+              - checkbox "Select ci-cd-pipeline-patterns" [ref=e509]
+            - button "ci-cd-pipeline-patterns Local Comprehensive CI/CD pipeline patterns skill covering GitHub Actions, workflows, automation, testing, deployment strategies, and release management for modern software delivery Infra Infra" [ref=e510] [cursor=pointer]:
+              - generic [ref=e511]:
+                - strong [ref=e512]: ci-cd-pipeline-patterns
+                - generic [ref=e513]: Local
+              - generic [ref=e514]: Comprehensive CI/CD pipeline patterns skill covering GitHub Actions, workflows, automation, testing, deployment strategies, and release management for modern software delivery
+              - generic [ref=e515]:
+                - generic [ref=e516]: Infra
+                - generic [ref=e517]: Infra
+            - generic [ref=e518]: Disabled
+          - article [ref=e519]:
+            - generic "Select clarify" [ref=e520] [cursor=pointer]:
+              - checkbox "Select clarify" [ref=e521]
+            - button "clarify Local Improve unclear UX copy, error messages, microcopy, labels, and instructions. Makes interfaces easier to understand and use. General General" [ref=e522] [cursor=pointer]:
+              - generic [ref=e523]:
+                - strong [ref=e524]: clarify
+                - generic [ref=e525]: Local
+              - generic [ref=e526]: Improve unclear UX copy, error messages, microcopy, labels, and instructions. Makes interfaces easier to understand and use.
+              - generic [ref=e527]:
+                - generic [ref=e528]: General
+                - generic [ref=e529]: General
+            - generic [ref=e530]: Disabled
+          - article [ref=e531]:
+            - generic "Select claude-sdk-integration-patterns" [ref=e532] [cursor=pointer]:
+              - checkbox "Select claude-sdk-integration-patterns" [ref=e533]
+            - button "claude-sdk-integration-patterns Local Expert integration patterns for Claude API and TypeScript SDK covering Messages API, streaming responses, tool use, error handling, token optimization, and production-ready implementations for building AI-powered applications Backend Backend" [ref=e534] [cursor=pointer]:
+              - generic [ref=e535]:
+                - strong [ref=e536]: claude-sdk-integration-patterns
+                - generic [ref=e537]: Local
+              - generic [ref=e538]: Expert integration patterns for Claude API and TypeScript SDK covering Messages API, streaming responses, tool use, error handling, token optimization, and production-ready implementations for building AI-powered applications
+              - generic [ref=e539]:
+                - generic [ref=e540]: Backend
+                - generic [ref=e541]: Backend
+            - generic [ref=e542]: Disabled
+          - article [ref=e543]:
+            - generic "Select colorize" [ref=e544] [cursor=pointer]:
+              - checkbox "Select colorize" [ref=e545]
+            - button "colorize Local Add strategic color to features that are too monochromatic or lack visual interest. Makes interfaces more engaging and expressive. General General" [ref=e546] [cursor=pointer]:
+              - generic [ref=e547]:
+                - strong [ref=e548]: colorize
+                - generic [ref=e549]: Local
+              - generic [ref=e550]: Add strategic color to features that are too monochromatic or lack visual interest. Makes interfaces more engaging and expressive.
+              - generic [ref=e551]:
+                - generic [ref=e552]: General
+                - generic [ref=e553]: General
+            - generic [ref=e554]: Disabled
+          - article [ref=e555]:
+            - generic "Select critique" [ref=e556] [cursor=pointer]:
+              - checkbox "Select critique" [ref=e557]
+            - button "critique Local Evaluate design effectiveness from a UX perspective. Assesses visual hierarchy, information architecture, emotional resonance, and overall design quality with actionable feedback. General General" [ref=e558] [cursor=pointer]:
+              - generic [ref=e559]:
+                - strong [ref=e560]: critique
+                - generic [ref=e561]: Local
+              - generic [ref=e562]: Evaluate design effectiveness from a UX perspective. Assesses visual hierarchy, information architecture, emotional resonance, and overall design quality with actionable feedback.
+              - generic [ref=e563]:
+                - generic [ref=e564]: General
+                - generic [ref=e565]: General
+            - generic [ref=e566]: Disabled
+          - article [ref=e567]:
+            - generic "Select database-management-patterns" [ref=e568] [cursor=pointer]:
+              - checkbox "Select database-management-patterns" [ref=e569]
+            - button "database-management-patterns Local Comprehensive guide for database management patterns covering PostgreSQL and MongoDB including schema design, indexing, transactions, replication, and performance tuning Backend Backend" [ref=e570] [cursor=pointer]:
+              - generic [ref=e571]:
+                - strong [ref=e572]: database-management-patterns
+                - generic [ref=e573]: Local
+              - generic [ref=e574]: Comprehensive guide for database management patterns covering PostgreSQL and MongoDB including schema design, indexing, transactions, replication, and performance tuning
+              - generic [ref=e575]:
+                - generic [ref=e576]: Backend
+                - generic [ref=e577]: Backend
+            - generic [ref=e578]: Disabled
+          - article [ref=e579]:
+            - generic "Select database-optimizer" [ref=e580] [cursor=pointer]:
+              - checkbox "Select database-optimizer" [ref=e581]
+            - button "database-optimizer Local Optimizes database queries and improves performance across PostgreSQL and MySQL systems. Use when investigating slow queries, analyzing execution plans, or optimizing database performance. Invoke for index design, query rewrites, configuration tuning, partitioning strategies, lock contention resolution. Backend Backend" [ref=e582] [cursor=pointer]:
+              - generic [ref=e583]:
+                - strong [ref=e584]: database-optimizer
+                - generic [ref=e585]: Local
+              - generic [ref=e586]: Optimizes database queries and improves performance across PostgreSQL and MySQL systems. Use when investigating slow queries, analyzing execution plans, or optimizing database performance. Invoke for index design, query rewrites, configuration tuning, partitioning strategies, lock contention resolution.
+              - generic [ref=e587]:
+                - generic [ref=e588]: Backend
+                - generic [ref=e589]: Backend
+            - generic [ref=e590]: Disabled
+          - article [ref=e591]:
+            - generic "Select dbt-data-transformation" [ref=e592] [cursor=pointer]:
+              - checkbox "Select dbt-data-transformation" [ref=e593]
+            - button "dbt-data-transformation Local Complete guide for dbt data transformation including models, tests, documentation, incremental builds, macros, packages, and production workflows General General" [ref=e594] [cursor=pointer]:
+              - generic [ref=e595]:
+                - strong [ref=e596]: dbt-data-transformation
+                - generic [ref=e597]: Local
+              - generic [ref=e598]: Complete guide for dbt data transformation including models, tests, documentation, incremental builds, macros, packages, and production workflows
+              - generic [ref=e599]:
+                - generic [ref=e600]: General
+                - generic [ref=e601]: General
+            - generic [ref=e602]: Disabled
+          - article [ref=e603]:
+            - generic "Select debugging-wizard" [ref=e604] [cursor=pointer]:
+              - checkbox "Select debugging-wizard" [ref=e605]
+            - button "debugging-wizard Local Parses error messages, traces execution flow through stack traces, correlates log entries to identify failure points, and applies systematic hypothesis-driven methodology to isolate and resolve bugs. Use when investigating errors, analyzing stack traces, finding root causes of unexpected behavior, troubleshooting crashes, or performing log analysis, error investigation, or root cause analysis. General General" [ref=e606] [cursor=pointer]:
+              - generic [ref=e607]:
+                - strong [ref=e608]: debugging-wizard
+                - generic [ref=e609]: Local
+              - generic [ref=e610]: Parses error messages, traces execution flow through stack traces, correlates log entries to identify failure points, and applies systematic hypothesis-driven methodology to isolate and resolve bugs. Use when investigating errors, analyzing stack traces, finding root causes of unexpected behavior, troubleshooting crashes, or performing log analysis, error investigation, or root cause analysis.
+              - generic [ref=e611]:
+                - generic [ref=e612]: General
+                - generic [ref=e613]: General
+            - generic [ref=e614]: Disabled
+          - article [ref=e615]:
+            - generic "Select delight" [ref=e616] [cursor=pointer]:
+              - checkbox "Select delight" [ref=e617]
+            - button "delight Local Add moments of joy, personality, and unexpected touches that make interfaces memorable and enjoyable to use. Elevates functional to delightful. General General" [ref=e618] [cursor=pointer]:
+              - generic [ref=e619]:
+                - strong [ref=e620]: delight
+                - generic [ref=e621]: Local
+              - generic [ref=e622]: Add moments of joy, personality, and unexpected touches that make interfaces memorable and enjoyable to use. Elevates functional to delightful.
+              - generic [ref=e623]:
+                - generic [ref=e624]: General
+                - generic [ref=e625]: General
+            - generic [ref=e626]: Disabled
+          - article [ref=e627]:
+            - generic "Select distill" [ref=e628] [cursor=pointer]:
+              - checkbox "Select distill" [ref=e629]
+            - button "distill Local Strip designs to their essence by removing unnecessary complexity. Great design is simple, powerful, and clean. General General" [ref=e630] [cursor=pointer]:
+              - generic [ref=e631]:
+                - strong [ref=e632]: distill
+                - generic [ref=e633]: Local
+              - generic [ref=e634]: Strip designs to their essence by removing unnecessary complexity. Great design is simple, powerful, and clean.
+              - generic [ref=e635]:
+                - generic [ref=e636]: General
+                - generic [ref=e637]: General
+            - generic [ref=e638]: Disabled
+          - article [ref=e639]:
+            - generic "Select docker-compose-orchestration" [ref=e640] [cursor=pointer]:
+              - checkbox "Select docker-compose-orchestration" [ref=e641]
+            - button "docker-compose-orchestration Local Container orchestration with Docker Compose for multi-container applications, networking, volumes, and production deployment Infra Infra" [ref=e642] [cursor=pointer]:
+              - generic [ref=e643]:
+                - strong [ref=e644]: docker-compose-orchestration
+                - generic [ref=e645]: Local
+              - generic [ref=e646]: Container orchestration with Docker Compose for multi-container applications, networking, volumes, and production deployment
+              - generic [ref=e647]:
+                - generic [ref=e648]: Infra
+                - generic [ref=e649]: Infra
+            - generic [ref=e650]: Disabled
+          - article [ref=e651]:
+            - generic "Select enterprise-architecture-patterns" [ref=e652] [cursor=pointer]:
+              - checkbox "Select enterprise-architecture-patterns" [ref=e653]
+            - button "enterprise-architecture-patterns Local Complete guide for enterprise architecture patterns including domain-driven design, event sourcing, CQRS, saga patterns, API gateway, service mesh, and scalability Backend Backend" [ref=e654] [cursor=pointer]:
+              - generic [ref=e655]:
+                - strong [ref=e656]: enterprise-architecture-patterns
+                - generic [ref=e657]: Local
+              - generic [ref=e658]: Complete guide for enterprise architecture patterns including domain-driven design, event sourcing, CQRS, saga patterns, API gateway, service mesh, and scalability
+              - generic [ref=e659]:
+                - generic [ref=e660]: Backend
+                - generic [ref=e661]: Backend
+            - generic [ref=e662]: Disabled
+          - article [ref=e663]:
+            - generic "Select express-microservices-architecture" [ref=e664] [cursor=pointer]:
+              - checkbox "Select express-microservices-architecture" [ref=e665]
+            - button "express-microservices-architecture Local Complete guide for building scalable microservices with Express.js including middleware patterns, routing strategies, error handling, production architecture, and deployment best practices Backend Backend" [ref=e666] [cursor=pointer]:
+              - generic [ref=e667]:
+                - strong [ref=e668]: express-microservices-architecture
+                - generic [ref=e669]: Local
+              - generic [ref=e670]: Complete guide for building scalable microservices with Express.js including middleware patterns, routing strategies, error handling, production architecture, and deployment best practices
+              - generic [ref=e671]:
+                - generic [ref=e672]: Backend
+                - generic [ref=e673]: Backend
+            - generic [ref=e674]: Disabled
+          - article [ref=e675]:
+            - generic "Select expressjs-development" [ref=e676] [cursor=pointer]:
+              - checkbox "Select expressjs-development" [ref=e677]
+            - button "expressjs-development Local Comprehensive Express.js development skill covering routing, middleware, request/response handling, error handling, and building production-ready REST APIs backend Backend" [ref=e678] [cursor=pointer]:
+              - generic [ref=e679]:
+                - strong [ref=e680]: expressjs-development
+                - generic [ref=e681]: Local
+              - generic [ref=e682]: Comprehensive Express.js development skill covering routing, middleware, request/response handling, error handling, and building production-ready REST APIs
+              - generic [ref=e683]:
+                - generic [ref=e684]: backend
+                - generic [ref=e685]: Backend
+            - generic [ref=e686]: Disabled
+          - article [ref=e687]:
+            - generic "Select extract" [ref=e688] [cursor=pointer]:
+              - checkbox "Select extract" [ref=e689]
+            - button "extract Local Extract and consolidate reusable components, design tokens, and patterns into your design system. Identifies opportunities for systematic reuse and enriches your component library. General General" [ref=e690] [cursor=pointer]:
+              - generic [ref=e691]:
+                - strong [ref=e692]: extract
+                - generic [ref=e693]: Local
+              - generic [ref=e694]: Extract and consolidate reusable components, design tokens, and patterns into your design system. Identifies opportunities for systematic reuse and enriches your component library.
+              - generic [ref=e695]:
+                - generic [ref=e696]: General
+                - generic [ref=e697]: General
+            - generic [ref=e698]: Disabled
+          - article [ref=e699]:
+            - generic "Select FastAPI Customer Support Tech Enablement" [ref=e700] [cursor=pointer]:
+              - checkbox "Select FastAPI Customer Support Tech Enablement" [ref=e701]
+            - button "FastAPI Customer Support Tech Enablement Local Comprehensive FastAPI skill for building modern Python web APIs with focus on customer support systems, ticket management, real-time chat, and backend operations Backend Backend" [ref=e702] [cursor=pointer]:
+              - generic [ref=e703]:
+                - strong [ref=e704]: FastAPI Customer Support Tech Enablement
+                - generic [ref=e705]: Local
+              - generic [ref=e706]: Comprehensive FastAPI skill for building modern Python web APIs with focus on customer support systems, ticket management, real-time chat, and backend operations
+              - generic [ref=e707]:
+                - generic [ref=e708]: Backend
+                - generic [ref=e709]: Backend
+            - generic [ref=e710]: Disabled
+          - article [ref=e711]:
+            - generic "Select fastapi-development" [ref=e712] [cursor=pointer]:
+              - checkbox "Select fastapi-development" [ref=e713]
+            - button "fastapi-development Local Modern Python API development with FastAPI covering async patterns, Pydantic validation, dependency injection, and production deployment Backend Backend" [ref=e714] [cursor=pointer]:
+              - generic [ref=e715]:
+                - strong [ref=e716]: fastapi-development
+                - generic [ref=e717]: Local
+              - generic [ref=e718]: Modern Python API development with FastAPI covering async patterns, Pydantic validation, dependency injection, and production deployment
+              - generic [ref=e719]:
+                - generic [ref=e720]: Backend
+                - generic [ref=e721]: Backend
+            - generic [ref=e722]: Disabled
+          - article [ref=e723]:
+            - generic "Select fastapi-microservices-development" [ref=e724] [cursor=pointer]:
+              - checkbox "Select fastapi-microservices-development" [ref=e725]
+            - button "fastapi-microservices-development Local Comprehensive guide for building production-ready microservices with FastAPI including REST API patterns, async operations, dependency injection, and deployment strategies Backend Backend" [ref=e726] [cursor=pointer]:
+              - generic [ref=e727]:
+                - strong [ref=e728]: fastapi-microservices-development
+                - generic [ref=e729]: Local
+              - generic [ref=e730]: Comprehensive guide for building production-ready microservices with FastAPI including REST API patterns, async operations, dependency injection, and deployment strategies
+              - generic [ref=e731]:
+                - generic [ref=e732]: Backend
+                - generic [ref=e733]: Backend
+            - generic [ref=e734]: Disabled
+          - article [ref=e735]:
+            - generic "Select figma-design" [ref=e736] [cursor=pointer]:
+              - checkbox "Select figma-design" [ref=e737]
+            - button "figma-design Local Figma workflows, components, auto layout, constraints, prototyping, design systems, and plugin development based on Figma Plugin API documentation design Backend" [ref=e738] [cursor=pointer]:
+              - generic [ref=e739]:
+                - strong [ref=e740]: figma-design
+                - generic [ref=e741]: Local
+              - generic [ref=e742]: Figma workflows, components, auto layout, constraints, prototyping, design systems, and plugin development based on Figma Plugin API documentation
+              - generic [ref=e743]:
+                - generic [ref=e744]: design
+                - generic [ref=e745]: Backend
+            - generic [ref=e746]: Disabled
+          - article [ref=e747]:
+            - generic "Select find-skills" [ref=e748] [cursor=pointer]:
+              - checkbox "Select find-skills" [ref=e749]
+            - button "find-skills Local Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill. Backend Backend" [ref=e750] [cursor=pointer]:
+              - generic [ref=e751]:
+                - strong [ref=e752]: find-skills
+                - generic [ref=e753]: Local
+              - generic [ref=e754]: Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.
+              - generic [ref=e755]:
+                - generic [ref=e756]: Backend
+                - generic [ref=e757]: Backend
+            - generic [ref=e758]: Disabled
+          - article [ref=e759]:
+            - generic "Select frontend-architecture" [ref=e760] [cursor=pointer]:
+              - checkbox "Select frontend-architecture" [ref=e761]
+            - button "frontend-architecture Local Component architecture, design patterns, state management strategies, module systems, build tools, and scalable application structure frontend Web" [ref=e762] [cursor=pointer]:
+              - generic [ref=e763]:
+                - strong [ref=e764]: frontend-architecture
+                - generic [ref=e765]: Local
+              - generic [ref=e766]: Component architecture, design patterns, state management strategies, module systems, build tools, and scalable application structure
+              - generic [ref=e767]:
+                - generic [ref=e768]: frontend
+                - generic [ref=e769]: Web
+            - generic [ref=e770]: Disabled
+          - article [ref=e771]:
+            - generic "Select frontend-design" [ref=e772] [cursor=pointer]:
+              - checkbox "Select frontend-design" [ref=e773]
+            - button "frontend-design Local Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications. Generates creative, polished code that avoids generic AI aesthetics. Web Web" [ref=e774] [cursor=pointer]:
+              - generic [ref=e775]:
+                - strong [ref=e776]: frontend-design
+                - generic [ref=e777]: Local
+              - generic [ref=e778]: Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications. Generates creative, polished code that avoids generic AI aesthetics.
+              - generic [ref=e779]:
+                - generic [ref=e780]: Web
+                - generic [ref=e781]: Web
+            - generic [ref=e782]: Disabled
+          - article [ref=e783]:
+            - generic "Select fullstack-dev" [ref=e784] [cursor=pointer]:
+              - checkbox "Select fullstack-dev" [ref=e785]
+            - 'button "fullstack-dev Local | Full-stack backend architecture and frontend-backend integration guide. TRIGGER when: building a full-stack app, creating REST API with frontend, scaffolding backend service, building todo app, building CRUD app, building real-time app, building chat app, Express + React, Next.js API, Node.js backend, Python backend, Go backend, designing service layers, implementing error handling, managing config/auth, setting up API clients, implementing auth flows, handling file uploads, adding real-time features (SSE/WebSocket), hardening for production. DO NOT TRIGGER when: pure frontend UI work, pure CSS/styling, database schema only. Web Web Backend" [ref=e786] [cursor=pointer]':
+              - generic [ref=e787]:
+                - strong [ref=e788]: fullstack-dev
+                - generic [ref=e789]: Local
+              - generic [ref=e790]: "| Full-stack backend architecture and frontend-backend integration guide. TRIGGER when: building a full-stack app, creating REST API with frontend, scaffolding backend service, building todo app, building CRUD app, building real-time app, building chat app, Express + React, Next.js API, Node.js backend, Python backend, Go backend, designing service layers, implementing error handling, managing config/auth, setting up API clients, implementing auth flows, handling file uploads, adding real-time features (SSE/WebSocket), hardening for production. DO NOT TRIGGER when: pure frontend UI work, pure CSS/styling, database schema only."
+              - generic [ref=e791]:
+                - generic [ref=e792]: Web
+                - generic [ref=e793]: Web
+                - generic [ref=e794]: Backend
+            - generic [ref=e795]: Disabled
+          - article [ref=e796]:
+            - generic "Select fullstack-guardian" [ref=e797] [cursor=pointer]:
+              - checkbox "Select fullstack-guardian" [ref=e798]
+            - button [ref=e799] [cursor=pointer]:
+              - generic [ref=e800]:
+                - strong [ref=e801]: fullstack-guardian
+                - generic [ref=e802]: Local
+              - generic [ref=e803]: Builds security-focused full-stack web applications by implementing integrated frontend and backend components with layered security at every level. Covers the complete stack from database to UI, enforcing auth, input validation, output encoding, and parameterized queries across all layers. Use when implementing features across frontend and backend, building REST APIs with corresponding UI, connecting frontend components to backend endpoints, creating end-to-end data flows from database to UI, or implementing CRUD operations with UI forms. Distinct from frontend-only, backend-only, or API-only skills in that it simultaneously addresses all three perspectives—Frontend, Backend, and Security—within a single implementation workflow. Invoke for full-stack feature work, web app development, authenticated API routes with views, microservices, real-time features, monorepo architecture, or technology selection decisions.
+              - generic [ref=e804]:
+                - generic [ref=e805]: Web
+                - generic [ref=e806]: Web
+                - generic [ref=e807]: Backend
+            - generic [ref=e808]: Disabled
+          - article [ref=e809]:
+            - generic "Select game-engine" [ref=e810] [cursor=pointer]:
+              - checkbox "Select game-engine" [ref=e811]
+            - button "game-engine Local Expert skill for building web-based game engines and games using HTML5, Canvas, WebGL, and JavaScript. Use when asked to create games, build game engines, implement game physics, handle collision detection, set up game loops, manage sprites, add game controls, or work with 2D/3D rendering. Covers techniques for platformers, breakout-style games, maze games, tilemaps, audio, multiplayer via WebRTC, and publishing games. Media Media" [ref=e812] [cursor=pointer]:
+              - generic [ref=e813]:
+                - strong [ref=e814]: game-engine
+                - generic [ref=e815]: Local
+              - generic [ref=e816]: Expert skill for building web-based game engines and games using HTML5, Canvas, WebGL, and JavaScript. Use when asked to create games, build game engines, implement game physics, handle collision detection, set up game loops, manage sprites, add game controls, or work with 2D/3D rendering. Covers techniques for platformers, breakout-style games, maze games, tilemaps, audio, multiplayer via WebRTC, and publishing games.
+              - generic [ref=e817]:
+                - generic [ref=e818]: Media
+                - generic [ref=e819]: Media
+            - generic [ref=e820]: Disabled
+          - article [ref=e821]:
+            - generic "Select github-speckit-tester" [ref=e822] [cursor=pointer]:
+              - checkbox "Select github-speckit-tester" [ref=e823]
+            - button "github-speckit-tester Local Test harness for executing Speckit workflows non-interactively using subagents. Use when you need to test the complete Speckit pipeline (Phase 0 → Phase 3) or individual phases, validate artifact generation across all commands, automate testing of specification-to-implementation workflows, or verify cross-phase consistency. This skill orchestrates the execution of all Speckit commands in order without user intervention. General General" [ref=e824] [cursor=pointer]:
+              - generic [ref=e825]:
+                - strong [ref=e826]: github-speckit-tester
+                - generic [ref=e827]: Local
+              - generic [ref=e828]: Test harness for executing Speckit workflows non-interactively using subagents. Use when you need to test the complete Speckit pipeline (Phase 0 → Phase 3) or individual phases, validate artifact generation across all commands, automate testing of specification-to-implementation workflows, or verify cross-phase consistency. This skill orchestrates the execution of all Speckit commands in order without user intervention.
+              - generic [ref=e829]:
+                - generic [ref=e830]: General
+                - generic [ref=e831]: General
+            - generic [ref=e832]: Disabled
+          - article [ref=e833]:
+            - generic "Select golang-backend-development" [ref=e834] [cursor=pointer]:
+              - checkbox "Select golang-backend-development" [ref=e835]
+            - button "golang-backend-development Local Complete guide for Go backend development including concurrency patterns, web servers, database integration, microservices, and production deployment Backend Backend" [ref=e836] [cursor=pointer]:
+              - generic [ref=e837]:
+                - strong [ref=e838]: golang-backend-development
+                - generic [ref=e839]: Local
+              - generic [ref=e840]: Complete guide for Go backend development including concurrency patterns, web servers, database integration, microservices, and production deployment
+              - generic [ref=e841]:
+                - generic [ref=e842]: Backend
+                - generic [ref=e843]: Backend
+            - generic [ref=e844]: Disabled
+          - article [ref=e845]:
+            - generic "Select graphql-api-development" [ref=e846] [cursor=pointer]:
+              - checkbox "Select graphql-api-development" [ref=e847]
+            - button "graphql-api-development Local Comprehensive guide for building GraphQL APIs including schema design, queries, mutations, subscriptions, resolvers, type system, error handling, authentication, authorization, caching strategies, and production best practices Backend Backend" [ref=e848] [cursor=pointer]:
+              - generic [ref=e849]:
+                - strong [ref=e850]: graphql-api-development
+                - generic [ref=e851]: Local
+              - generic [ref=e852]: Comprehensive guide for building GraphQL APIs including schema design, queries, mutations, subscriptions, resolvers, type system, error handling, authentication, authorization, caching strategies, and production best practices
+              - generic [ref=e853]:
+                - generic [ref=e854]: Backend
+                - generic [ref=e855]: Backend
+            - generic [ref=e856]: Disabled
+          - article [ref=e857]:
+            - generic "Select grpc-microservices" [ref=e858] [cursor=pointer]:
+              - checkbox "Select grpc-microservices" [ref=e859]
+            - button "grpc-microservices Local Comprehensive gRPC microservices skill covering protobuf schemas, service definitions, streaming patterns, interceptors, load balancing, and production gRPC architecture General General" [ref=e860] [cursor=pointer]:
+              - generic [ref=e861]:
+                - strong [ref=e862]: grpc-microservices
+                - generic [ref=e863]: Local
+              - generic [ref=e864]: Comprehensive gRPC microservices skill covering protobuf schemas, service definitions, streaming patterns, interceptors, load balancing, and production gRPC architecture
+              - generic [ref=e865]:
+                - generic [ref=e866]: General
+                - generic [ref=e867]: General
+            - generic [ref=e868]: Disabled
+          - article [ref=e869]:
+            - generic "Select harden" [ref=e870] [cursor=pointer]:
+              - checkbox "Select harden" [ref=e871]
+            - button "harden Local Improve interface resilience through better error handling, i18n support, text overflow handling, and edge case management. Makes interfaces robust and production-ready. General General" [ref=e872] [cursor=pointer]:
+              - generic [ref=e873]:
+                - strong [ref=e874]: harden
+                - generic [ref=e875]: Local
+              - generic [ref=e876]: Improve interface resilience through better error handling, i18n support, text overflow handling, and edge case management. Makes interfaces robust and production-ready.
+              - generic [ref=e877]:
+                - generic [ref=e878]: General
+                - generic [ref=e879]: General
+            - generic [ref=e880]: Disabled
+          - article [ref=e881]:
+            - generic "Select hasura-graphql-engine" [ref=e882] [cursor=pointer]:
+              - checkbox "Select hasura-graphql-engine" [ref=e883]
+            - button "hasura-graphql-engine Local Complete guide for Hasura GraphQL Engine including instant GraphQL APIs, permissions, authentication, event triggers, actions, and production deployment General General" [ref=e884] [cursor=pointer]:
+              - generic [ref=e885]:
+                - strong [ref=e886]: hasura-graphql-engine
+                - generic [ref=e887]: Local
+              - generic [ref=e888]: Complete guide for Hasura GraphQL Engine including instant GraphQL APIs, permissions, authentication, event triggers, actions, and production deployment
+              - generic [ref=e889]:
+                - generic [ref=e890]: General
+                - generic [ref=e891]: General
+            - generic [ref=e892]: Disabled
+          - article [ref=e893]:
+            - generic "Select imagegen" [ref=e894] [cursor=pointer]:
+              - checkbox "Select imagegen" [ref=e895]
+            - button "imagegen Local Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. Web Web Media" [ref=e896] [cursor=pointer]:
+              - generic [ref=e897]:
+                - strong [ref=e898]: imagegen
+                - generic [ref=e899]: Local
+              - generic [ref=e900]: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas.
+              - generic [ref=e901]:
+                - generic [ref=e902]: Web
+                - generic [ref=e903]: Web
+                - generic [ref=e904]: Media
+            - generic [ref=e905]: Disabled
+          - article [ref=e906]:
+            - generic "Select javascript-fundamentals" [ref=e907] [cursor=pointer]:
+              - checkbox "Select javascript-fundamentals" [ref=e908]
+            - button "javascript-fundamentals Local Core JavaScript language features, patterns, and best practices including ES6+ syntax, async/await, closures, prototypes, and modern development patterns frontend General" [ref=e909] [cursor=pointer]:
+              - generic [ref=e910]:
+                - strong [ref=e911]: javascript-fundamentals
+                - generic [ref=e912]: Local
+              - generic [ref=e913]: Core JavaScript language features, patterns, and best practices including ES6+ syntax, async/await, closures, prototypes, and modern development patterns
+              - generic [ref=e914]:
+                - generic [ref=e915]: frontend
+                - generic [ref=e916]: General
+            - generic [ref=e917]: Disabled
+          - article [ref=e918]:
+            - generic "Select jest-react-testing" [ref=e919] [cursor=pointer]:
+              - checkbox "Select jest-react-testing" [ref=e920]
+            - button "jest-react-testing Local Comprehensive React component testing with Jest and React Testing Library covering configuration, mocking strategies, async testing patterns, hooks testing, and integration testing best practices Web Web" [ref=e921] [cursor=pointer]:
+              - generic [ref=e922]:
+                - strong [ref=e923]: jest-react-testing
+                - generic [ref=e924]: Local
+              - generic [ref=e925]: Comprehensive React component testing with Jest and React Testing Library covering configuration, mocking strategies, async testing patterns, hooks testing, and integration testing best practices
+              - generic [ref=e926]:
+                - generic [ref=e927]: Web
+                - generic [ref=e928]: Web
+            - generic [ref=e929]: Disabled
+          - article [ref=e930]:
+            - generic "Select kafka-stream-processing" [ref=e931] [cursor=pointer]:
+              - checkbox "Select kafka-stream-processing" [ref=e932]
+            - button "kafka-stream-processing Local Complete guide for Apache Kafka stream processing including producers, consumers, Kafka Streams, connectors, schema registry, and production deployment General General" [ref=e933] [cursor=pointer]:
+              - generic [ref=e934]:
+                - strong [ref=e935]: kafka-stream-processing
+                - generic [ref=e936]: Local
+              - generic [ref=e937]: Complete guide for Apache Kafka stream processing including producers, consumers, Kafka Streams, connectors, schema registry, and production deployment
+              - generic [ref=e938]:
+                - generic [ref=e939]: General
+                - generic [ref=e940]: General
+            - generic [ref=e941]: Disabled
+          - article [ref=e942]:
+            - generic "Select kubernetes-orchestration" [ref=e943] [cursor=pointer]:
+              - checkbox "Select kubernetes-orchestration" [ref=e944]
+            - button "kubernetes-orchestration Local Comprehensive guide to Kubernetes container orchestration, covering workloads, networking, storage, security, and production operations infrastructure Infra" [ref=e945] [cursor=pointer]:
+              - generic [ref=e946]:
+                - strong [ref=e947]: kubernetes-orchestration
+                - generic [ref=e948]: Local
+              - generic [ref=e949]: Comprehensive guide to Kubernetes container orchestration, covering workloads, networking, storage, security, and production operations
+              - generic [ref=e950]:
+                - generic [ref=e951]: infrastructure
+                - generic [ref=e952]: Infra
+            - generic [ref=e953]: Disabled
+          - article [ref=e954]:
+            - generic "Select langchain-orchestration" [ref=e955] [cursor=pointer]:
+              - checkbox "Select langchain-orchestration" [ref=e956]
+            - button "langchain-orchestration Local Comprehensive guide for building production-grade LLM applications using LangChain's chains, agents, memory systems, RAG patterns, and advanced orchestration AI/ML General" [ref=e957] [cursor=pointer]:
+              - generic [ref=e958]:
+                - strong [ref=e959]: langchain-orchestration
+                - generic [ref=e960]: Local
+              - generic [ref=e961]: Comprehensive guide for building production-grade LLM applications using LangChain's chains, agents, memory systems, RAG patterns, and advanced orchestration
+              - generic [ref=e962]:
+                - generic [ref=e963]: AI/ML
+                - generic [ref=e964]: General
+            - generic [ref=e965]: Disabled
+          - article [ref=e966]:
+            - generic "Select linear-dev-accelerator" [ref=e967] [cursor=pointer]:
+              - checkbox "Select linear-dev-accelerator" [ref=e968]
+            - button "linear-dev-accelerator Local Accelerate software development with Linear project management and MCP server integration. Master issue tracking, project workflows, and development automation for frontend, full-stack, and mobile applications. Includes comprehensive MCP tool usage, workflow patterns, and development best practices. Web Web" [ref=e969] [cursor=pointer]:
+              - generic [ref=e970]:
+                - strong [ref=e971]: linear-dev-accelerator
+                - generic [ref=e972]: Local
+              - generic [ref=e973]: Accelerate software development with Linear project management and MCP server integration. Master issue tracking, project workflows, and development automation for frontend, full-stack, and mobile applications. Includes comprehensive MCP tool usage, workflow patterns, and development best practices.
+              - generic [ref=e974]:
+                - generic [ref=e975]: Web
+                - generic [ref=e976]: Web
+            - generic [ref=e977]: Disabled
+          - article [ref=e978]:
+            - generic "Select microservices-patterns" [ref=e979] [cursor=pointer]:
+              - checkbox "Select microservices-patterns" [ref=e980]
+            - button "microservices-patterns Local Comprehensive microservices patterns skill covering service mesh, traffic management, circuit breakers, resilience patterns, Istio, and production microservices architecture General General" [ref=e981] [cursor=pointer]:
+              - generic [ref=e982]:
+                - strong [ref=e983]: microservices-patterns
+                - generic [ref=e984]: Local
+              - generic [ref=e985]: Comprehensive microservices patterns skill covering service mesh, traffic management, circuit breakers, resilience patterns, Istio, and production microservices architecture
+              - generic [ref=e986]:
+                - generic [ref=e987]: General
+                - generic [ref=e988]: General
+            - generic [ref=e989]: Disabled
+          - article [ref=e990]:
+            - generic "Select microsoft-foundry" [ref=e991] [cursor=pointer]:
+              - checkbox "Select microsoft-foundry" [ref=e992]
+            - button [ref=e993] [cursor=pointer]:
+              - generic [ref=e994]:
+                - strong [ref=e995]: microsoft-foundry
+                - generic [ref=e996]: Local
+              - generic [ref=e997]: "Deploy, evaluate, and manage Foundry agents end-to-end: Docker build, ACR push, hosted/prompt agent create, container start, batch eval, prompt optimization, prompt optimizer workflows, agent.yaml, dataset curation from traces. USE FOR: deploy agent to Foundry, hosted agent, create agent, invoke agent, evaluate agent, run batch eval, optimize prompt, improve prompt, prompt optimization, prompt optimizer, improve agent instructions, optimize agent instructions, optimize system prompt, deploy model, Foundry project, RBAC, role assignment, permissions, quota, capacity, region, troubleshoot agent, deployment failure, create dataset from traces, dataset versioning, eval trending, create AI Services, Cognitive Services, create Foundry resource, provision resource, knowledge index, agent monitoring, customize deployment, onboard, availability. DO NOT USE FOR: Azure Functions, App Service, general Azure deploy (use azure-deploy), general Azure prep (use azure-prepare)."
+              - generic [ref=e998]:
+                - generic [ref=e999]: Infra
+                - generic [ref=e1000]: Infra
+            - generic [ref=e1001]: Disabled
+          - article [ref=e1002]:
+            - generic "Select mlops-workflows" [ref=e1003] [cursor=pointer]:
+              - checkbox "Select mlops-workflows" [ref=e1004]
+            - button "mlops-workflows Local Comprehensive MLOps workflows for the complete ML lifecycle - experiment tracking, model registry, deployment patterns, monitoring, A/B testing, and production best practices with MLflow Machine Learning Operations General" [ref=e1005] [cursor=pointer]:
+              - generic [ref=e1006]:
+                - strong [ref=e1007]: mlops-workflows
+                - generic [ref=e1008]: Local
+              - generic [ref=e1009]: Comprehensive MLOps workflows for the complete ML lifecycle - experiment tracking, model registry, deployment patterns, monitoring, A/B testing, and production best practices with MLflow
+              - generic [ref=e1010]:
+                - generic [ref=e1011]: Machine Learning Operations
+                - generic [ref=e1012]: General
+            - generic [ref=e1013]: Disabled
+          - article [ref=e1014]:
+            - generic "Select mobile-design" [ref=e1015] [cursor=pointer]:
+              - checkbox "Select mobile-design" [ref=e1016]
+            - button "mobile-design Local Mobile UX patterns, touch interactions, gesture design, mobile-first principles, app navigation, and mobile performance design General" [ref=e1017] [cursor=pointer]:
+              - generic [ref=e1018]:
+                - strong [ref=e1019]: mobile-design
+                - generic [ref=e1020]: Local
+              - generic [ref=e1021]: Mobile UX patterns, touch interactions, gesture design, mobile-first principles, app navigation, and mobile performance
+              - generic [ref=e1022]:
+                - generic [ref=e1023]: design
+                - generic [ref=e1024]: General
+            - generic [ref=e1025]: Disabled
+          - article [ref=e1026]:
+            - generic "Select nextjs-development" [ref=e1027] [cursor=pointer]:
+              - checkbox "Select nextjs-development" [ref=e1028]
+            - button "nextjs-development Local Comprehensive Next.js development skill covering App Router, Server Components, data fetching, routing patterns, API routes, middleware, and full-stack Next.js applications frontend Backend" [ref=e1029] [cursor=pointer]:
+              - generic [ref=e1030]:
+                - strong [ref=e1031]: nextjs-development
+                - generic [ref=e1032]: Local
+              - generic [ref=e1033]: Comprehensive Next.js development skill covering App Router, Server Components, data fetching, routing patterns, API routes, middleware, and full-stack Next.js applications
+              - generic [ref=e1034]:
+                - generic [ref=e1035]: frontend
+                - generic [ref=e1036]: Backend
+            - generic [ref=e1037]: Disabled
+          - article [ref=e1038]:
+            - generic "Select nodejs-development" [ref=e1039] [cursor=pointer]:
+              - checkbox "Select nodejs-development" [ref=e1040]
+            - button "nodejs-development Local Comprehensive Node.js development skill covering event loop, async patterns, streams, file system, HTTP servers, process management, and modern Node.js best practices backend Backend" [ref=e1041] [cursor=pointer]:
+              - generic [ref=e1042]:
+                - strong [ref=e1043]: nodejs-development
+                - generic [ref=e1044]: Local
+              - generic [ref=e1045]: Comprehensive Node.js development skill covering event loop, async patterns, streams, file system, HTTP servers, process management, and modern Node.js best practices
+              - generic [ref=e1046]:
+                - generic [ref=e1047]: backend
+                - generic [ref=e1048]: Backend
+            - generic [ref=e1049]: Disabled
+          - article [ref=e1050]:
+            - generic "Select normalize" [ref=e1051] [cursor=pointer]:
+              - checkbox "Select normalize" [ref=e1052]
+            - button "normalize Local Normalize design to match your design system and ensure consistency General General" [ref=e1053] [cursor=pointer]:
+              - generic [ref=e1054]:
+                - strong [ref=e1055]: normalize
+                - generic [ref=e1056]: Local
+              - generic [ref=e1057]: Normalize design to match your design system and ensure consistency
+              - generic [ref=e1058]:
+                - generic [ref=e1059]: General
+                - generic [ref=e1060]: General
+            - generic [ref=e1061]: Disabled
+          - article [ref=e1062]:
+            - generic "Select oauth2-authentication" [ref=e1063] [cursor=pointer]:
+              - checkbox "Select oauth2-authentication" [ref=e1064]
+            - button "oauth2-authentication Local Comprehensive OAuth2 authentication skill covering authorization flows, token management, PKCE, OpenID Connect, and security best practices for modern authentication systems General General" [ref=e1065] [cursor=pointer]:
+              - generic [ref=e1066]:
+                - strong [ref=e1067]: oauth2-authentication
+                - generic [ref=e1068]: Local
+              - generic [ref=e1069]: Comprehensive OAuth2 authentication skill covering authorization flows, token management, PKCE, OpenID Connect, and security best practices for modern authentication systems
+              - generic [ref=e1070]:
+                - generic [ref=e1071]: General
+                - generic [ref=e1072]: General
+            - generic [ref=e1073]: Disabled
+          - article [ref=e1074]:
+            - generic "Select observability-monitoring" [ref=e1075] [cursor=pointer]:
+              - checkbox "Select observability-monitoring" [ref=e1076]
+            - button "observability-monitoring Local Comprehensive observability and monitoring skill covering Prometheus, Grafana, metrics collection, alerting, exporters, PromQL, and production monitoring patterns for distributed systems and cloud-native applications General General" [ref=e1077] [cursor=pointer]:
+              - generic [ref=e1078]:
+                - strong [ref=e1079]: observability-monitoring
+                - generic [ref=e1080]: Local
+              - generic [ref=e1081]: Comprehensive observability and monitoring skill covering Prometheus, Grafana, metrics collection, alerting, exporters, PromQL, and production monitoring patterns for distributed systems and cloud-native applications
+              - generic [ref=e1082]:
+                - generic [ref=e1083]: General
+                - generic [ref=e1084]: General
+            - generic [ref=e1085]: Disabled
+          - article [ref=e1086]:
+            - generic "Select omc-reference" [ref=e1087] [cursor=pointer]:
+              - checkbox "Select omc-reference" [ref=e1088]
+            - button "omc-reference Local OMC agent catalog, available tools, team pipeline routing, commit protocol, and skills registry. Auto-loads when delegating to agents, using OMC tools, orchestrating teams, making commits, or invoking skills. General General" [ref=e1089] [cursor=pointer]:
+              - generic [ref=e1090]:
+                - strong [ref=e1091]: omc-reference
+                - generic [ref=e1092]: Local
+              - generic [ref=e1093]: OMC agent catalog, available tools, team pipeline routing, commit protocol, and skills registry. Auto-loads when delegating to agents, using OMC tools, orchestrating teams, making commits, or invoking skills.
+              - generic [ref=e1094]:
+                - generic [ref=e1095]: General
+                - generic [ref=e1096]: General
+            - generic [ref=e1097]: Disabled
+          - article [ref=e1098]:
+            - generic "Select onboard" [ref=e1099] [cursor=pointer]:
+              - checkbox "Select onboard" [ref=e1100]
+            - button "onboard Local Design or improve onboarding flows, empty states, and first-time user experiences. Helps users get started successfully and understand value quickly. General General" [ref=e1101] [cursor=pointer]:
+              - generic [ref=e1102]:
+                - strong [ref=e1103]: onboard
+                - generic [ref=e1104]: Local
+              - generic [ref=e1105]: Design or improve onboarding flows, empty states, and first-time user experiences. Helps users get started successfully and understand value quickly.
+              - generic [ref=e1106]:
+                - generic [ref=e1107]: General
+                - generic [ref=e1108]: General
+            - generic [ref=e1109]: Disabled
+          - article [ref=e1110]:
+            - generic "Select openai-docs" [ref=e1111] [cursor=pointer]:
+              - checkbox "Select openai-docs" [ref=e1112]
+            - button "openai-docs Local Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains. General General" [ref=e1113] [cursor=pointer]:
+              - generic [ref=e1114]:
+                - strong [ref=e1115]: openai-docs
+                - generic [ref=e1116]: Local
+              - generic [ref=e1117]: Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains.
+              - generic [ref=e1118]:
+                - generic [ref=e1119]: General
+                - generic [ref=e1120]: General
+            - generic [ref=e1121]: Disabled
+          - article [ref=e1122]:
+            - generic "Select optimize" [ref=e1123] [cursor=pointer]:
+              - checkbox "Select optimize" [ref=e1124]
+            - button "optimize Local Improve interface performance across loading speed, rendering, animations, images, and bundle size. Makes experiences faster and smoother. General General" [ref=e1125] [cursor=pointer]:
+              - generic [ref=e1126]:
+                - strong [ref=e1127]: optimize
+                - generic [ref=e1128]: Local
+              - generic [ref=e1129]: Improve interface performance across loading speed, rendering, animations, images, and bundle size. Makes experiences faster and smoother.
+              - generic [ref=e1130]:
+                - generic [ref=e1131]: General
+                - generic [ref=e1132]: General
+            - generic [ref=e1133]: Disabled
+          - article [ref=e1134]:
+            - generic "Select pandas" [ref=e1135] [cursor=pointer]:
+              - checkbox "Select pandas" [ref=e1136]
+            - button "pandas Local Expert data analysis and manipulation for customer support operations using pandas data-analysis General" [ref=e1137] [cursor=pointer]:
+              - generic [ref=e1138]:
+                - strong [ref=e1139]: pandas
+                - generic [ref=e1140]: Local
+              - generic [ref=e1141]: Expert data analysis and manipulation for customer support operations using pandas
+              - generic [ref=e1142]:
+                - generic [ref=e1143]: data-analysis
+                - generic [ref=e1144]: General
+            - generic [ref=e1145]: Disabled
+          - article [ref=e1146]:
+            - generic "Select performance-benchmark-specialist" [ref=e1147] [cursor=pointer]:
+              - checkbox "Select performance-benchmark-specialist" [ref=e1148]
+            - button "performance-benchmark-specialist Local Performance benchmarking expertise for shell tools, covering benchmark design, statistical analysis (min/max/mean/median/stddev), performance targets (<100ms, >90% hit rate), workspace generation, and comprehensive reporting General General" [ref=e1149] [cursor=pointer]:
+              - generic [ref=e1150]:
+                - strong [ref=e1151]: performance-benchmark-specialist
+                - generic [ref=e1152]: Local
+              - generic [ref=e1153]: Performance benchmarking expertise for shell tools, covering benchmark design, statistical analysis (min/max/mean/median/stddev), performance targets (<100ms, >90% hit rate), workspace generation, and comprehensive reporting
+              - generic [ref=e1154]:
+                - generic [ref=e1155]: General
+                - generic [ref=e1156]: General
+            - generic [ref=e1157]: Disabled
+          - article [ref=e1158]:
+            - generic "Select playwright-visual-testing" [ref=e1159] [cursor=pointer]:
+              - checkbox "Select playwright-visual-testing" [ref=e1160]
+            - button "playwright-visual-testing Local Browser automation, visual testing, and screenshot validation using Playwright MCP server for accelerated web development. Master visual regression testing, automated UI testing, and cross-browser validation. Web Web" [ref=e1161] [cursor=pointer]:
+              - generic [ref=e1162]:
+                - strong [ref=e1163]: playwright-visual-testing
+                - generic [ref=e1164]: Local
+              - generic [ref=e1165]: Browser automation, visual testing, and screenshot validation using Playwright MCP server for accelerated web development. Master visual regression testing, automated UI testing, and cross-browser validation.
+              - generic [ref=e1166]:
+                - generic [ref=e1167]: Web
+                - generic [ref=e1168]: Web
+            - generic [ref=e1169]: Disabled
+          - article [ref=e1170]:
+            - generic "Select plugin-creator" [ref=e1171] [cursor=pointer]:
+              - checkbox "Select plugin-creator" [ref=e1172]
+            - 'button "plugin-creator Local Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata. General General" [ref=e1173] [cursor=pointer]':
+              - generic [ref=e1174]:
+                - strong [ref=e1175]: plugin-creator
+                - generic [ref=e1176]: Local
+              - generic [ref=e1177]: "Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata."
+              - generic [ref=e1178]:
+                - generic [ref=e1179]: General
+                - generic [ref=e1180]: General
+            - generic [ref=e1181]: Disabled
+          - article [ref=e1182]:
+            - generic "Select polish" [ref=e1183] [cursor=pointer]:
+              - checkbox "Select polish" [ref=e1184]
+            - button "polish Local Final quality pass before shipping. Fixes alignment, spacing, consistency, and detail issues that separate good from great. General General" [ref=e1185] [cursor=pointer]:
+              - generic [ref=e1186]:
+                - strong [ref=e1187]: polish
+                - generic [ref=e1188]: Local
+              - generic [ref=e1189]: Final quality pass before shipping. Fixes alignment, spacing, consistency, and detail issues that separate good from great.
+              - generic [ref=e1190]:
+                - generic [ref=e1191]: General
+                - generic [ref=e1192]: General
+            - generic [ref=e1193]: Disabled
+          - article [ref=e1194]:
+            - generic "Select postgres-pro" [ref=e1195] [cursor=pointer]:
+              - checkbox "Select postgres-pro" [ref=e1196]
+            - button "postgres-pro Local Use when optimizing PostgreSQL queries, configuring replication, or implementing advanced database features. Invoke for EXPLAIN analysis, JSONB operations, extension usage, VACUUM tuning, performance monitoring. Backend Backend" [ref=e1197] [cursor=pointer]:
+              - generic [ref=e1198]:
+                - strong [ref=e1199]: postgres-pro
+                - generic [ref=e1200]: Local
+              - generic [ref=e1201]: Use when optimizing PostgreSQL queries, configuring replication, or implementing advanced database features. Invoke for EXPLAIN analysis, JSONB operations, extension usage, VACUUM tuning, performance monitoring.
+              - generic [ref=e1202]:
+                - generic [ref=e1203]: Backend
+                - generic [ref=e1204]: Backend
+            - generic [ref=e1205]: Disabled
+          - article [ref=e1206]:
+            - generic "Select PostgreSQL Database Administration" [ref=e1207] [cursor=pointer]:
+              - checkbox "Select PostgreSQL Database Administration" [ref=e1208]
+            - button "PostgreSQL Database Administration Claude Comprehensive PostgreSQL database administration skill for customer support tech enablement, covering database design, optimization, performance tuning, backup/recovery, and advanced query techniques database Backend" [ref=e1209] [cursor=pointer]:
+              - generic [ref=e1210]:
+                - strong [ref=e1211]: PostgreSQL Database Administration
+                - generic [ref=e1212]: Claude
+              - generic [ref=e1213]: Comprehensive PostgreSQL database administration skill for customer support tech enablement, covering database design, optimization, performance tuning, backup/recovery, and advanced query techniques
+              - generic [ref=e1214]:
+                - generic [ref=e1215]: database
+                - generic [ref=e1216]: Backend
+            - generic [ref=e1217]: Disabled
+          - article [ref=e1218]:
+            - generic "Select postgresql-database-engineering" [ref=e1219] [cursor=pointer]:
+              - checkbox "Select postgresql-database-engineering" [ref=e1220]
+            - button "postgresql-database-engineering Local Comprehensive PostgreSQL database engineering skill covering indexing strategies, query optimization, performance tuning, partitioning, replication, backup and recovery, high availability, and production database management. Master advanced PostgreSQL features including MVCC, VACUUM operations, connection pooling, monitoring, and scalability patterns. Backend Backend" [ref=e1221] [cursor=pointer]:
+              - generic [ref=e1222]:
+                - strong [ref=e1223]: postgresql-database-engineering
+                - generic [ref=e1224]: Local
+              - generic [ref=e1225]: Comprehensive PostgreSQL database engineering skill covering indexing strategies, query optimization, performance tuning, partitioning, replication, backup and recovery, high availability, and production database management. Master advanced PostgreSQL features including MVCC, VACUUM operations, connection pooling, monitoring, and scalability patterns.
+              - generic [ref=e1226]:
+                - generic [ref=e1227]: Backend
+                - generic [ref=e1228]: Backend
+            - generic [ref=e1229]: Disabled
+          - article [ref=e1230]:
+            - generic "Select psycopg" [ref=e1231] [cursor=pointer]:
+              - checkbox "Select psycopg" [ref=e1232]
+            - button "psycopg Customer Support Tech Team PostgreSQL adapter for Python - customer support tech enablement for database operations, query optimization, and data management database Backend" [ref=e1233] [cursor=pointer]:
+              - generic [ref=e1234]:
+                - strong [ref=e1235]: psycopg
+                - generic [ref=e1236]: Customer Support Tech Team
+              - generic [ref=e1237]: PostgreSQL adapter for Python - customer support tech enablement for database operations, query optimization, and data management
+              - generic [ref=e1238]:
+                - generic [ref=e1239]: database
+                - generic [ref=e1240]: Backend
+            - generic [ref=e1241]: Disabled
+          - article [ref=e1242]:
+            - generic "Select pydantic" [ref=e1243] [cursor=pointer]:
+              - checkbox "Select pydantic" [ref=e1244]
+            - button "pydantic Customer Support Tech Enablement Team Comprehensive Pydantic data validation skill for customer support tech enablement - covering BaseModel, Field validation, custom validators, FastAPI integration, BaseSettings, serialization, and Pydantic V2 features General General" [ref=e1245] [cursor=pointer]:
+              - generic [ref=e1246]:
+                - strong [ref=e1247]: pydantic
+                - generic [ref=e1248]: Customer Support Tech Enablement Team
+              - generic [ref=e1249]: Comprehensive Pydantic data validation skill for customer support tech enablement - covering BaseModel, Field validation, custom validators, FastAPI integration, BaseSettings, serialization, and Pydantic V2 features
+              - generic [ref=e1250]:
+                - generic [ref=e1251]: General
+                - generic [ref=e1252]: General
+            - generic [ref=e1253]: Disabled
+          - article [ref=e1254]:
+            - generic "Select pytest" [ref=e1255] [cursor=pointer]:
+              - checkbox "Select pytest" [ref=e1256]
+            - button "pytest Claude Support Team Advanced Python unit testing framework for customer support tech enablement, covering FastAPI, SQLAlchemy, PostgreSQL, async operations, mocking, fixtures, parametrization, coverage, and comprehensive testing strategies for backend support systems Backend Backend" [ref=e1257] [cursor=pointer]:
+              - generic [ref=e1258]:
+                - strong [ref=e1259]: pytest
+                - generic [ref=e1260]: Claude Support Team
+              - generic [ref=e1261]: Advanced Python unit testing framework for customer support tech enablement, covering FastAPI, SQLAlchemy, PostgreSQL, async operations, mocking, fixtures, parametrization, coverage, and comprehensive testing strategies for backend support systems
+              - generic [ref=e1262]:
+                - generic [ref=e1263]: Backend
+                - generic [ref=e1264]: Backend
+            - generic [ref=e1265]: Disabled
+          - article [ref=e1266]:
+            - generic "Select pytest-patterns" [ref=e1267] [cursor=pointer]:
+              - checkbox "Select pytest-patterns" [ref=e1268]
+            - button "pytest-patterns Local Python testing with pytest covering fixtures, parametrization, mocking, and test organization for reliable test suites General General" [ref=e1269] [cursor=pointer]:
+              - generic [ref=e1270]:
+                - strong [ref=e1271]: pytest-patterns
+                - generic [ref=e1272]: Local
+              - generic [ref=e1273]: Python testing with pytest covering fixtures, parametrization, mocking, and test organization for reliable test suites
+              - generic [ref=e1274]:
+                - generic [ref=e1275]: General
+                - generic [ref=e1276]: General
+            - generic [ref=e1277]: Disabled
+          - article [ref=e1278]:
+            - generic "Select quieter" [ref=e1279] [cursor=pointer]:
+              - checkbox "Select quieter" [ref=e1280]
+            - button "quieter Local Tone down overly bold or visually aggressive designs. Reduces intensity while maintaining design quality and impact. General General" [ref=e1281] [cursor=pointer]:
+              - generic [ref=e1282]:
+                - strong [ref=e1283]: quieter
+                - generic [ref=e1284]: Local
+              - generic [ref=e1285]: Tone down overly bold or visually aggressive designs. Reduces intensity while maintaining design quality and impact.
+              - generic [ref=e1286]:
+                - generic [ref=e1287]: General
+                - generic [ref=e1288]: General
+            - generic [ref=e1289]: Disabled
+          - article [ref=e1290]:
+            - generic "Select react-development" [ref=e1291] [cursor=pointer]:
+              - checkbox "Select react-development" [ref=e1292]
+            - button "react-development Local Comprehensive React development with hooks, components, state management, context, effects, and performance optimization based on official React documentation frontend Web" [ref=e1293] [cursor=pointer]:
+              - generic [ref=e1294]:
+                - strong [ref=e1295]: react-development
+                - generic [ref=e1296]: Local
+              - generic [ref=e1297]: Comprehensive React development with hooks, components, state management, context, effects, and performance optimization based on official React documentation
+              - generic [ref=e1298]:
+                - generic [ref=e1299]: frontend
+                - generic [ref=e1300]: Web
+            - generic [ref=e1301]: Disabled
+          - article [ref=e1302]:
+            - generic "Select react-expert" [ref=e1303] [cursor=pointer]:
+              - checkbox "Select react-expert" [ref=e1304]
+            - button "react-expert Local Use when building React 18+ applications in .jsx or .tsx files, Next.js App Router projects, or create-react-app setups. Creates components, implements custom hooks, debugs rendering issues, migrates class components to functional, and implements state management. Invoke for Server Components, Suspense boundaries, useActionState forms, performance optimization, or React 19 features. Web Web" [ref=e1305] [cursor=pointer]:
+              - generic [ref=e1306]:
+                - strong [ref=e1307]: react-expert
+                - generic [ref=e1308]: Local
+              - generic [ref=e1309]: Use when building React 18+ applications in .jsx or .tsx files, Next.js App Router projects, or create-react-app setups. Creates components, implements custom hooks, debugs rendering issues, migrates class components to functional, and implements state management. Invoke for Server Components, Suspense boundaries, useActionState forms, performance optimization, or React 19 features.
+              - generic [ref=e1310]:
+                - generic [ref=e1311]: Web
+                - generic [ref=e1312]: Web
+            - generic [ref=e1313]: Disabled
+          - article [ref=e1314]:
+            - generic "Select react-patterns" [ref=e1315] [cursor=pointer]:
+              - checkbox "Select react-patterns" [ref=e1316]
+            - button "react-patterns Local Modern React development with hooks, component patterns, state management, and performance optimization for building scalable applications Web Web" [ref=e1317] [cursor=pointer]:
+              - generic [ref=e1318]:
+                - strong [ref=e1319]: react-patterns
+                - generic [ref=e1320]: Local
+              - generic [ref=e1321]: Modern React development with hooks, component patterns, state management, and performance optimization for building scalable applications
+              - generic [ref=e1322]:
+                - generic [ref=e1323]: Web
+                - generic [ref=e1324]: Web
+            - generic [ref=e1325]: Disabled
+          - article [ref=e1326]:
+            - generic "Select redis-state-management" [ref=e1327] [cursor=pointer]:
+              - checkbox "Select redis-state-management" [ref=e1328]
+            - button "redis-state-management Local Comprehensive guide for Redis state management including caching strategies, session management, pub/sub patterns, distributed locks, and data structures Backend Backend" [ref=e1329] [cursor=pointer]:
+              - generic [ref=e1330]:
+                - strong [ref=e1331]: redis-state-management
+                - generic [ref=e1332]: Local
+              - generic [ref=e1333]: Comprehensive guide for Redis state management including caching strategies, session management, pub/sub patterns, distributed locks, and data structures
+              - generic [ref=e1334]:
+                - generic [ref=e1335]: Backend
+                - generic [ref=e1336]: Backend
+            - generic [ref=e1337]: Disabled
+          - article [ref=e1338]:
+            - generic "Select responsive-design" [ref=e1339] [cursor=pointer]:
+              - checkbox "Select responsive-design" [ref=e1340]
+            - button "responsive-design Local Mobile-first responsive design covering fluid layouts, media queries, flexbox, grid, viewport units, and responsive images frontend General" [ref=e1341] [cursor=pointer]:
+              - generic [ref=e1342]:
+                - strong [ref=e1343]: responsive-design
+                - generic [ref=e1344]: Local
+              - generic [ref=e1345]: Mobile-first responsive design covering fluid layouts, media queries, flexbox, grid, viewport units, and responsive images
+              - generic [ref=e1346]:
+                - generic [ref=e1347]: frontend
+                - generic [ref=e1348]: General
+            - generic [ref=e1349]: Disabled
+          - article [ref=e1350]:
+            - generic "Select rest-api-design-patterns" [ref=e1351] [cursor=pointer]:
+              - checkbox "Select rest-api-design-patterns" [ref=e1352]
+            - button "rest-api-design-patterns Local Comprehensive guide for designing RESTful APIs including resource modeling, versioning strategies, HATEOAS, pagination, filtering, and HTTP best practices Backend Backend" [ref=e1353] [cursor=pointer]:
+              - generic [ref=e1354]:
+                - strong [ref=e1355]: rest-api-design-patterns
+                - generic [ref=e1356]: Local
+              - generic [ref=e1357]: Comprehensive guide for designing RESTful APIs including resource modeling, versioning strategies, HATEOAS, pagination, filtering, and HTTP best practices
+              - generic [ref=e1358]:
+                - generic [ref=e1359]: Backend
+                - generic [ref=e1360]: Backend
+            - generic [ref=e1361]: Disabled
+          - article [ref=e1362]:
+            - generic "Select rust-systems-programming" [ref=e1363] [cursor=pointer]:
+              - checkbox "Select rust-systems-programming" [ref=e1364]
+            - button "rust-systems-programming Local Complete guide for Rust systems programming including ownership, borrowing, concurrency, async programming, unsafe code, and performance optimization General General" [ref=e1365] [cursor=pointer]:
+              - generic [ref=e1366]:
+                - strong [ref=e1367]: rust-systems-programming
+                - generic [ref=e1368]: Local
+              - generic [ref=e1369]: Complete guide for Rust systems programming including ownership, borrowing, concurrency, async programming, unsafe code, and performance optimization
+              - generic [ref=e1370]:
+                - generic [ref=e1371]: General
+                - generic [ref=e1372]: General
+            - generic [ref=e1373]: Disabled
+          - article [ref=e1374]:
+            - generic "Select security-reviewer" [ref=e1375] [cursor=pointer]:
+              - checkbox "Select security-reviewer" [ref=e1376]
+            - button "security-reviewer Local Identifies security vulnerabilities, generates structured audit reports with severity ratings, and provides actionable remediation guidance. Use when conducting security audits, reviewing code for vulnerabilities, or analyzing infrastructure security. Invoke for SAST scans, penetration testing, DevSecOps practices, cloud security reviews, dependency audits, secrets scanning, or compliance checks. Produces vulnerability reports, prioritized recommendations, and compliance checklists. General General" [ref=e1377] [cursor=pointer]:
+              - generic [ref=e1378]:
+                - strong [ref=e1379]: security-reviewer
+                - generic [ref=e1380]: Local
+              - generic [ref=e1381]: Identifies security vulnerabilities, generates structured audit reports with severity ratings, and provides actionable remediation guidance. Use when conducting security audits, reviewing code for vulnerabilities, or analyzing infrastructure security. Invoke for SAST scans, penetration testing, DevSecOps practices, cloud security reviews, dependency audits, secrets scanning, or compliance checks. Produces vulnerability reports, prioritized recommendations, and compliance checklists.
+              - generic [ref=e1382]:
+                - generic [ref=e1383]: General
+                - generic [ref=e1384]: General
+            - generic [ref=e1385]: Disabled
+          - article [ref=e1386]:
+            - generic "Select shader-dev" [ref=e1387] [cursor=pointer]:
+              - checkbox "Select shader-dev" [ref=e1388]
+            - button "shader-dev Local Comprehensive GLSL shader techniques for creating stunning visual effects — ray marching, SDF modeling, fluid simulation, particle systems, procedural generation, lighting, post-processing, and more. Media Media" [ref=e1389] [cursor=pointer]:
+              - generic [ref=e1390]:
+                - strong [ref=e1391]: shader-dev
+                - generic [ref=e1392]: Local
+              - generic [ref=e1393]: Comprehensive GLSL shader techniques for creating stunning visual effects — ray marching, SDF modeling, fluid simulation, particle systems, procedural generation, lighting, post-processing, and more.
+              - generic [ref=e1394]:
+                - generic [ref=e1395]: Media
+                - generic [ref=e1396]: Media
+            - generic [ref=e1397]: Disabled
+          - article [ref=e1398]:
+            - generic "Select shell-testing-framework" [ref=e1399] [cursor=pointer]:
+              - checkbox "Select shell-testing-framework" [ref=e1400]
+            - button "shell-testing-framework Local Shell script testing expertise using bash test framework patterns from unix-goto, covering test structure (arrange-act-assert), 4 test categories, assertion patterns, 100% coverage requirements, and performance testing General General" [ref=e1401] [cursor=pointer]:
+              - generic [ref=e1402]:
+                - strong [ref=e1403]: shell-testing-framework
+                - generic [ref=e1404]: Local
+              - generic [ref=e1405]: Shell script testing expertise using bash test framework patterns from unix-goto, covering test structure (arrange-act-assert), 4 test categories, assertion patterns, 100% coverage requirements, and performance testing
+              - generic [ref=e1406]:
+                - generic [ref=e1407]: General
+                - generic [ref=e1408]: General
+            - generic [ref=e1409]: Disabled
+          - article [ref=e1410]:
+            - generic "Select skill-creator" [ref=e1411] [cursor=pointer]:
+              - checkbox "Select skill-creator" [ref=e1412]
+            - button "skill-creator Local Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations. General General" [ref=e1413] [cursor=pointer]:
+              - generic [ref=e1414]:
+                - strong [ref=e1415]: skill-creator
+                - generic [ref=e1416]: Local
+              - generic [ref=e1417]: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.
+              - generic [ref=e1418]:
+                - generic [ref=e1419]: General
+                - generic [ref=e1420]: General
+            - generic [ref=e1421]: Disabled
+          - article [ref=e1422]:
+            - generic "Select skill-installer" [ref=e1423] [cursor=pointer]:
+              - checkbox "Select skill-installer" [ref=e1424]
+            - button "skill-installer Local Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). General General" [ref=e1425] [cursor=pointer]:
+              - generic [ref=e1426]:
+                - strong [ref=e1427]: skill-installer
+                - generic [ref=e1428]: Local
+              - generic [ref=e1429]: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos).
+              - generic [ref=e1430]:
+                - generic [ref=e1431]: General
+                - generic [ref=e1432]: General
+            - generic [ref=e1433]: Disabled
+          - article [ref=e1434]:
+            - generic "Select spring-boot-development" [ref=e1435] [cursor=pointer]:
+              - checkbox "Select spring-boot-development" [ref=e1436]
+            - button "spring-boot-development Local Comprehensive Spring Boot development skill covering auto-configuration, dependency injection, REST APIs, Spring Data, security, and enterprise Java applications backend General" [ref=e1437] [cursor=pointer]:
+              - generic [ref=e1438]:
+                - strong [ref=e1439]: spring-boot-development
+                - generic [ref=e1440]: Local
+              - generic [ref=e1441]: Comprehensive Spring Boot development skill covering auto-configuration, dependency injection, REST APIs, Spring Data, security, and enterprise Java applications
+              - generic [ref=e1442]:
+                - generic [ref=e1443]: backend
+                - generic [ref=e1444]: General
+            - generic [ref=e1445]: Disabled
+          - article [ref=e1446]:
+            - generic "Select SQLAlchemy ORM Expert" [ref=e1447] [cursor=pointer]:
+              - checkbox "Select SQLAlchemy ORM Expert" [ref=e1448]
+            - button "SQLAlchemy ORM Expert Customer Support Tech Enablement Team Comprehensive SQLAlchemy skill for customer support tech enablement, covering ORM patterns, session management, query optimization, async operations, and PostgreSQL integration General General" [ref=e1449] [cursor=pointer]:
+              - generic [ref=e1450]:
+                - strong [ref=e1451]: SQLAlchemy ORM Expert
+                - generic [ref=e1452]: Customer Support Tech Enablement Team
+              - generic [ref=e1453]: Comprehensive SQLAlchemy skill for customer support tech enablement, covering ORM patterns, session management, query optimization, async operations, and PostgreSQL integration
+              - generic [ref=e1454]:
+                - generic [ref=e1455]: General
+                - generic [ref=e1456]: General
+            - generic [ref=e1457]: Disabled
+          - article [ref=e1458]:
+            - generic "Select supabase-postgres-best-practices" [ref=e1459] [cursor=pointer]:
+              - checkbox "Select supabase-postgres-best-practices" [ref=e1460]
+            - button "supabase-postgres-best-practices Local Postgres performance optimization and best practices from Supabase. Use this skill when writing, reviewing, or optimizing Postgres queries, schema designs, or database configurations. Backend Backend" [ref=e1461] [cursor=pointer]:
+              - generic [ref=e1462]:
+                - strong [ref=e1463]: supabase-postgres-best-practices
+                - generic [ref=e1464]: Local
+              - generic [ref=e1465]: Postgres performance optimization and best practices from Supabase. Use this skill when writing, reviewing, or optimizing Postgres queries, schema designs, or database configurations.
+              - generic [ref=e1466]:
+                - generic [ref=e1467]: Backend
+                - generic [ref=e1468]: Backend
+            - generic [ref=e1469]: Disabled
+          - article [ref=e1470]:
+            - generic "Select svelte-development" [ref=e1471] [cursor=pointer]:
+              - checkbox "Select svelte-development" [ref=e1472]
+            - button "svelte-development Local Comprehensive Svelte development skill covering reactivity runes, components, stores, lifecycle, transitions, and modern Svelte 5 patterns frontend Web" [ref=e1473] [cursor=pointer]:
+              - generic [ref=e1474]:
+                - strong [ref=e1475]: svelte-development
+                - generic [ref=e1476]: Local
+              - generic [ref=e1477]: Comprehensive Svelte development skill covering reactivity runes, components, stores, lifecycle, transitions, and modern Svelte 5 patterns
+              - generic [ref=e1478]:
+                - generic [ref=e1479]: frontend
+                - generic [ref=e1480]: Web
+            - generic [ref=e1481]: Disabled
+          - article [ref=e1482]:
+            - generic "Select swiftui-pro" [ref=e1483] [cursor=pointer]:
+              - checkbox "Select swiftui-pro" [ref=e1484]
+            - button "swiftui-pro Local Comprehensively reviews SwiftUI code for best practices on modern APIs, maintainability, and performance. Use when reading, writing, or reviewing SwiftUI projects. iOS iOS" [ref=e1485] [cursor=pointer]:
+              - generic [ref=e1486]:
+                - strong [ref=e1487]: swiftui-pro
+                - generic [ref=e1488]: Local
+              - generic [ref=e1489]: Comprehensively reviews SwiftUI code for best practices on modern APIs, maintainability, and performance. Use when reading, writing, or reviewing SwiftUI projects.
+              - generic [ref=e1490]:
+                - generic [ref=e1491]: iOS
+                - generic [ref=e1492]: iOS
+            - generic [ref=e1493]: Disabled
+          - article [ref=e1494]:
+            - generic "Select tailwind-css" [ref=e1495] [cursor=pointer]:
+              - checkbox "Select tailwind-css" [ref=e1496]
+            - button "tailwind-css Local Utility-first CSS framework for rapid UI development with responsive design, component patterns, and production optimization. Master core utilities, dark mode, customization, and modern component composition for building beautiful, performant user interfaces. Web Web" [ref=e1497] [cursor=pointer]:
+              - generic [ref=e1498]:
+                - strong [ref=e1499]: tailwind-css
+                - generic [ref=e1500]: Local
+              - generic [ref=e1501]: Utility-first CSS framework for rapid UI development with responsive design, component patterns, and production optimization. Master core utilities, dark mode, customization, and modern component composition for building beautiful, performant user interfaces.
+              - generic [ref=e1502]:
+                - generic [ref=e1503]: Web
+                - generic [ref=e1504]: Web
+            - generic [ref=e1505]: Disabled
+          - article [ref=e1506]:
+            - generic "Select teach-impeccable" [ref=e1507] [cursor=pointer]:
+              - checkbox "Select teach-impeccable" [ref=e1508]
+            - button "teach-impeccable Local One-time setup that gathers design context for your project and saves it to your AI config file. Run once to establish persistent design guidelines. General General" [ref=e1509] [cursor=pointer]:
+              - generic [ref=e1510]:
+                - strong [ref=e1511]: teach-impeccable
+                - generic [ref=e1512]: Local
+              - generic [ref=e1513]: One-time setup that gathers design context for your project and saves it to your AI config file. Run once to establish persistent design guidelines.
+              - generic [ref=e1514]:
+                - generic [ref=e1515]: General
+                - generic [ref=e1516]: General
+            - generic [ref=e1517]: Disabled
+          - article [ref=e1518]:
+            - generic "Select Terraform Infrastructure as Code" [ref=e1519] [cursor=pointer]:
+              - checkbox "Select Terraform Infrastructure as Code" [ref=e1520]
+            - 'button "Terraform Infrastructure as Code Local Automate Terraform Cloud/Enterprise operations: create workspaces, trigger runs, manage variables, and search registries for infrastructure-as-code projects. Infra Infra" [ref=e1521] [cursor=pointer]':
+              - generic [ref=e1522]:
+                - strong [ref=e1523]: Terraform Infrastructure as Code
+                - generic [ref=e1524]: Local
+              - generic [ref=e1525]: "Automate Terraform Cloud/Enterprise operations: create workspaces, trigger runs, manage variables, and search registries for infrastructure-as-code projects."
+              - generic [ref=e1526]:
+                - generic [ref=e1527]: Infra
+                - generic [ref=e1528]: Infra
+            - generic [ref=e1529]: Disabled
+          - article [ref=e1530]:
+            - generic "Select terraform-infrastructure" [ref=e1531] [cursor=pointer]:
+              - checkbox "Select terraform-infrastructure" [ref=e1532]
+            - button "terraform-infrastructure Local Comprehensive Terraform infrastructure-as-code skill covering providers, resources, modules, state management, and enterprise patterns for multi-cloud infrastructure Infra Infra" [ref=e1533] [cursor=pointer]:
+              - generic [ref=e1534]:
+                - strong [ref=e1535]: terraform-infrastructure
+                - generic [ref=e1536]: Local
+              - generic [ref=e1537]: Comprehensive Terraform infrastructure-as-code skill covering providers, resources, modules, state management, and enterprise patterns for multi-cloud infrastructure
+              - generic [ref=e1538]:
+                - generic [ref=e1539]: Infra
+                - generic [ref=e1540]: Infra
+            - generic [ref=e1541]: Disabled
+          - article [ref=e1542]:
+            - generic "Select terraform-infrastructure-as-code" [ref=e1543] [cursor=pointer]:
+              - checkbox "Select terraform-infrastructure-as-code" [ref=e1544]
+            - button "terraform-infrastructure-as-code Local Comprehensive Terraform Infrastructure as Code skill covering resources, modules, state management, workspaces, providers, and advanced patterns for cloud-agnostic infrastructure deployment Infrastructure Infra" [ref=e1545] [cursor=pointer]:
+              - generic [ref=e1546]:
+                - strong [ref=e1547]: terraform-infrastructure-as-code
+                - generic [ref=e1548]: Local
+              - generic [ref=e1549]: Comprehensive Terraform Infrastructure as Code skill covering resources, modules, state management, workspaces, providers, and advanced patterns for cloud-agnostic infrastructure deployment
+              - generic [ref=e1550]:
+                - generic [ref=e1551]: Infrastructure
+                - generic [ref=e1552]: Infra
+            - generic [ref=e1553]: Disabled
+          - article [ref=e1554]:
+            - generic "Select terraform-stacks" [ref=e1555] [cursor=pointer]:
+              - checkbox "Select terraform-stacks" [ref=e1556]
+            - button "terraform-stacks Local Comprehensive guide for working with HashiCorp Terraform Stacks. Use when creating, modifying, or validating Terraform Stack configurations (.tfcomponent.hcl, .tfdeploy.hcl files), working with stack components and deployments from local modules, or private registry, or private registry sources, managing multi-region or multi-environment infrastructure, or troubleshooting Terraform Stacks syntax and structure. Infra Infra" [ref=e1557] [cursor=pointer]:
+              - generic [ref=e1558]:
+                - strong [ref=e1559]: terraform-stacks
+                - generic [ref=e1560]: Local
+              - generic [ref=e1561]: Comprehensive guide for working with HashiCorp Terraform Stacks. Use when creating, modifying, or validating Terraform Stack configurations (.tfcomponent.hcl, .tfdeploy.hcl files), working with stack components and deployments from local modules, or private registry, or private registry sources, managing multi-region or multi-environment infrastructure, or troubleshooting Terraform Stacks syntax and structure.
+              - generic [ref=e1562]:
+                - generic [ref=e1563]: Infra
+                - generic [ref=e1564]: Infra
+            - generic [ref=e1565]: Disabled
+          - article [ref=e1566]:
+            - generic "Select terraform-style-guide" [ref=e1567] [cursor=pointer]:
+              - checkbox "Select terraform-style-guide" [ref=e1568]
+            - button "terraform-style-guide Local Comprehensive guide for Terraform code style, formatting, and best practices based on HashiCorp's official standards and Azure Verified Modules (AVM) requirements. Use when writing or reviewing Terraform configurations, formatting code, organizing files and modules, establishing team conventions, managing version control, ensuring code quality and consistency across infrastructure projects, or developing Azure Verified Modules. Infra Infra" [ref=e1569] [cursor=pointer]:
+              - generic [ref=e1570]:
+                - strong [ref=e1571]: terraform-style-guide
+                - generic [ref=e1572]: Local
+              - generic [ref=e1573]: Comprehensive guide for Terraform code style, formatting, and best practices based on HashiCorp's official standards and Azure Verified Modules (AVM) requirements. Use when writing or reviewing Terraform configurations, formatting code, organizing files and modules, establishing team conventions, managing version control, ensuring code quality and consistency across infrastructure projects, or developing Azure Verified Modules.
+              - generic [ref=e1574]:
+                - generic [ref=e1575]: Infra
+                - generic [ref=e1576]: Infra
+            - generic [ref=e1577]: Disabled
+          - article [ref=e1578]:
+            - generic "Select terraform-test" [ref=e1579] [cursor=pointer]:
+              - checkbox "Select terraform-test" [ref=e1580]
+            - button "terraform-test Local Comprehensive guide for writing and running Terraform tests. Use when creating test files (.tftest.hcl), writing test scenarios with run blocks, validating infrastructure behavior with assertions, mocking providers and data sources, testing module outputs and resource configurations, or troubleshooting Terraform test syntax and execution. Terraform test is typically used when validating Terraform modules. Infra Infra" [ref=e1581] [cursor=pointer]:
+              - generic [ref=e1582]:
+                - strong [ref=e1583]: terraform-test
+                - generic [ref=e1584]: Local
+              - generic [ref=e1585]: Comprehensive guide for writing and running Terraform tests. Use when creating test files (.tftest.hcl), writing test scenarios with run blocks, validating infrastructure behavior with assertions, mocking providers and data sources, testing module outputs and resource configurations, or troubleshooting Terraform test syntax and execution. Terraform test is typically used when validating Terraform modules.
+              - generic [ref=e1586]:
+                - generic [ref=e1587]: Infra
+                - generic [ref=e1588]: Infra
+            - generic [ref=e1589]: Disabled
+          - article [ref=e1590]:
+            - generic "Select threejs-animation" [ref=e1591] [cursor=pointer]:
+              - checkbox "Select threejs-animation" [ref=e1592]
+            - button "threejs-animation Local Three.js animation - keyframe animation, skeletal animation, morph targets, animation mixing. Use when animating objects, playing GLTF animations, creating procedural motion, or blending animations. General General" [ref=e1593] [cursor=pointer]:
+              - generic [ref=e1594]:
+                - strong [ref=e1595]: threejs-animation
+                - generic [ref=e1596]: Local
+              - generic [ref=e1597]: Three.js animation - keyframe animation, skeletal animation, morph targets, animation mixing. Use when animating objects, playing GLTF animations, creating procedural motion, or blending animations.
+              - generic [ref=e1598]:
+                - generic [ref=e1599]: General
+                - generic [ref=e1600]: General
+            - generic [ref=e1601]: Disabled
+          - article [ref=e1602]:
+            - generic "Select threejs-fundamentals" [ref=e1603] [cursor=pointer]:
+              - checkbox "Select threejs-fundamentals" [ref=e1604]
+            - button "threejs-fundamentals Local Three.js scene setup, cameras, renderer, Object3D hierarchy, coordinate systems. Use when setting up 3D scenes, creating cameras, configuring renderers, managing object hierarchies, or working with transforms. General General" [ref=e1605] [cursor=pointer]:
+              - generic [ref=e1606]:
+                - strong [ref=e1607]: threejs-fundamentals
+                - generic [ref=e1608]: Local
+              - generic [ref=e1609]: Three.js scene setup, cameras, renderer, Object3D hierarchy, coordinate systems. Use when setting up 3D scenes, creating cameras, configuring renderers, managing object hierarchies, or working with transforms.
+              - generic [ref=e1610]:
+                - generic [ref=e1611]: General
+                - generic [ref=e1612]: General
+            - generic [ref=e1613]: Disabled
+          - article [ref=e1614]:
+            - generic "Select threejs-geometry" [ref=e1615] [cursor=pointer]:
+              - checkbox "Select threejs-geometry" [ref=e1616]
+            - button "threejs-geometry Local Three.js geometry creation - built-in shapes, BufferGeometry, custom geometry, instancing. Use when creating 3D shapes, working with vertices, building custom meshes, or optimizing with instanced rendering. General General" [ref=e1617] [cursor=pointer]:
+              - generic [ref=e1618]:
+                - strong [ref=e1619]: threejs-geometry
+                - generic [ref=e1620]: Local
+              - generic [ref=e1621]: Three.js geometry creation - built-in shapes, BufferGeometry, custom geometry, instancing. Use when creating 3D shapes, working with vertices, building custom meshes, or optimizing with instanced rendering.
+              - generic [ref=e1622]:
+                - generic [ref=e1623]: General
+                - generic [ref=e1624]: General
+            - generic [ref=e1625]: Disabled
+          - article [ref=e1626]:
+            - generic "Select threejs-interaction" [ref=e1627] [cursor=pointer]:
+              - checkbox "Select threejs-interaction" [ref=e1628]
+            - button "threejs-interaction Local Three.js interaction - raycasting, controls, mouse/touch input, object selection. Use when handling user input, implementing click detection, adding camera controls, or creating interactive 3D experiences. General General" [ref=e1629] [cursor=pointer]:
+              - generic [ref=e1630]:
+                - strong [ref=e1631]: threejs-interaction
+                - generic [ref=e1632]: Local
+              - generic [ref=e1633]: Three.js interaction - raycasting, controls, mouse/touch input, object selection. Use when handling user input, implementing click detection, adding camera controls, or creating interactive 3D experiences.
+              - generic [ref=e1634]:
+                - generic [ref=e1635]: General
+                - generic [ref=e1636]: General
+            - generic [ref=e1637]: Disabled
+          - article [ref=e1638]:
+            - generic "Select threejs-lighting" [ref=e1639] [cursor=pointer]:
+              - checkbox "Select threejs-lighting" [ref=e1640]
+            - button "threejs-lighting Local Three.js lighting - light types, shadows, environment lighting. Use when adding lights, configuring shadows, setting up IBL, or optimizing lighting performance. General General" [ref=e1641] [cursor=pointer]:
+              - generic [ref=e1642]:
+                - strong [ref=e1643]: threejs-lighting
+                - generic [ref=e1644]: Local
+              - generic [ref=e1645]: Three.js lighting - light types, shadows, environment lighting. Use when adding lights, configuring shadows, setting up IBL, or optimizing lighting performance.
+              - generic [ref=e1646]:
+                - generic [ref=e1647]: General
+                - generic [ref=e1648]: General
+            - generic [ref=e1649]: Disabled
+          - article [ref=e1650]:
+            - generic "Select threejs-loaders" [ref=e1651] [cursor=pointer]:
+              - checkbox "Select threejs-loaders" [ref=e1652]
+            - button "threejs-loaders Local Three.js asset loading - GLTF, textures, images, models, async patterns. Use when loading 3D models, textures, HDR environments, or managing loading progress. General General" [ref=e1653] [cursor=pointer]:
+              - generic [ref=e1654]:
+                - strong [ref=e1655]: threejs-loaders
+                - generic [ref=e1656]: Local
+              - generic [ref=e1657]: Three.js asset loading - GLTF, textures, images, models, async patterns. Use when loading 3D models, textures, HDR environments, or managing loading progress.
+              - generic [ref=e1658]:
+                - generic [ref=e1659]: General
+                - generic [ref=e1660]: General
+            - generic [ref=e1661]: Disabled
+          - article [ref=e1662]:
+            - generic "Select threejs-materials" [ref=e1663] [cursor=pointer]:
+              - checkbox "Select threejs-materials" [ref=e1664]
+            - button "threejs-materials Local Three.js materials - PBR, basic, phong, shader materials, material properties. Use when styling meshes, working with textures, creating custom shaders, or optimizing material performance. Media Media" [ref=e1665] [cursor=pointer]:
+              - generic [ref=e1666]:
+                - strong [ref=e1667]: threejs-materials
+                - generic [ref=e1668]: Local
+              - generic [ref=e1669]: Three.js materials - PBR, basic, phong, shader materials, material properties. Use when styling meshes, working with textures, creating custom shaders, or optimizing material performance.
+              - generic [ref=e1670]:
+                - generic [ref=e1671]: Media
+                - generic [ref=e1672]: Media
+            - generic [ref=e1673]: Disabled
+          - article [ref=e1674]:
+            - generic "Select threejs-postprocessing" [ref=e1675] [cursor=pointer]:
+              - checkbox "Select threejs-postprocessing" [ref=e1676]
+            - button "threejs-postprocessing Local Three.js post-processing - EffectComposer, bloom, DOF, screen effects. Use when adding visual effects, color grading, blur, glow, or creating custom screen-space shaders. General General" [ref=e1677] [cursor=pointer]:
+              - generic [ref=e1678]:
+                - strong [ref=e1679]: threejs-postprocessing
+                - generic [ref=e1680]: Local
+              - generic [ref=e1681]: Three.js post-processing - EffectComposer, bloom, DOF, screen effects. Use when adding visual effects, color grading, blur, glow, or creating custom screen-space shaders.
+              - generic [ref=e1682]:
+                - generic [ref=e1683]: General
+                - generic [ref=e1684]: General
+            - generic [ref=e1685]: Disabled
+          - article [ref=e1686]:
+            - generic "Select threejs-shaders" [ref=e1687] [cursor=pointer]:
+              - checkbox "Select threejs-shaders" [ref=e1688]
+            - button "threejs-shaders Local Three.js shaders - GLSL, ShaderMaterial, uniforms, custom effects. Use when creating custom visual effects, modifying vertices, writing fragment shaders, or extending built-in materials. General General" [ref=e1689] [cursor=pointer]:
+              - generic [ref=e1690]:
+                - strong [ref=e1691]: threejs-shaders
+                - generic [ref=e1692]: Local
+              - generic [ref=e1693]: Three.js shaders - GLSL, ShaderMaterial, uniforms, custom effects. Use when creating custom visual effects, modifying vertices, writing fragment shaders, or extending built-in materials.
+              - generic [ref=e1694]:
+                - generic [ref=e1695]: General
+                - generic [ref=e1696]: General
+            - generic [ref=e1697]: Disabled
+          - article [ref=e1698]:
+            - generic "Select threejs-textures" [ref=e1699] [cursor=pointer]:
+              - checkbox "Select threejs-textures" [ref=e1700]
+            - button "threejs-textures Local Three.js textures - texture types, UV mapping, environment maps, texture settings. Use when working with images, UV coordinates, cubemaps, HDR environments, or texture optimization. General General" [ref=e1701] [cursor=pointer]:
+              - generic [ref=e1702]:
+                - strong [ref=e1703]: threejs-textures
+                - generic [ref=e1704]: Local
+              - generic [ref=e1705]: Three.js textures - texture types, UV mapping, environment maps, texture settings. Use when working with images, UV coordinates, cubemaps, HDR environments, or texture optimization.
+              - generic [ref=e1706]:
+                - generic [ref=e1707]: General
+                - generic [ref=e1708]: General
+            - generic [ref=e1709]: Disabled
+          - article [ref=e1710]:
+            - generic "Select typescript-pro" [ref=e1711] [cursor=pointer]:
+              - checkbox "Select typescript-pro" [ref=e1712]
+            - button "typescript-pro Local Implements advanced TypeScript type systems, creates custom type guards, utility types, and branded types, and configures tRPC for end-to-end type safety. Use when building TypeScript applications requiring advanced generics, conditional or mapped types, discriminated unions, monorepo setup, or full-stack type safety with tRPC. General General" [ref=e1713] [cursor=pointer]:
+              - generic [ref=e1714]:
+                - strong [ref=e1715]: typescript-pro
+                - generic [ref=e1716]: Local
+              - generic [ref=e1717]: Implements advanced TypeScript type systems, creates custom type guards, utility types, and branded types, and configures tRPC for end-to-end type safety. Use when building TypeScript applications requiring advanced generics, conditional or mapped types, discriminated unions, monorepo setup, or full-stack type safety with tRPC.
+              - generic [ref=e1718]:
+                - generic [ref=e1719]: General
+                - generic [ref=e1720]: General
+            - generic [ref=e1721]: Disabled
+          - article [ref=e1722]:
+            - generic "Select ui-design-patterns" [ref=e1723] [cursor=pointer]:
+              - checkbox "Select ui-design-patterns" [ref=e1724]
+            - button "ui-design-patterns Local Common interface patterns, navigation patterns, form patterns, data display patterns, feedback patterns, and accessibility considerations design General" [ref=e1725] [cursor=pointer]:
+              - generic [ref=e1726]:
+                - strong [ref=e1727]: ui-design-patterns
+                - generic [ref=e1728]: Local
+              - generic [ref=e1729]: Common interface patterns, navigation patterns, form patterns, data display patterns, feedback patterns, and accessibility considerations
+              - generic [ref=e1730]:
+                - generic [ref=e1731]: design
+                - generic [ref=e1732]: General
+            - generic [ref=e1733]: Disabled
+          - article [ref=e1734]:
+            - generic "Select unix-goto-development" [ref=e1735] [cursor=pointer]:
+              - checkbox "Select unix-goto-development" [ref=e1736]
+            - button "unix-goto-development Local Expert guidance for unix-goto shell navigation tool development, including architecture, 9-step feature workflow, testing (100% coverage), performance optimization (<100ms targets), and Linear issue integration General General" [ref=e1737] [cursor=pointer]:
+              - generic [ref=e1738]:
+                - strong [ref=e1739]: unix-goto-development
+                - generic [ref=e1740]: Local
+              - generic [ref=e1741]: Expert guidance for unix-goto shell navigation tool development, including architecture, 9-step feature workflow, testing (100% coverage), performance optimization (<100ms targets), and Linear issue integration
+              - generic [ref=e1742]:
+                - generic [ref=e1743]: General
+                - generic [ref=e1744]: General
+            - generic [ref=e1745]: Disabled
+          - article [ref=e1746]:
+            - generic "Select ux-principles" [ref=e1747] [cursor=pointer]:
+              - checkbox "Select ux-principles" [ref=e1748]
+            - button "ux-principles Local User research, usability heuristics, user psychology, accessibility, inclusive design, user testing, and UX metrics design General" [ref=e1749] [cursor=pointer]:
+              - generic [ref=e1750]:
+                - strong [ref=e1751]: ux-principles
+                - generic [ref=e1752]: Local
+              - generic [ref=e1753]: User research, usability heuristics, user psychology, accessibility, inclusive design, user testing, and UX metrics
+              - generic [ref=e1754]:
+                - generic [ref=e1755]: design
+                - generic [ref=e1756]: General
+            - generic [ref=e1757]: Disabled
+          - article [ref=e1758]:
+            - generic "Select vector-database-management" [ref=e1759] [cursor=pointer]:
+              - checkbox "Select vector-database-management" [ref=e1760]
+            - button "vector-database-management Local Comprehensive guide for managing vector databases including Pinecone, Weaviate, and Chroma for semantic search, RAG systems, and similarity-based applications data-engineering Backend" [ref=e1761] [cursor=pointer]:
+              - generic [ref=e1762]:
+                - strong [ref=e1763]: vector-database-management
+                - generic [ref=e1764]: Local
+              - generic [ref=e1765]: Comprehensive guide for managing vector databases including Pinecone, Weaviate, and Chroma for semantic search, RAG systems, and similarity-based applications
+              - generic [ref=e1766]:
+                - generic [ref=e1767]: data-engineering
+                - generic [ref=e1768]: Backend
+            - generic [ref=e1769]: Disabled
+          - article [ref=e1770]:
+            - generic "Select vuejs-development" [ref=e1771] [cursor=pointer]:
+              - checkbox "Select vuejs-development" [ref=e1772]
+            - button "vuejs-development Local Comprehensive Vue.js development skill covering Composition API, reactivity system, components, directives, and modern Vue 3 patterns based on official Vue.js documentation frontend Web Backend" [ref=e1773] [cursor=pointer]:
+              - generic [ref=e1774]:
+                - strong [ref=e1775]: vuejs-development
+                - generic [ref=e1776]: Local
+              - generic [ref=e1777]: Comprehensive Vue.js development skill covering Composition API, reactivity system, components, directives, and modern Vue 3 patterns based on official Vue.js documentation
+              - generic [ref=e1778]:
+                - generic [ref=e1779]: frontend
+                - generic [ref=e1780]: Web
+                - generic [ref=e1781]: Backend
+            - generic [ref=e1782]: Disabled
+          - article [ref=e1783]:
+            - generic "Select websocket-engineer" [ref=e1784] [cursor=pointer]:
+              - checkbox "Select websocket-engineer" [ref=e1785]
+            - button "websocket-engineer Local Use when building real-time communication systems with WebSockets or Socket.IO. Invoke for bidirectional messaging, horizontal scaling with Redis, presence tracking, room management. Backend Backend" [ref=e1786] [cursor=pointer]:
+              - generic [ref=e1787]:
+                - strong [ref=e1788]: websocket-engineer
+                - generic [ref=e1789]: Local
+              - generic [ref=e1790]: Use when building real-time communication systems with WebSockets or Socket.IO. Invoke for bidirectional messaging, horizontal scaling with Redis, presence tracking, room management.
+              - generic [ref=e1791]:
+                - generic [ref=e1792]: Backend
+                - generic [ref=e1793]: Backend
+            - generic [ref=e1794]: Disabled
+          - article [ref=e1795]:
+            - generic "Select wireframing" [ref=e1796] [cursor=pointer]:
+              - checkbox "Select wireframing" [ref=e1797]
+            - button "wireframing Local Low/high fidelity wireframes, user flows, information architecture, prototyping techniques, and design iteration processes design General" [ref=e1798] [cursor=pointer]:
+              - generic [ref=e1799]:
+                - strong [ref=e1800]: wireframing
+                - generic [ref=e1801]: Local
+              - generic [ref=e1802]: Low/high fidelity wireframes, user flows, information architecture, prototyping techniques, and design iteration processes
+              - generic [ref=e1803]:
+                - generic [ref=e1804]: design
+                - generic [ref=e1805]: General
+            - generic [ref=e1806]: Disabled
+    - complementary "Skill details" [ref=e1808]:
+      - generic [ref=e1810]:
+        - generic [ref=e1811]:
+          - heading "Select a skill" [level=2] [ref=e1812]
+          - paragraph [ref=e1813]: Assignment switches and documentation open here.
+        - generic [ref=e1817]:
+          - generic [ref=e1818]:
+            - generic [ref=e1819]:
+              - paragraph [ref=e1820]: General / Local
+              - heading "adapt" [level=2] [ref=e1821]:
+                - img [ref=e1822]
+                - text: adapt
+            - button "Copy path" [ref=e1824] [cursor=pointer]
+          - paragraph [ref=e1825]: Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments.
+          - region "Agent assignment" [ref=e1826]:
+            - heading "Agent Assignment" [level=3] [ref=e1827]
+            - generic [ref=e1828]:
+              - generic [ref=e1829]:
+                - generic [ref=e1830]:
+                  - strong [ref=e1831]: Codex global
+                  - text: global
+                - button "Enable adapt in Codex global" [ref=e1832] [cursor=pointer]
+              - generic [ref=e1834]:
+                - generic [ref=e1835]:
+                  - strong [ref=e1836]: Claude global
+                  - text: global
+                - button "Enable adapt in Claude global" [ref=e1837] [cursor=pointer]
+              - generic [ref=e1839]:
+                - generic [ref=e1840]:
+                  - strong [ref=e1841]: Agents global
+                  - text: global
+                - button "Enable adapt in Agents global" [ref=e1842] [cursor=pointer]
+              - generic [ref=e1844]:
+                - generic [ref=e1845]:
+                  - strong [ref=e1846]: Codex project
+                  - text: project
+                - button "Enable adapt in Codex project" [ref=e1847] [cursor=pointer]
+              - generic [ref=e1849]:
+                - generic [ref=e1850]:
+                  - strong [ref=e1851]: Claude project
+                  - text: project
+                - button "Enable adapt in Claude project" [ref=e1852] [cursor=pointer]
+              - generic [ref=e1854]:
+                - generic [ref=e1855]:
+                  - strong [ref=e1856]: Agents project
+                  - text: project
+                - button "Enable adapt in Agents project" [ref=e1857] [cursor=pointer]
+          - generic [ref=e1859]:
+            - generic [ref=e1860]:
+              - term [ref=e1861]: Vault path
+              - definition [ref=e1862]: /Users/pawelma/.agent-skill-manager/vault/adapt
+            - generic [ref=e1863]:
+              - term [ref=e1864]: Relative id
+              - definition [ref=e1865]: adapt
+          - generic [ref=e1867]:
+            - generic [ref=e1868]:
+              - tablist "Skill editor mode" [ref=e1869]:
+                - button "Write" [ref=e1870] [cursor=pointer]
+                - button "Split" [pressed] [ref=e1871] [cursor=pointer]
+                - button "Preview" [ref=e1872] [cursor=pointer]
+              - generic [ref=e1873]:
+                - text: No changes
+                - button "Save" [disabled] [ref=e1874] [cursor=pointer]
+            - generic [ref=e1875]:
+              - region "Markdown editor for adapt" [ref=e1876]:
+                - generic [ref=e1877]:
+                  - strong [ref=e1878]: Markdown
+                  - generic [ref=e1879]: adapt/SKILL.md
+                - generic [ref=e1882]:
+                  - generic [ref=e1883]:
+                    - generic [ref=e1884]:
+                      - generic [ref=e1885]: "1"
+                      - generic [ref=e1886]: "2"
+                      - generic [ref=e1887]: "3"
+                      - generic [ref=e1888]: "4"
+                      - generic [ref=e1889]: "5"
+                      - generic [ref=e1890]: "6"
+                      - generic [ref=e1891]: "7"
+                      - generic [ref=e1892]: "8"
+                      - generic [ref=e1893]: "9"
+                      - generic [ref=e1894]: "10"
+                      - generic [ref=e1895]: "11"
+                      - generic [ref=e1896]: "12"
+                      - generic [ref=e1897]: "13"
+                      - generic [ref=e1898]: "14"
+                      - generic [ref=e1899]: "15"
+                      - generic [ref=e1900]: "16"
+                      - generic [ref=e1901]: "17"
+                      - generic [ref=e1902]: "18"
+                      - generic [ref=e1903]: "19"
+                      - generic [ref=e1904]: "20"
+                      - generic [ref=e1905]: "21"
+                      - generic [ref=e1906]: "22"
+                      - generic [ref=e1907]: "23"
+                      - generic [ref=e1908]: "24"
+                      - generic [ref=e1909]: "25"
+                      - generic [ref=e1910]: "26"
+                      - generic [ref=e1911]: "27"
+                      - generic [ref=e1912]: "28"
+                      - generic [ref=e1913]: "29"
+                      - generic [ref=e1914]: "30"
+                      - generic [ref=e1915]: "31"
+                      - generic [ref=e1916]: "32"
+                      - generic [ref=e1917]: "33"
+                      - generic [ref=e1918]: "34"
+                      - generic [ref=e1919]: "35"
+                      - generic [ref=e1920]: "36"
+                    - generic [ref=e1921]:
+                      - generic [ref=e1923]: ⌄
+                      - generic [ref=e1924]: ⌄
+                      - generic [ref=e1925]: ⌄
+                      - generic [ref=e1926]: ⌄
+                      - generic [ref=e1927]: ⌄
+                      - generic [ref=e1928]: ⌄
+                      - generic [ref=e1929]: ⌄
+                  - textbox [ref=e1930]:
+                    - generic [ref=e1931]: "---"
+                    - generic [ref=e1932]: "name: adapt"
+                    - generic [ref=e1933]: "description: Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments."
+                    - generic [ref=e1934]: "user-invokable: true"
+                    - generic [ref=e1935]: "args:"
+                    - generic [ref=e1936]: "- name: target"
+                    - generic [ref=e1937]: "description: The feature or component to adapt (optional)"
+                    - generic [ref=e1938]: "required: false"
+                    - generic [ref=e1939]: "- name: context"
+                    - generic [ref=e1940]: "description: What to adapt for (mobile, tablet, desktop, print, email, etc.)"
+                    - generic [ref=e1941]: "required: false"
+                    - generic [ref=e1942]: "---"
+                    - generic [ref=e1944]: Adapt existing designs to work effectively across different contexts - different screen sizes, devices, platforms, or use cases.
+                    - generic [ref=e1946]: "## Assess Adaptation Challenge"
+                    - generic [ref=e1948]: "Understand what needs adaptation and why:"
+                    - generic [ref=e1950]: "1. **Identify the source context**:"
+                    - generic [ref=e1951]: "- What was it designed for originally? (Desktop web? Mobile app?)"
+                    - generic [ref=e1952]: "- What assumptions were made? (Large screen? Mouse input? Fast connection?)"
+                    - generic [ref=e1953]: "- What works well in current context?"
+                    - generic [ref=e1955]: "2. **Understand target context**:"
+                    - generic [ref=e1956]: "- **Device**: Mobile, tablet, desktop, TV, watch, print?"
+                    - generic [ref=e1957]: "- **Input method**: Touch, mouse, keyboard, voice, gamepad?"
+                    - generic [ref=e1958]: "- **Screen constraints**: Size, resolution, orientation?"
+                    - generic [ref=e1959]: "- **Connection**: Fast wifi, slow 3G, offline?"
+                    - generic [ref=e1960]: "- **Usage context**: On-the-go vs desk, quick glance vs focused reading?"
+                    - generic [ref=e1961]: "- **User expectations**: What do users expect on this platform?"
+                    - generic [ref=e1963]: "3. **Identify adaptation challenges**:"
+                    - generic [ref=e1964]: "- What won't fit? (Content, navigation, features)"
+                    - generic [ref=e1965]: "- What won't work? (Hover states on touch, tiny touch targets)"
+                    - generic [ref=e1966]: "- What's inappropriate? (Desktop patterns on mobile, mobile patterns on desktop)"
+              - region "Rendered preview for adapt" [ref=e1968]:
+                - generic [ref=e1969]:
+                  - strong [ref=e1970]: Preview
+                  - text: Live render
+                - generic [ref=e1971]:
+                  - separator [ref=e1972]
+                  - paragraph [ref=e1973]:
+                    - text: "name: adapt"
+                    - text: "description: Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments."
+                    - text: "user-invokable: true"
+                    - text: "args:"
+                  - list [ref=e1974]:
+                    - listitem [ref=e1975]:
+                      - text: "name: target"
+                      - text: "description: The feature or component to adapt (optional)"
+                      - text: "required: false"
+                    - listitem [ref=e1976]:
+                      - text: "name: context"
+                      - text: "description: What to adapt for (mobile, tablet, desktop, print, email, etc.)"
+                      - text: "required: false"
+                  - separator [ref=e1977]
+                  - paragraph [ref=e1978]: Adapt existing designs to work effectively across different contexts - different screen sizes, devices, platforms, or use cases.
+                  - heading "Assess Adaptation Challenge" [level=2] [ref=e1979]
+                  - paragraph [ref=e1980]: "Understand what needs adaptation and why:"
+                  - list [ref=e1981]:
+                    - listitem [ref=e1982]:
+                      - paragraph [ref=e1983]:
+                        - strong [ref=e1984]: Identify the source context
+                        - text: ":"
+                      - list [ref=e1985]:
+                        - listitem [ref=e1986]: What was it designed for originally? (Desktop web? Mobile app?)
+                        - listitem [ref=e1987]: What assumptions were made? (Large screen? Mouse input? Fast connection?)
+                        - listitem [ref=e1988]: What works well in current context?
+                    - listitem [ref=e1989]:
+                      - paragraph [ref=e1990]:
+                        - strong [ref=e1991]: Understand target context
+                        - text: ":"
+                      - list [ref=e1992]:
+                        - listitem [ref=e1993]:
+                          - strong [ref=e1994]: Device
+                          - text: ": Mobile, tablet, desktop, TV, watch, print?"
+                        - listitem [ref=e1995]:
+                          - strong [ref=e1996]: Input method
+                          - text: ": Touch, mouse, keyboard, voice, gamepad?"
+                        - listitem [ref=e1997]:
+                          - strong [ref=e1998]: Screen constraints
+                          - text: ": Size, resolution, orientation?"
+                        - listitem [ref=e1999]:
+                          - strong [ref=e2000]: Connection
+                          - text: ": Fast wifi, slow 3G, offline?"
+                        - listitem [ref=e2001]:
+                          - strong [ref=e2002]: Usage context
+                          - text: ": On-the-go vs desk, quick glance vs focused reading?"
+                        - listitem [ref=e2003]:
+                          - strong [ref=e2004]: User expectations
+                          - text: ": What do users expect on this platform?"
+                    - listitem [ref=e2005]:
+                      - paragraph [ref=e2006]:
+                        - strong [ref=e2007]: Identify adaptation challenges
+                        - text: ":"
+                      - list [ref=e2008]:
+                        - listitem [ref=e2009]: What won't fit? (Content, navigation, features)
+                        - listitem [ref=e2010]: What won't work? (Hover states on touch, tiny touch targets)
+                        - listitem [ref=e2011]: What's inappropriate? (Desktop patterns on mobile, mobile patterns on desktop)
+                  - paragraph [ref=e2012]:
+                    - strong [ref=e2013]: CRITICAL
+                    - text: ": Adaptation is not just scaling - it's rethinking the experience for the new context."
+                  - heading "Plan Adaptation Strategy" [level=2] [ref=e2014]
+                  - paragraph [ref=e2015]: "Create context-appropriate strategy:"
+                  - heading "Mobile Adaptation (Desktop → Mobile)" [level=3] [ref=e2016]
+                  - paragraph [ref=e2017]:
+                    - strong [ref=e2018]: Layout Strategy
+                    - text: ":"
+                  - list [ref=e2019]:
+                    - listitem [ref=e2020]: Single column instead of multi-column
+                    - listitem [ref=e2021]: Vertical stacking instead of side-by-side
+                    - listitem [ref=e2022]: Full-width components instead of fixed widths
+                    - listitem [ref=e2023]: Bottom navigation instead of top/side navigation
+                  - paragraph [ref=e2024]:
+                    - strong [ref=e2025]: Interaction Strategy
+                    - text: ":"
+                  - list [ref=e2026]:
+                    - listitem [ref=e2027]: Touch targets 44x44px minimum (not hover-dependent)
+                    - listitem [ref=e2028]: Swipe gestures where appropriate (lists, carousels)
+                    - listitem [ref=e2029]: Bottom sheets instead of dropdowns
+                    - listitem [ref=e2030]: Thumbs-first design (controls within thumb reach)
+                    - listitem [ref=e2031]: Larger tap areas with more spacing
+                  - paragraph [ref=e2032]:
+                    - strong [ref=e2033]: Content Strategy
+                    - text: ":"
+                  - list [ref=e2034]:
+                    - listitem [ref=e2035]: Progressive disclosure (don't show everything at once)
+                    - listitem [ref=e2036]: Prioritize primary content (secondary content in tabs/accordions)
+                    - listitem [ref=e2037]: Shorter text (more concise)
+                    - listitem [ref=e2038]: Larger text (16px minimum)
+                  - paragraph [ref=e2039]:
+                    - strong [ref=e2040]: Navigation Strategy
+                    - text: ":"
+                  - list [ref=e2041]:
+                    - listitem [ref=e2042]: Hamburger menu or bottom navigation
+                    - listitem [ref=e2043]: Reduce navigation complexity
+                    - listitem [ref=e2044]: Sticky headers for context
+                    - listitem [ref=e2045]: Back button in navigation flow
+                  - heading "Tablet Adaptation (Hybrid Approach)" [level=3] [ref=e2046]
+                  - paragraph [ref=e2047]:
+                    - strong [ref=e2048]: Layout Strategy
+                    - text: ":"
+                  - list [ref=e2049]:
+                    - listitem [ref=e2050]: Two-column layouts (not single or three-column)
+                    - listitem [ref=e2051]: Side panels for secondary content
+                    - listitem [ref=e2052]: Master-detail views (list + detail)
+                    - listitem [ref=e2053]: Adaptive based on orientation (portrait vs landscape)
+                  - paragraph [ref=e2054]:
+                    - strong [ref=e2055]: Interaction Strategy
+                    - text: ":"
+                  - list [ref=e2056]:
+                    - listitem [ref=e2057]: Support both touch and pointer
+                    - listitem [ref=e2058]: Touch targets 44x44px but allow denser layouts than phone
+                    - listitem [ref=e2059]: Side navigation drawers
+                    - listitem [ref=e2060]: Multi-column forms where appropriate
+                  - heading "Desktop Adaptation (Mobile → Desktop)" [level=3] [ref=e2061]
+                  - paragraph [ref=e2062]:
+                    - strong [ref=e2063]: Layout Strategy
+                    - text: ":"
+                  - list [ref=e2064]:
+                    - listitem [ref=e2065]: Multi-column layouts (use horizontal space)
+                    - listitem [ref=e2066]: Side navigation always visible
+                    - listitem [ref=e2067]: Multiple information panels simultaneously
+                    - listitem [ref=e2068]: Fixed widths with max-width constraints (don't stretch to 4K)
+                  - paragraph [ref=e2069]:
+                    - strong [ref=e2070]: Interaction Strategy
+                    - text: ":"
+                  - list [ref=e2071]:
+                    - listitem [ref=e2072]: Hover states for additional information
+                    - listitem [ref=e2073]: Keyboard shortcuts
+                    - listitem [ref=e2074]: Right-click context menus
+                    - listitem [ref=e2075]: Drag and drop where helpful
+                    - listitem [ref=e2076]: Multi-select with Shift/Cmd
+                  - paragraph [ref=e2077]:
+                    - strong [ref=e2078]: Content Strategy
+                    - text: ":"
+                  - list [ref=e2079]:
+                    - listitem [ref=e2080]: Show more information upfront (less progressive disclosure)
+                    - listitem [ref=e2081]: Data tables with many columns
+                    - listitem [ref=e2082]: Richer visualizations
+                    - listitem [ref=e2083]: More detailed descriptions
+                  - heading "Print Adaptation (Screen → Print)" [level=3] [ref=e2084]
+                  - paragraph [ref=e2085]:
+                    - strong [ref=e2086]: Layout Strategy
+                    - text: ":"
+                  - list [ref=e2087]:
+                    - listitem [ref=e2088]: Page breaks at logical points
+                    - listitem [ref=e2089]: Remove navigation, footer, interactive elements
+                    - listitem [ref=e2090]: Black and white (or limited color)
+                    - listitem [ref=e2091]: Proper margins for binding
+                  - paragraph [ref=e2092]:
+                    - strong [ref=e2093]: Content Strategy
+                    - text: ":"
+                  - list [ref=e2094]:
+                    - listitem [ref=e2095]: Expand shortened content (show full URLs, hidden sections)
+                    - listitem [ref=e2096]: Add page numbers, headers, footers
+                    - listitem [ref=e2097]: Include metadata (print date, page title)
+                    - listitem [ref=e2098]: Convert charts to print-friendly versions
+                  - heading "Email Adaptation (Web → Email)" [level=3] [ref=e2099]
+                  - paragraph [ref=e2100]:
+                    - strong [ref=e2101]: Layout Strategy
+                    - text: ":"
+                  - list [ref=e2102]:
+                    - listitem [ref=e2103]: Narrow width (600px max)
+                    - listitem [ref=e2104]: Single column only
+                    - listitem [ref=e2105]: Inline CSS (no external stylesheets)
+                    - listitem [ref=e2106]: Table-based layouts (for email client compatibility)
+                  - paragraph [ref=e2107]:
+                    - strong [ref=e2108]: Interaction Strategy
+                    - text: ":"
+                  - list [ref=e2109]:
+                    - listitem [ref=e2110]: Large, obvious CTAs (buttons not text links)
+                    - listitem [ref=e2111]: No hover states (not reliable)
+                    - listitem [ref=e2112]: Deep links to web app for complex interactions
+                  - heading "Implement Adaptations" [level=2] [ref=e2113]
+                  - paragraph [ref=e2114]: "Apply changes systematically:"
+                  - heading "Responsive Breakpoints" [level=3] [ref=e2115]
+                  - paragraph [ref=e2116]: "Choose appropriate breakpoints:"
+                  - list [ref=e2117]:
+                    - listitem [ref=e2118]: "Mobile: 320px-767px"
+                    - listitem [ref=e2119]: "Tablet: 768px-1023px"
+                    - listitem [ref=e2120]: "Desktop: 1024px+"
+                    - listitem [ref=e2121]: Or content-driven breakpoints (where design breaks)
+                  - heading "Layout Adaptation Techniques" [level=3] [ref=e2122]
+                  - list [ref=e2123]:
+                    - listitem [ref=e2124]:
+                      - strong [ref=e2125]: CSS Grid/Flexbox
+                      - text: ": Reflow layouts automatically"
+                    - listitem [ref=e2126]:
+                      - strong [ref=e2127]: Container Queries
+                      - text: ": Adapt based on container, not viewport"
+                    - listitem [ref=e2128]:
+                      - strong [ref=e2129]:
+                        - code [ref=e2130]: clamp()
+                      - text: ": Fluid sizing between min and max"
+                    - listitem [ref=e2131]:
+                      - strong [ref=e2132]: Media queries
+                      - text: ": Different styles for different contexts"
+                    - listitem [ref=e2133]:
+                      - strong [ref=e2134]: Display properties
+                      - text: ": Show/hide elements per context"
+                  - heading "Touch Adaptation" [level=3] [ref=e2135]
+                  - list [ref=e2136]:
+                    - listitem [ref=e2137]: Increase touch target sizes (44x44px minimum)
+                    - listitem [ref=e2138]: Add more spacing between interactive elements
+                    - listitem [ref=e2139]: Remove hover-dependent interactions
+                    - listitem [ref=e2140]: Add touch feedback (ripples, highlights)
+                    - listitem [ref=e2141]: Consider thumb zones (easier to reach bottom than top)
+                  - heading "Content Adaptation" [level=3] [ref=e2142]
+                  - list [ref=e2143]:
+                    - listitem [ref=e2144]:
+                      - text: Use
+                      - code [ref=e2145]: "display: none"
+                      - text: sparingly (still downloads)
+                    - listitem [ref=e2146]: Progressive enhancement (core content first, enhancements on larger screens)
+                    - listitem [ref=e2147]: Lazy loading for off-screen content
+                    - listitem [ref=e2148]:
+                      - text: Responsive images (
+                      - code [ref=e2149]: srcset
+                      - text: ","
+                      - code [ref=e2150]: picture
+                      - text: element)
+                  - heading "Navigation Adaptation" [level=3] [ref=e2151]
+                  - list [ref=e2152]:
+                    - listitem [ref=e2153]: Transform complex nav to hamburger/drawer on mobile
+                    - listitem [ref=e2154]: Bottom nav bar for mobile apps
+                    - listitem [ref=e2155]: Persistent side navigation on desktop
+                    - listitem [ref=e2156]: Breadcrumbs on smaller screens for context
+                  - paragraph [ref=e2157]:
+                    - strong [ref=e2158]: IMPORTANT
+                    - text: ": Test on real devices, not just browser DevTools. Device emulation is helpful but not perfect."
+                  - paragraph [ref=e2159]:
+                    - strong [ref=e2160]: NEVER
+                    - text: ":"
+                  - list [ref=e2161]:
+                    - listitem [ref=e2162]: Hide core functionality on mobile (if it matters, make it work)
+                    - listitem [ref=e2163]: Assume desktop = powerful device (consider accessibility, older machines)
+                    - listitem [ref=e2164]: Use different information architecture across contexts (confusing)
+                    - listitem [ref=e2165]: Break user expectations for platform (mobile users expect mobile patterns)
+                    - listitem [ref=e2166]: Forget landscape orientation on mobile/tablet
+                    - listitem [ref=e2167]: Use generic breakpoints blindly (use content-driven breakpoints)
+                    - listitem [ref=e2168]: Ignore touch on desktop (many desktop devices have touch)
+                  - heading "Verify Adaptations" [level=2] [ref=e2169]
+                  - paragraph [ref=e2170]: "Test thoroughly across contexts:"
+                  - list [ref=e2171]:
+                    - listitem [ref=e2172]:
+                      - strong [ref=e2173]: Real devices
+                      - text: ": Test on actual phones, tablets, desktops"
+                    - listitem [ref=e2174]:
+                      - strong [ref=e2175]: Different orientations
+                      - text: ": Portrait and landscape"
+                    - listitem [ref=e2176]:
+                      - strong [ref=e2177]: Different browsers
+                      - text: ": Safari, Chrome, Firefox, Edge"
+                    - listitem [ref=e2178]:
+                      - strong [ref=e2179]: Different OS
+                      - text: ": iOS, Android, Windows, macOS"
+                    - listitem [ref=e2180]:
+                      - strong [ref=e2181]: Different input methods
+                      - text: ": Touch, mouse, keyboard"
+                    - listitem [ref=e2182]:
+                      - strong [ref=e2183]: Edge cases
+                      - text: ": Very small screens (320px), very large screens (4K)"
+                    - listitem [ref=e2184]:
+                      - strong [ref=e2185]: Slow connections
+                      - text: ": Test on throttled network"
+                  - paragraph [ref=e2186]: "Remember: You're a cross-platform design expert. Make experiences that feel native to each context while maintaining brand and functionality consistency. Adapt intentionally, test thoroughly."
+  - generic [ref=e2188]:
+    - main [ref=e2189]
+    - status
+```
+
+# Test source
+
+```ts
+  1  | const { test, expect } = require("@playwright/test");
+  2  | 
+  3  | const surfaces = [
+  4  |   { name: "manage-empty",    action: async () => {} },
+  5  |   { name: "manage-selected", action: async ({ page }) => {
+  6  |     await page.locator("#matrixBody .skill-list-button").first().click();
+  7  |   }},
+  8  | ];
+  9  | 
+  10 | for (const surface of surfaces) {
+  11 |   test(`baseline:${surface.name}`, async ({ page }) => {
+  12 |     await page.goto("/");
+  13 |     await page.waitForLoadState("networkidle");
+  14 |     await surface.action({ page });
+> 15 |     await expect(page).toHaveScreenshot(`${surface.name}.png`, { fullPage: false, animations: "disabled", caret: "hide" });
+     |                        ^ Error: expect(page).toHaveScreenshot(expected) failed
+  16 |   });
+  17 | }
+  18 | 
+```

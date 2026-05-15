@@ -1,0 +1,10 @@
+{
+  "serena": {
+    "blockedTools": [
+      "find",
+      "grep",
+      "ls",
+      "read"
+    ]
+  }
+}

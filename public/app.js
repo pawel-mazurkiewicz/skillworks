@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import { mountCreateSkillEditor, mountSkillEditor, unmountAllSkillEditors, unmountSkillEditor } from "./skill-editor.jsx";
+import { showToast as sonnerToast } from "./lib/toasts.js";
 import "./styles.css";
 
 const PROJECT_CACHE_KEY = "asm.projects";
@@ -1951,12 +1952,7 @@ async function runAction(action) {
 }
 
 function showToast(message) {
-  elements.toast.textContent = message;
-  elements.toast.classList.add("visible");
-  window.clearTimeout(showToast.timeout);
-  showToast.timeout = window.setTimeout(() => {
-    elements.toast.classList.remove("visible");
-  }, 2600);
+  sonnerToast(message);
 }
 
 function escapeHtml(value) {
