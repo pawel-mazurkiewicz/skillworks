@@ -3,17 +3,13 @@ import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Header } from "@/components/Header";
 import { ManageGrid } from "@/components/Manage/ManageGrid";
 import { InstallTab } from "@/components/Install";
+import { SetsTab } from "@/components/Sets";
+import { ConfigureTab } from "@/components/Configure";
+import { CleanupTab } from "@/components/Cleanup";
 import { events, emit } from "@/lib/state";
 
 /**
  * AppShell — Top-level shell: React Header + legacy workspace template.
- *
- * During migration the header is React; the main content still renders
- * from the legacy `#appShellTemplate`. The event bus bridges React → app.js.
- *
- * PR3: ManageGrid replaces the legacy manage tab surface. The legacy
- * `#manageTab` section is hidden when ManageGrid renders, keeping app.js
- * DOM queries intact for non-manage elements (modals, bulk floating, etc.).
  */
 function AppShell() {
   const template = document.querySelector("#appShellTemplate");
@@ -127,6 +123,58 @@ function AppShell() {
     return () => events.off("create-skill:open", handler);
   }, []);
 
+  // Bridge: sets:snapshot → legacy renderSets
+  useEffect(() => {
+    const handler = (state) => {
+      if (window.__setsState && window.__renderSets) {
+        Object.assign(window.__setsState, state);
+        window.__renderSets();
+      }
+    };
+    events.on("sets:snapshot", handler);
+    return () => events.off("sets:snapshot", handler);
+  }, []);
+
+  // Bridge: sets:* events from legacy
+  useEffect(() => {
+    const handler = (action) => {
+      if (window.__runAction && typeof window.__runAction === "function") {
+        window.__runAction(async () => {
+          await window.__loadSets();
+          window.__renderSets();
+        });
+      }
+    };
+    events.on("sets:refresh", handler);
+    return () => events.off("sets:refresh", handler);
+  }, []);
+
+  // Bridge: configure:* events
+  useEffect(() => {
+    const handler = (action) => {
+      if (window.__runAction && typeof window.__runAction === "function") {
+        window.__runAction(async () => {
+          await window.__loadState();
+        });
+      }
+    };
+    events.on("configure:refresh", handler);
+    return () => events.off("configure:refresh", handler);
+  }, []);
+
+  // Bridge: cleanup:* events
+  useEffect(() => {
+    const handler = (action) => {
+      if (window.__runAction && typeof window.__runAction === "function") {
+        window.__runAction(async () => {
+          await window.__loadState();
+        });
+      }
+    };
+    events.on("cleanup:refresh", handler);
+    return () => events.off("cleanup:refresh", handler);
+  }, []);
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header
@@ -145,6 +193,15 @@ function AppShell() {
 
       {/* Install tab - new React implementation */}
       {activeTab === "install" && <InstallTab />}
+
+      {/* Sets tab - new React implementation */}
+      {activeTab === "sets" && <SetsTab />}
+
+      {/* Configure tab - new React implementation */}
+      {activeTab === "configure" && <ConfigureTab />}
+
+      {/* Cleanup tab - new React implementation */}
+      {activeTab === "cleanup" && <CleanupTab />}
 
       {/* Legacy workspace template — manage tab hidden when ManageGrid renders */}
       <div dangerouslySetInnerHTML={{ __html: template?.innerHTML.trim() || "" }} />

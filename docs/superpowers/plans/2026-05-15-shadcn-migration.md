@@ -1172,9 +1172,9 @@ Tasks 23–31 ✅ Complete — Commit `562216a`
 ## PR 5: Remaining Tabs
 
 - **Task 37:** Install tab (FromFolder / FromGit / Discovery panels) — Card-based React composition. Wire `install:*` events to the existing HTTP handlers in `app.js`.
-- **Task 38:** Sets tab (SetsList + SetEditor). Emits `sets:*` events; every legacy mutation to `setsState` adds `emit("sets:snapshot", setsState)` after.
-- **Task 39:** Configure tab (Vault + Projects + CustomTargets + Unmanaged panels). Composed with container queries for the wider-window two-column layout.
-- **Task 40:** Cleanup tab (dedupe scan + per-group keeper radio).
+- **Task 38:** ✅ Sets tab (SetsList + SetEditor). Emits `sets:*` events; every legacy mutation to `setsState` adds `emit("sets:snapshot", setsState)` after.
+- **Task 39:** ✅ Configure tab (Vault + Projects + CustomTargets + Unmanaged panels). Composed with container queries for the wider-window two-column layout.
+- **Task 40:** ✅ Cleanup tab (dedupe scan + per-group keeper radio).
 - **Task 41:** Open PR 5.
 
 ---
