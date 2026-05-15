@@ -207,6 +207,16 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/marketplace/skills") {
+    sendJson(response, 200, await fetchMarketplaceSkills({
+      query: url.searchParams.get("q") || "",
+      view: url.searchParams.get("view") || "trending",
+      page: url.searchParams.get("page") || "0",
+      perPage: url.searchParams.get("per_page") || "24",
+    }));
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/create-skill") {
     const body = await readJsonBody(request);
     await manager.createSkill(body);
@@ -472,6 +482,169 @@ async function installFromGit({ repoUrl, ref, targetIds, targetId, perSkillTarge
   }
 }
 
+async function fetchMarketplaceSkills({ query, view, page, perPage }) {
+  const trimmed = String(query || "").trim();
+  try {
+    if (trimmed.length >= 2) {
+      return await fetchSkillsJson("/api/v1/skills/search", {
+        q: trimmed,
+        limit: perPage || "24",
+      });
+    }
+
+    if (view === "official") {
+      const payload = await fetchSkillsJson("/api/v1/skills/curated");
+      const owners = Array.isArray(payload.data) ? payload.data : [];
+      return {
+        data: owners.flatMap((owner) => (owner.skills || []).map((skill) => ({
+          ...skill,
+          owner: owner.owner,
+        }))),
+        curated: true,
+        totalOwners: payload.totalOwners || owners.length,
+        totalSkills: payload.totalSkills || 0,
+        generatedAt: payload.generatedAt || "",
+      };
+    }
+
+    return await fetchSkillsJson("/api/v1/skills", {
+      view: ["all-time", "trending", "hot"].includes(view) ? view : "trending",
+      page: page || "0",
+      per_page: perPage || "24",
+    });
+  } catch (error) {
+    if (error.code !== "SKILLS_AUTH_REQUIRED") {
+      throw error;
+    }
+    return scrapeMarketplaceSkills({ query: trimmed, view, page, perPage });
+  }
+}
+
+async function fetchSkillsJson(pathname, params = {}) {
+  const url = new URL(pathname, "https://skills.sh");
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value) !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  const headers = {
+    "accept": "application/json",
+    "user-agent": "Skillworks/0.1.0",
+  };
+  if (process.env.SKILLS_SH_API_KEY) {
+    headers.authorization = `Bearer ${process.env.SKILLS_SH_API_KEY}`;
+  }
+  const response = await fetch(url, { headers });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (payload.error === "authentication_required") {
+      const error = new Error("skills.sh returned 401 authentication_required for an unauthenticated request.");
+      error.code = "SKILLS_AUTH_REQUIRED";
+      throw error;
+    }
+    throw new Error(payload.message || payload.error || `skills.sh request failed (${response.status})`);
+  }
+  return payload;
+}
+
+async function scrapeMarketplaceSkills({ query, view, page, perPage }) {
+  const currentPage = Math.max(0, Number(page) || 0);
+  const limit = Math.max(1, Math.min(100, Number(perPage) || 24));
+  const pagePath = view === "hot" ? "/hot" : view === "official" ? "/official" : "/trending";
+  const html = await fetchSkillsPage(pagePath);
+  const all = extractSkillLinks(html);
+  const normalizedQuery = String(query || "").toLowerCase();
+  const filtered = normalizedQuery.length >= 2
+    ? all.filter((skill) => `${skill.id} ${skill.name} ${skill.source}`.toLowerCase().includes(normalizedQuery))
+    : all;
+  const start = currentPage * limit;
+  const data = filtered.slice(start, start + limit);
+  return {
+    data,
+    scraped: true,
+    query,
+    count: filtered.length,
+    pagination: {
+      page: currentPage,
+      perPage: limit,
+      total: filtered.length,
+      hasMore: start + limit < filtered.length,
+    },
+  };
+}
+
+async function fetchSkillsPage(pagePath) {
+  const url = new URL(pagePath, "https://skills.sh");
+  const response = await fetch(url, {
+    headers: {
+      "accept": "text/html",
+      "user-agent": "Skillworks/0.1.0",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`skills.sh page fetch failed (${response.status})`);
+  }
+  return response.text();
+}
+
+function extractSkillLinks(html) {
+  const skills = [];
+  const seen = new Set();
+  const linkPattern = /href="\/([^"?#]+\/[^"?#]+\/[^"?#]+)"/g;
+  let match;
+  while ((match = linkPattern.exec(html)) !== null) {
+    const id = decodeHtml(match[1]).replace(/^\/+|\/+$/g, "");
+    const parts = id.split("/");
+    if (parts.length !== 3 || isNonSkillPath(parts)) {
+      continue;
+    }
+    const [owner, repo, slug] = parts;
+    const key = `${owner}/${repo}/${slug}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    skills.push({
+      id: key,
+      slug,
+      name: humanizeSkillSlug(slug),
+      source: `${owner}/${repo}`,
+      sourceType: "github",
+      installUrl: `https://github.com/${owner}/${repo}`,
+      url: `https://skills.sh/${key}`,
+      scraped: true,
+    });
+  }
+  return skills;
+}
+
+function isNonSkillPath(parts) {
+  const [first, second, third] = parts;
+  return (
+    first.startsWith("_next") ||
+    first === "agents" ||
+    first === "api" ||
+    first === "topic" ||
+    first === "agent" ||
+    third === "security" ||
+    second === "security"
+  );
+}
+
+function humanizeSkillSlug(slug) {
+  return String(slug || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function decodeHtml(value) {
+  return String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, "\"")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
 
 async function previewGitInstall({ repoUrl, ref, targetIds, targetId, projectPath }) {
   const source = parseGitSource(repoUrl, ref);

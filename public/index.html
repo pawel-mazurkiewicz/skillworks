@@ -61,6 +61,76 @@
           <path d="M6 6l12 12" />
           <path d="M18 6l-12 12" />
         </symbol>
+        <symbol id="icon-harness-claude" viewBox="0 0 24 24">
+          <path d="M12 4v16" />
+          <path d="M4 12h16" />
+          <path d="M6.35 6.35l11.3 11.3" />
+          <path d="M17.65 6.35l-11.3 11.3" />
+        </symbol>
+        <symbol id="icon-harness-codex" viewBox="0 0 24 24">
+          <path d="M8 9l-4 3l4 3" />
+          <path d="M16 9l4 3l-4 3" />
+          <path d="M14 5l-4 14" />
+        </symbol>
+        <symbol id="icon-harness-agents" viewBox="0 0 24 24">
+          <path d="M8 10a3 3 0 1 0 0 -6a3 3 0 0 0 0 6" />
+          <path d="M16 10a3 3 0 1 0 0 -6a3 3 0 0 0 0 6" />
+          <path d="M4 20v-2a4 4 0 0 1 8 0v2" />
+          <path d="M12 20v-2a4 4 0 0 1 8 0v2" />
+        </symbol>
+        <symbol id="icon-harness-gemini" viewBox="0 0 24 24">
+          <path d="M12 3l2.2 6.8l6.8 2.2l-6.8 2.2l-2.2 6.8l-2.2 -6.8l-6.8 -2.2l6.8 -2.2z" />
+        </symbol>
+        <symbol id="icon-harness-copilot" viewBox="0 0 24 24">
+          <path d="M7 12v-2a5 5 0 0 1 10 0v2" />
+          <path d="M5 12h14v5a3 3 0 0 1 -3 3h-8a3 3 0 0 1 -3 -3z" />
+          <path d="M9 15h.01" />
+          <path d="M15 15h.01" />
+        </symbol>
+        <symbol id="icon-harness-opencode" viewBox="0 0 24 24">
+          <path d="M6 7h12" />
+          <path d="M6 12h9" />
+          <path d="M6 17h12" />
+          <path d="M18 10l3 2l-3 2" />
+        </symbol>
+        <symbol id="icon-harness-antigravity" viewBox="0 0 24 24">
+          <path d="M12 21v-18" />
+          <path d="M7 8l5 -5l5 5" />
+          <path d="M5 16a7 7 0 0 0 14 0" />
+        </symbol>
+        <symbol id="icon-harness-cursor" viewBox="0 0 24 24">
+          <path d="M5 4l14 8l-6 2l-3 6z" />
+        </symbol>
+        <symbol id="icon-harness-kiro" viewBox="0 0 24 24">
+          <path d="M6 4v16" />
+          <path d="M18 4l-10 8l10 8" />
+        </symbol>
+        <symbol id="icon-harness-codebuddy" viewBox="0 0 24 24">
+          <path d="M7 8h10a3 3 0 0 1 3 3v3a3 3 0 0 1 -3 3h-4l-4 3v-3h-2a3 3 0 0 1 -3 -3v-3a3 3 0 0 1 3 -3z" />
+          <path d="M9 12h.01" />
+          <path d="M15 12h.01" />
+        </symbol>
+        <symbol id="icon-harness-openclaw" viewBox="0 0 24 24">
+          <path d="M7 4v9a5 5 0 0 0 10 0v-9" />
+          <path d="M7 9h10" />
+          <path d="M9 20h6" />
+        </symbol>
+        <symbol id="icon-harness-trae" viewBox="0 0 24 24">
+          <path d="M5 5h14" />
+          <path d="M12 5v14" />
+          <path d="M8 19h8" />
+        </symbol>
+        <symbol id="icon-harness-qoder" viewBox="0 0 24 24">
+          <path d="M12 21a8 8 0 1 0 0 -16a8 8 0 0 0 0 16" />
+          <path d="M15 15l4 4" />
+          <path d="M9 12l2 2l4 -5" />
+        </symbol>
+        <symbol id="icon-harness-custom" viewBox="0 0 24 24">
+          <path d="M12 3l8 4.5v9l-8 4.5l-8 -4.5v-9z" />
+          <path d="M12 12l8 -4.5" />
+          <path d="M12 12v9" />
+          <path d="M12 12l-8 -4.5" />
+        </symbol>
       </defs>
     </svg>
     <div class="app-shell">
@@ -211,7 +281,7 @@
             <aside class="detail-pane" aria-label="Skill details">
               <section class="panel empty-detail" id="emptyDetail">
                 <h2>Select a skill</h2>
-                <p>Assignment switches and documentation open here.</p>
+                <p>Inspect its documentation, source path, and target links here.</p>
               </section>
               <section class="panel detail-card" id="skillDetail" hidden>
                 <div class="skill-detail-host" id="skillPreview"></div>
@@ -221,8 +291,56 @@
         </section>
 
         <section class="tab-content hidden" id="installTab" data-top-tab-panel="install" aria-label="Install skills">
-          <div class="tab-grid install-stack">
-            <section class="panel">
+          <section class="panel install-panel">
+            <div class="section-head">
+              <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-file-upload"></use></svg><span>Install</span></h2>
+              <p class="section-sub">Browse public skills, move local folders into the vault, or install from Git.</p>
+            </div>
+            <div class="install-tabs" role="tablist" aria-label="Install sources">
+              <button type="button" class="chip is-active" data-install-tab="marketplace">Browse / Marketplace</button>
+              <button type="button" class="chip" data-install-tab="local">Local folder</button>
+              <button type="button" class="chip" data-install-tab="git">From Git</button>
+              <button type="button" class="chip" data-install-tab="discovery">Discovery</button>
+            </div>
+
+            <section class="install-tab-panel" data-install-panel="marketplace" aria-label="Browse marketplace">
+              <div class="marketplace-toolbar">
+                <label class="search-wrap marketplace-search">
+                  <span class="sr-only">Search skills.sh</span>
+                  <svg class="icon field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg>
+                  <input id="marketplaceSearchInput" placeholder="Search skills.sh" autocomplete="off" spellcheck="false" />
+                </label>
+                <label class="inline-field marketplace-view">
+                  <span>View</span>
+                  <select id="marketplaceViewSelect">
+                    <option value="trending">Trending</option>
+                    <option value="hot">Hot</option>
+                    <option value="all-time">All time</option>
+                    <option value="official">Official</option>
+                  </select>
+                </label>
+                <button class="button" id="marketplaceRefreshButton" type="button">Refresh</button>
+              </div>
+              <details class="target-picker" id="marketplaceTargetPicker">
+                <summary>
+                  <span>
+                    <strong>Install targets</strong>
+                    <small id="marketplaceTargetSummary">Vault only</small>
+                  </span>
+                </summary>
+                <fieldset class="target-checkboxes" id="marketplaceTargetCheckboxes">
+                  <legend>Extra targets</legend>
+                </fieldset>
+              </details>
+              <div class="marketplace-status" id="marketplaceStatus">Load marketplace skills to begin.</div>
+              <div class="marketplace-results" id="marketplaceResults"></div>
+              <div class="button-row marketplace-pager">
+                <button class="button" id="marketplacePreviousButton" type="button">Previous</button>
+                <button class="button" id="marketplaceNextButton" type="button">Next</button>
+              </div>
+            </section>
+
+            <section class="install-tab-panel hidden" data-install-panel="local" aria-label="Install from local folder">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-folder"></use></svg><span>From local folder</span></h2>
                 <p class="section-sub">Move skills from another location into the vault.</p>
@@ -244,7 +362,7 @@
               </div>
             </section>
 
-            <section class="panel">
+            <section class="install-tab-panel hidden" data-install-panel="git" aria-label="Install from Git">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-file-upload"></use></svg><span>From Git</span></h2>
                 <p class="section-sub">Clone a repo and install the skills it ships.</p>
@@ -277,7 +395,7 @@
               <div class="install-preview" id="gitPreviewResult" hidden></div>
             </section>
 
-            <section class="panel span-2">
+            <section class="install-tab-panel hidden" data-install-panel="discovery" aria-label="Discovery">
               <div class="section-head">
                 <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg><span>Discovery</span></h2>
                 <p class="section-sub">Skills detected on this machine that aren't in the vault yet.</p>
@@ -285,7 +403,7 @@
               <div class="discovery-summary" id="discoverySummary"></div>
               <div class="discovery-list" id="discoveryList"></div>
             </section>
-          </div>
+          </section>
         </section>
 
         <section class="tab-content hidden" id="setsTab" data-top-tab-panel="sets" aria-label="Skill sets">
