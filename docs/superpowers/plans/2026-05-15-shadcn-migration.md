@@ -1181,8 +1181,8 @@ Tasks 23–31 ✅ Complete — Commit `562216a`
 
 ## PR 6: Cleanup
 
-- **Task 42:** Write `scripts/check-css-usage.js` that prints orphan class selectors. Delete each orphan rule using `mcp__serena__replace_content`. Verify build + visual regression after each batch.
-- **Task 43:** Trim `public/styles.css` to its final ≈50-line shape (the paper-grain body wash is the only legacy rule kept, because Tailwind utilities can't express layered radial+repeating-linear backgrounds). Final file body shown below for reference:
+- **Task 42:** ✅ Write `scripts/check-css-usage.js` that prints orphan class selectors. Delete each orphan rule using `mcp__serena__replace_content`. Verify build + visual regression after each batch.
+- **Task 43:** ✅ Trim `public/styles.css` to its final ≈50-line shape (the paper-grain body wash is the only legacy rule kept, because Tailwind utilities can't express layered radial+repeating-linear backgrounds). Final file body shown below for reference:
 
 ```css
 @import "tailwindcss";
