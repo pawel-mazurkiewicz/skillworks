@@ -58,6 +58,7 @@ pub fn run() {
             backend::commands::plan_apply_set,
             backend::commands::apply_set,
             backend::commands::set_project_pinned_sets,
+            backend::commands::fetch_marketplace_skills,
         ])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]

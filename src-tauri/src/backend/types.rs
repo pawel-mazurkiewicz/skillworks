@@ -659,3 +659,80 @@ pub struct ApplySetResponse {
     pub warnings: Vec<String>,
     pub state: State,
 }
+
+// ---------------------------------------------------------------------------
+// Marketplace (skills.sh) DTOs
+// ---------------------------------------------------------------------------
+
+/// Pagination block returned by skills.sh and by the scrape fallback. The
+/// official API echoes whatever it wants here, so we keep it permissive.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplacePagination {
+    pub page: u32,
+    pub per_page: u32,
+    pub total: u32,
+    pub has_more: bool,
+}
+
+/// One marketplace skill row. Skills.sh sends many fields we don't care
+/// about — keep the common ones typed and shove the rest through
+/// `serde_json::Value` extras so the frontend can keep evolving without
+/// breaking the Rust DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceSkill {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scraped: Option<bool>,
+    /// Catch-all bucket for fields the JS server passes through verbatim
+    /// (stars, description, updated_at, etc.) without us having to enumerate
+    /// every key. Flattened into the parent object on the wire.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Top-level response from `fetch_marketplace_skills`. Mirrors the four
+/// shapes the JS server can emit (live API passthrough, curated reshape, or
+/// scrape fallback). All optional metadata fields are skipped when absent so
+/// the wire payload matches the JS server byte-for-byte.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceSkillsResponse {
+    pub data: Vec<MarketplaceSkill>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<MarketplacePagination>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_owners: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_skills: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scraped: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// Catch-all so live-API responses that include unexpected top-level
+    /// keys still round-trip.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
