@@ -296,7 +296,7 @@ fn infer_author(id: &str) -> String {
     }
 }
 
-fn safe_segment(value: &str) -> String {
+pub fn safe_segment(value: &str) -> String {
     let lowered = value.to_lowercase();
     // Replace any run of characters outside [a-z0-9._-] with a single dash.
     let mut segment = String::with_capacity(lowered.len());
