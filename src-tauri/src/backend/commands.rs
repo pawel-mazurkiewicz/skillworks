@@ -2097,6 +2097,22 @@ pub async fn set_project_pinned_sets_impl(
     build_state(Some(project_path), app_home_override).await
 }
 
+/// `GET /api/marketplace/skills` → Tauri command.
+///
+/// Thin wrapper around `backend::marketplace::fetch_marketplace_skills`.
+/// Argument names use snake_case to match the JS server's query-string
+/// keys (`q`, `view`, `page`, `per_page`) so the frontend can keep its
+/// existing wire payload unchanged.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn fetch_marketplace_skills(
+    q: Option<String>,
+    view: Option<String>,
+    page: Option<String>,
+    per_page: Option<String>,
+) -> BackendResult<crate::backend::types::MarketplaceSkillsResponse> {
+    super::marketplace::fetch_marketplace_skills(q, view, page, per_page).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
