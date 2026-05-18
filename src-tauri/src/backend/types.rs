@@ -532,3 +532,130 @@ pub struct InstallFromGitResponse {
     pub state: State,
     pub report: InstallReport,
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6: Skill set DTOs.
+// ---------------------------------------------------------------------------
+
+/// A saved skill set: a named collection of `(skillName, targetKey)` pairs
+/// that can be applied to flip the matrix to a known configuration in one
+/// step. Mirrors the JS shape produced by `src/sets.js::normalizeSet`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Set {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// `"global"` or `"project"`.
+    pub scope: String,
+    /// Present iff `scope == "project"`. Skipped on serialize when absent
+    /// so global sets match the JS shape exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    pub entries: Vec<SetEntry>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One `(skillName, targetKey)` pair inside a [`Set`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetEntry {
+    pub skill_name: String,
+    pub target_key: String,
+}
+
+/// `listSets` response: global + project-scoped sets plus the project's
+/// pinned-set resolution. Mirrors `core.js::listSets`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListSetsResponse {
+    pub global: Vec<Set>,
+    pub project: Vec<Set>,
+    pub pinned: PinnedSets,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedSets {
+    pub ids: Vec<String>,
+    pub resolved: Vec<Set>,
+    pub missing: Vec<String>,
+}
+
+/// Response from `create_set` / `snapshot_set`: the new set plus refreshed
+/// state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSetResponse {
+    pub set: Set,
+    pub state: State,
+}
+
+/// Response from `update_set`: the updated set plus refreshed state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSetResponse {
+    pub set: Set,
+    pub state: State,
+}
+
+/// Response from `delete_set`: the deleted id plus refreshed state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSetResponse {
+    pub deleted_id: String,
+    pub state: State,
+}
+
+/// Per-target plan row from `plan_apply_set`. Mirrors the rows pushed onto
+/// `result.targets` in `core.js::planApplySet`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplySetTargetPlan {
+    pub target_id: String,
+    pub target_label: String,
+    /// Set to `true` (and serialized) when the touched target id doesn't
+    /// resolve to a known target. JS uses `missingTarget: true` only on
+    /// the missing rows; we mirror that with `skip_serializing_if`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub missing_target: bool,
+    pub to_enable: Vec<String>,
+    pub to_disable: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+/// Result of `plan_apply_set`: a dry-run plan that tells the UI what apply
+/// will do without changing any symlinks. Mirrors
+/// `core.js::planApplySet`'s return shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplySetPlan {
+    pub set_id: String,
+    pub name: String,
+    pub targets: Vec<ApplySetTargetPlan>,
+}
+
+/// Per-target result of `apply_set`. Status is one of `"applied" |
+/// "failed" | "skipped"`. `reason` is populated for non-success rows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplySetTargetResult {
+    pub target_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Top-level response from `apply_set`: the plan that was executed, the
+/// per-target outcome, any warnings, and the refreshed state. Mirrors
+/// `core.js::applySet`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplySetResponse {
+    pub plan: ApplySetPlan,
+    pub per_target_result: Vec<ApplySetTargetResult>,
+    pub warnings: Vec<String>,
+    pub state: State,
+}

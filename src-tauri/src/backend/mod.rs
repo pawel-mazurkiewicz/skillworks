@@ -7,6 +7,7 @@ pub mod git_install;
 pub mod imports;
 pub mod projects;
 pub mod scan;
+pub mod sets;
 pub mod skills;
 pub mod state;
 pub mod symlinks;

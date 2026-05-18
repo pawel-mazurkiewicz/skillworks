@@ -1444,6 +1444,659 @@ fn build_per_skill_resolver(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 6: skill sets.
+// ---------------------------------------------------------------------------
+
+use super::sets::{
+    list_global_sets, new_set_id, normalize_entries, read_project_sets, write_project_sets,
+};
+use super::types::{
+    ApplySetPlan, ApplySetResponse, ApplySetTargetPlan, ApplySetTargetResult, CreateSetResponse,
+    DeleteSetResponse, ListSetsResponse, PinnedSets, Set, SetEntry, UpdateSetResponse,
+};
+
+#[tauri::command]
+pub async fn list_sets(project: Option<String>) -> BackendResult<ListSetsResponse> {
+    list_sets_impl(project, None).await
+}
+
+pub async fn list_sets_impl(
+    project: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ListSetsResponse> {
+    let ctx = load_context(project.clone(), app_home_override).await?;
+
+    let global = list_global_sets(&ctx.config);
+    let project_list = if project.is_some() {
+        read_project_sets(&ctx.project_path).await?
+    } else {
+        Vec::new()
+    };
+
+    let mut pinned = PinnedSets::default();
+    if project.is_some() {
+        let project_record = ctx
+            .config
+            .projects
+            .iter()
+            .find(|p| {
+                p.get("path")
+                    .and_then(|v| v.as_str())
+                    .map(|s| Path::new(s) == ctx.project_path.as_path())
+                    .unwrap_or(false)
+            });
+        let ids: Vec<String> = project_record
+            .and_then(|p| p.get("pinnedSetIds"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let all: Vec<&Set> = global.iter().chain(project_list.iter()).collect();
+        let mut resolved = Vec::new();
+        let mut missing = Vec::new();
+        for id in &ids {
+            match all.iter().find(|s| &s.id == id) {
+                Some(s) => resolved.push((*s).clone()),
+                None => missing.push(id.clone()),
+            }
+        }
+        pinned = PinnedSets {
+            ids,
+            resolved,
+            missing,
+        };
+    }
+
+    Ok(ListSetsResponse {
+        global,
+        project: project_list,
+        pinned,
+    })
+}
+
+/// Bump an RFC3339 timestamp by 1ms if Utc::now() lands on the same instant
+/// (mirrors `nextTimestamp` in `core.js`).
+fn next_timestamp(previous: &str) -> String {
+    let now = Utc::now();
+    let candidate = now.to_rfc3339();
+    if candidate != previous {
+        candidate
+    } else {
+        (now + chrono::Duration::milliseconds(1)).to_rfc3339()
+    }
+}
+
+/// Normalize a list of `SetEntry` (used when the frontend hands us typed
+/// entries directly).
+fn typed_entries_normalized(entries: Option<Vec<SetEntry>>) -> Vec<SetEntry> {
+    let value = entries
+        .map(|list| serde_json::to_value(list).unwrap_or(serde_json::Value::Null))
+        .unwrap_or(serde_json::Value::Null);
+    normalize_entries(&value)
+}
+
+#[tauri::command]
+pub async fn create_set(
+    name: String,
+    description: Option<String>,
+    scope: String,
+    project_path: Option<String>,
+    entries: Option<Vec<SetEntry>>,
+) -> BackendResult<CreateSetResponse> {
+    create_set_impl(name, description, scope, project_path, entries, None).await
+}
+
+pub async fn create_set_impl(
+    name: String,
+    description: Option<String>,
+    scope: String,
+    project_path: Option<String>,
+    entries: Option<Vec<SetEntry>>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<CreateSetResponse> {
+    let name_trimmed = name.trim();
+    if name_trimmed.is_empty() {
+        return Err(BackendError::Validation(
+            "Set name is required".to_string(),
+        ));
+    }
+    if scope != "global" && scope != "project" {
+        return Err(BackendError::Validation("Invalid scope".to_string()));
+    }
+    if scope == "project"
+        && project_path
+            .as_deref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+    {
+        return Err(BackendError::Validation(
+            "projectPath required for project-scoped set".to_string(),
+        ));
+    }
+
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let now = Utc::now().to_rfc3339();
+    let normalized_entries = typed_entries_normalized(entries);
+
+    let scoped_project = if scope == "project" {
+        Some(ctx.project_path.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    let record = Set {
+        id: new_set_id(),
+        name: name_trimmed.to_string(),
+        description: description
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default(),
+        scope: scope.clone(),
+        project_path: scoped_project,
+        entries: normalized_entries,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    if scope == "global" {
+        let mut next = ctx.config.clone();
+        let raw =
+            serde_json::to_value(&record).map_err(BackendError::Json)?;
+        next.sets.push(raw);
+        save_merged_config(&ctx.app_home, &next).await?;
+    } else {
+        let mut existing = read_project_sets(&ctx.project_path).await?;
+        existing.push(record.clone());
+        write_project_sets(&ctx.project_path, &existing).await?;
+    }
+
+    let state = build_state(project_path, app_home_override).await?;
+    Ok(CreateSetResponse {
+        set: record,
+        state,
+    })
+}
+
+#[tauri::command]
+pub async fn update_set(
+    id: String,
+    patch: serde_json::Value,
+    project_path: Option<String>,
+) -> BackendResult<UpdateSetResponse> {
+    update_set_impl(id, patch, project_path, None).await
+}
+
+pub async fn update_set_impl(
+    id: String,
+    patch: serde_json::Value,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<UpdateSetResponse> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let patch_obj = patch
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+
+    // Try global first.
+    let global_idx = ctx
+        .config
+        .sets
+        .iter()
+        .position(|v| v.get("id").and_then(|x| x.as_str()) == Some(id.as_str()));
+    if let Some(idx) = global_idx {
+        let raw = ctx.config.sets[idx].clone();
+        let existing = super::sets::normalize_set(&raw, "global", None)
+            .ok_or_else(|| BackendError::Validation(format!("Set {id} is malformed")))?;
+        let updated = apply_patch(existing, &patch_obj);
+        let mut next = ctx.config.clone();
+        next.sets[idx] = serde_json::to_value(&updated).map_err(BackendError::Json)?;
+        save_merged_config(&ctx.app_home, &next).await?;
+        let state = build_state(project_path, app_home_override).await?;
+        return Ok(UpdateSetResponse {
+            set: updated,
+            state,
+        });
+    }
+
+    // Then project-local.
+    if project_path.is_some() {
+        let mut existing_sets = read_project_sets(&ctx.project_path).await?;
+        if let Some(idx) = existing_sets.iter().position(|s| s.id == id) {
+            let existing = existing_sets[idx].clone();
+            let updated = apply_patch(existing, &patch_obj);
+            existing_sets[idx] = updated.clone();
+            write_project_sets(&ctx.project_path, &existing_sets).await?;
+            let state = build_state(project_path, app_home_override).await?;
+            return Ok(UpdateSetResponse {
+                set: updated,
+                state,
+            });
+        }
+    }
+
+    Err(BackendError::NotFound(format!("Unknown set: {id}")))
+}
+
+fn apply_patch(mut existing: Set, patch: &serde_json::Map<String, serde_json::Value>) -> Set {
+    if let Some(v) = patch.get("name") {
+        if let Some(s) = v.as_str() {
+            existing.name = s.trim().to_string();
+        }
+    }
+    if let Some(v) = patch.get("description") {
+        if let Some(s) = v.as_str() {
+            existing.description = s.trim().to_string();
+        }
+    }
+    if let Some(v) = patch.get("entries") {
+        existing.entries = normalize_entries(v);
+    }
+    existing.updated_at = next_timestamp(&existing.updated_at);
+    existing
+}
+
+#[tauri::command]
+pub async fn delete_set(
+    id: String,
+    project: Option<String>,
+) -> BackendResult<DeleteSetResponse> {
+    delete_set_impl(id, project, None).await
+}
+
+pub async fn delete_set_impl(
+    id: String,
+    project: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<DeleteSetResponse> {
+    let ctx = load_context(project.clone(), app_home_override.clone()).await?;
+
+    // Global match wins (same precedence as core.js::deleteSet).
+    if ctx
+        .config
+        .sets
+        .iter()
+        .any(|v| v.get("id").and_then(|x| x.as_str()) == Some(id.as_str()))
+    {
+        let kept: Vec<serde_json::Value> = ctx
+            .config
+            .sets
+            .iter()
+            .filter(|v| v.get("id").and_then(|x| x.as_str()) != Some(id.as_str()))
+            .cloned()
+            .collect();
+        let mut next = ctx.config.clone();
+        next.sets = kept;
+        save_merged_config(&ctx.app_home, &next).await?;
+        let state = build_state(project, app_home_override).await?;
+        return Ok(DeleteSetResponse {
+            deleted_id: id,
+            state,
+        });
+    }
+
+    if project.is_some() {
+        let existing_sets = read_project_sets(&ctx.project_path).await?;
+        if existing_sets.iter().any(|s| s.id == id) {
+            let kept: Vec<Set> = existing_sets.into_iter().filter(|s| s.id != id).collect();
+            write_project_sets(&ctx.project_path, &kept).await?;
+            let state = build_state(project, app_home_override).await?;
+            return Ok(DeleteSetResponse {
+                deleted_id: id,
+                state,
+            });
+        }
+    }
+
+    Err(BackendError::NotFound(format!("Unknown set: {id}")))
+}
+
+#[tauri::command]
+pub async fn snapshot_set(
+    name: String,
+    description: Option<String>,
+    scope: String,
+    project_path: Option<String>,
+    target_keys: Option<Vec<String>>,
+) -> BackendResult<CreateSetResponse> {
+    snapshot_set_impl(name, description, scope, project_path, target_keys, None).await
+}
+
+pub async fn snapshot_set_impl(
+    name: String,
+    description: Option<String>,
+    scope: String,
+    project_path: Option<String>,
+    target_keys: Option<Vec<String>>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<CreateSetResponse> {
+    let target_keys = target_keys.unwrap_or_default();
+    if target_keys.is_empty() {
+        return Err(BackendError::Validation(
+            "targetKeys must be a non-empty array".to_string(),
+        ));
+    }
+
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let skills = discover_skills(&ctx.vault_root).await?;
+    let custom = safe_read_custom_targets(&serde_json::Value::Array(
+        ctx.config.custom_targets.clone(),
+    ));
+    let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
+
+    let mut entries: Vec<SetEntry> = Vec::new();
+    for target_key in &target_keys {
+        let target = match targets.iter().find(|t| &t.id == target_key) {
+            Some(t) => t,
+            None => continue,
+        };
+        let manifest = read_manifest(Path::new(&target.path)).await?;
+        for skill_id in manifest.managed_links.keys() {
+            if let Some(s) = skills.iter().find(|sk| &sk.id == skill_id) {
+                entries.push(SetEntry {
+                    skill_name: s.name.clone(),
+                    target_key: target_key.clone(),
+                });
+            }
+        }
+    }
+
+    // Round-trip via serde to feed create_set_impl typed entries.
+    create_set_impl(
+        name,
+        description,
+        scope,
+        project_path,
+        Some(entries),
+        app_home_override,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn plan_apply_set(
+    id: String,
+    project_path: String,
+) -> BackendResult<ApplySetPlan> {
+    plan_apply_set_impl(id, project_path, None).await
+}
+
+pub async fn plan_apply_set_impl(
+    id: String,
+    project_path: String,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ApplySetPlan> {
+    let ctx = load_context(Some(project_path.clone()), app_home_override).await?;
+    let set = locate_set(&ctx, &id).await?;
+    let skills = discover_skills(&ctx.vault_root).await?;
+    let custom = safe_read_custom_targets(&serde_json::Value::Array(
+        ctx.config.custom_targets.clone(),
+    ));
+    let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
+
+    let plan = build_apply_plan(&set, &skills, &targets).await?;
+    Ok(plan)
+}
+
+async fn locate_set(ctx: &CommandContext, id: &str) -> BackendResult<Set> {
+    let global = list_global_sets(&ctx.config);
+    if let Some(s) = global.iter().find(|s| s.id == id) {
+        return Ok(s.clone());
+    }
+    let project = read_project_sets(&ctx.project_path).await?;
+    if let Some(s) = project.iter().find(|s| s.id == id) {
+        return Ok(s.clone());
+    }
+    Err(BackendError::NotFound(format!("Unknown set: {id}")))
+}
+
+async fn build_apply_plan(
+    set: &Set,
+    skills: &[SkillRecord],
+    targets: &[TargetRecord],
+) -> BackendResult<ApplySetPlan> {
+    // Group entries by targetKey, preserving first-seen order.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_target: BTreeMap<String, Vec<SetEntry>> = BTreeMap::new();
+    for entry in &set.entries {
+        if !by_target.contains_key(&entry.target_key) {
+            order.push(entry.target_key.clone());
+        }
+        by_target
+            .entry(entry.target_key.clone())
+            .or_default()
+            .push(entry.clone());
+    }
+
+    let skill_names: std::collections::HashSet<String> =
+        skills.iter().map(|s| s.name.clone()).collect();
+
+    let mut target_plans = Vec::new();
+    for target_key in &order {
+        let entries = by_target.get(target_key).cloned().unwrap_or_default();
+        let target = targets.iter().find(|t| &t.id == target_key);
+        match target {
+            None => {
+                target_plans.push(ApplySetTargetPlan {
+                    target_id: target_key.clone(),
+                    target_label: target_key.clone(),
+                    missing_target: true,
+                    to_enable: Vec::new(),
+                    to_disable: Vec::new(),
+                    missing: entries.iter().map(|e| e.skill_name.clone()).collect(),
+                });
+            }
+            Some(target) => {
+                let manifest = read_manifest(Path::new(&target.path)).await?;
+                let mut currently_enabled_names: Vec<String> = Vec::new();
+                for skill_id in manifest.managed_links.keys() {
+                    if let Some(s) = skills.iter().find(|sk| &sk.id == skill_id) {
+                        currently_enabled_names.push(s.name.clone());
+                    }
+                }
+
+                let mut desired_names: Vec<String> = Vec::new();
+                let mut missing: Vec<String> = Vec::new();
+                for entry in &entries {
+                    if skill_names.contains(&entry.skill_name) {
+                        if !desired_names.contains(&entry.skill_name) {
+                            desired_names.push(entry.skill_name.clone());
+                        }
+                    } else if !missing.contains(&entry.skill_name) {
+                        missing.push(entry.skill_name.clone());
+                    }
+                }
+
+                let to_enable: Vec<String> = desired_names
+                    .iter()
+                    .filter(|n| !currently_enabled_names.contains(n))
+                    .cloned()
+                    .collect();
+                let to_disable: Vec<String> = currently_enabled_names
+                    .iter()
+                    .filter(|n| !desired_names.contains(n))
+                    .cloned()
+                    .collect();
+
+                target_plans.push(ApplySetTargetPlan {
+                    target_id: target.id.clone(),
+                    target_label: target.label.clone(),
+                    missing_target: false,
+                    to_enable,
+                    to_disable,
+                    missing,
+                });
+            }
+        }
+    }
+
+    Ok(ApplySetPlan {
+        set_id: set.id.clone(),
+        name: set.name.clone(),
+        targets: target_plans,
+    })
+}
+
+#[tauri::command]
+pub async fn apply_set(
+    id: String,
+    project_path: String,
+) -> BackendResult<ApplySetResponse> {
+    apply_set_impl(id, project_path, None).await
+}
+
+pub async fn apply_set_impl(
+    id: String,
+    project_path: String,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ApplySetResponse> {
+    let ctx = load_context(Some(project_path.clone()), app_home_override.clone()).await?;
+    let set = locate_set(&ctx, &id).await?;
+    let skills = discover_skills(&ctx.vault_root).await?;
+    let custom = safe_read_custom_targets(&serde_json::Value::Array(
+        ctx.config.custom_targets.clone(),
+    ));
+    let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
+    let plan = build_apply_plan(&set, &skills, &targets).await?;
+
+    let mut per_target_result: Vec<ApplySetTargetResult> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    for target_plan in &plan.targets {
+        if target_plan.missing_target {
+            per_target_result.push(ApplySetTargetResult {
+                target_id: target_plan.target_id.clone(),
+                status: "skipped".to_string(),
+                reason: Some("Unknown target".to_string()),
+            });
+            warnings.push(format!(
+                "Target {} not found; skipped",
+                target_plan.target_id
+            ));
+            continue;
+        }
+        if !target_plan.missing.is_empty() {
+            warnings.push(format!(
+                "Skipped missing skills in {}: {}",
+                target_plan.target_label,
+                target_plan.missing.join(", ")
+            ));
+        }
+        let target = match targets.iter().find(|t| t.id == target_plan.target_id) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let mut failure: Option<String> = None;
+        for skill_name in &target_plan.to_disable {
+            if let Some(s) = skills.iter().find(|sk| &sk.name == skill_name) {
+                if let Err(err) = disable_skill_inner(target, s).await {
+                    failure = Some(err.to_string());
+                    break;
+                }
+            }
+        }
+        if failure.is_none() {
+            for skill_name in &target_plan.to_enable {
+                if let Some(s) = skills.iter().find(|sk| &sk.name == skill_name) {
+                    if let Err(err) = enable_skill_inner(target, s).await {
+                        failure = Some(err.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+
+        match failure {
+            None => per_target_result.push(ApplySetTargetResult {
+                target_id: target_plan.target_id.clone(),
+                status: "applied".to_string(),
+                reason: None,
+            }),
+            Some(reason) => {
+                per_target_result.push(ApplySetTargetResult {
+                    target_id: target_plan.target_id.clone(),
+                    status: "failed".to_string(),
+                    reason: Some(reason),
+                });
+                break; // stop on first failure (mirrors core.js)
+            }
+        }
+    }
+
+    let state = build_state(Some(project_path), app_home_override).await?;
+    Ok(ApplySetResponse {
+        plan,
+        per_target_result,
+        warnings,
+        state,
+    })
+}
+
+#[tauri::command]
+pub async fn set_project_pinned_sets(
+    project_path: String,
+    set_ids: Vec<String>,
+) -> BackendResult<State> {
+    set_project_pinned_sets_impl(project_path, set_ids, None).await
+}
+
+pub async fn set_project_pinned_sets_impl(
+    project_path: String,
+    set_ids: Vec<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    if project_path.is_empty() {
+        return Err(BackendError::Validation(
+            "project_path is required".to_string(),
+        ));
+    }
+    let ctx = load_context(Some(project_path.clone()), app_home_override.clone()).await?;
+    let normalized = ctx.project_path.to_string_lossy().into_owned();
+    let cleaned_ids: Vec<String> = set_ids.into_iter().filter(|s| !s.is_empty()).collect();
+
+    let mut projects: Vec<serde_json::Value> = ctx.config.projects.clone();
+    let idx = projects.iter().position(|p| {
+        p.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s == normalized.as_str())
+            .unwrap_or(false)
+    });
+
+    let pinned_value = serde_json::Value::Array(
+        cleaned_ids
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect(),
+    );
+
+    match idx {
+        Some(i) => {
+            if let Some(obj) = projects[i].as_object_mut() {
+                obj.insert("pinnedSetIds".to_string(), pinned_value);
+            }
+        }
+        None => {
+            let record = build_project_record(&ctx.project_path, ProjectSource::Manual).await;
+            let mut value = serde_json::to_value(record).map_err(BackendError::Json)?;
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("pinnedSetIds".to_string(), pinned_value);
+            }
+            projects.push(value);
+        }
+    }
+
+    let mut next = ctx.config.clone();
+    next.projects = projects;
+    save_merged_config(&ctx.app_home, &next).await?;
+
+    build_state(Some(project_path), app_home_override).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2150,5 +2803,573 @@ mod tests {
         // Even though the path was provided twice, we should only have
         // imported once.
         assert_eq!(result.report.imported, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 6 tests: skill sets.
+    // -----------------------------------------------------------------------
+
+    use super::super::sets as sets_mod;
+
+    #[test]
+    fn new_set_id_is_unique_and_well_formed() {
+        let a = sets_mod::new_set_id();
+        let b = sets_mod::new_set_id();
+        assert!(a.starts_with("set_"));
+        assert_eq!(a.len(), 4 + 12);
+        assert!(a["set_".len()..].chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn normalize_set_strips_unknown_keys_and_validates() {
+        // No name → rejected.
+        assert!(sets_mod::normalize_set(&serde_json::json!({}), "global", None).is_none());
+        assert!(
+            sets_mod::normalize_set(&serde_json::json!({ "name": "   " }), "global", None)
+                .is_none()
+        );
+
+        let raw = serde_json::json!({
+            "id": "set_keep",
+            "name": "  Frontend ",
+            "description": "  do UI ",
+            "garbage": "nope",
+            "entries": [
+                { "skillName": "design", "targetKey": "claude-global" },
+                { "skillName": "design", "targetKey": "claude-global" }, // dedup
+                { "skillName": "", "targetKey": "x" },                    // dropped
+            ],
+        });
+        let set = sets_mod::normalize_set(&raw, "global", None).unwrap();
+        assert_eq!(set.id, "set_keep");
+        assert_eq!(set.name, "Frontend");
+        assert_eq!(set.description, "do UI");
+        assert_eq!(set.scope, "global");
+        assert!(set.project_path.is_none());
+        assert_eq!(set.entries.len(), 1);
+        assert_eq!(set.entries[0].skill_name, "design");
+        assert_eq!(set.entries[0].target_key, "claude-global");
+    }
+
+    /// Snapshot test fixture: a temp app home with a vault, plus a project
+    /// root with a single custom-project target pointed at a dir inside it.
+    struct SetEnv {
+        _root: TempDir,
+        app_home: PathBuf,
+        vault: PathBuf,
+        project: PathBuf,
+        target_global: PathBuf,
+        target_global_id: String,
+    }
+
+    async fn make_set_env() -> SetEnv {
+        let root = TempDir::new().expect("tempdir");
+        let app_home = root.path().join(".skillworks");
+        let vault = app_home.join("vault");
+        fs::create_dir_all(&vault).await.unwrap();
+        let project = root.path().join("project");
+        fs::create_dir_all(&project).await.unwrap();
+        let target_global = root.path().join("custom-target");
+
+        let config = Config {
+            vault_root: Some(vault.clone()),
+            custom_targets: vec![serde_json::json!({
+                "id": "test-custom",
+                "label": "Test Custom",
+                "scope": "global",
+                "path": target_global.to_string_lossy(),
+            })],
+            ..Default::default()
+        };
+        config.save(&app_home.join("config.json")).await.unwrap();
+
+        SetEnv {
+            _root: root,
+            app_home,
+            vault,
+            project,
+            target_global,
+            target_global_id: "test-custom".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_sets_returns_global_and_project_combined() {
+        let env = make_set_env().await;
+
+        // One global, one project-local.
+        let g = create_set_impl(
+            "Global one".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create global");
+        let p = create_set_impl(
+            "Project one".to_string(),
+            None,
+            "project".to_string(),
+            Some(env.project.to_string_lossy().into_owned()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create project");
+
+        // Without a project, only global comes back.
+        let no_project = list_sets_impl(None, Some(env.app_home.clone()))
+            .await
+            .expect("list no-project");
+        assert_eq!(no_project.global.len(), 1);
+        assert_eq!(no_project.global[0].id, g.set.id);
+        assert!(no_project.project.is_empty());
+        assert!(no_project.pinned.ids.is_empty());
+
+        // With a project, both surfaces are populated.
+        let with_project = list_sets_impl(
+            Some(env.project.to_string_lossy().into_owned()),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("list with project");
+        assert_eq!(with_project.global.len(), 1);
+        assert_eq!(with_project.project.len(), 1);
+        assert_eq!(with_project.project[0].id, p.set.id);
+    }
+
+    #[tokio::test]
+    async fn create_set_persists_to_correct_scope() {
+        let env = make_set_env().await;
+
+        // Global → stored in config.json under "sets".
+        create_set_impl(
+            "Global".to_string(),
+            Some("d".to_string()),
+            "global".to_string(),
+            None,
+            Some(vec![SetEntry {
+                skill_name: "a".to_string(),
+                target_key: "claude-global".to_string(),
+            }]),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create global");
+        let config = Config::load(&env.app_home.join("config.json"))
+            .await
+            .unwrap();
+        assert_eq!(config.sets.len(), 1);
+        assert_eq!(
+            config.sets[0].get("name").and_then(|v| v.as_str()),
+            Some("Global")
+        );
+
+        // Project → stored in <project>/.agent-skill-manager/sets.json.
+        create_set_impl(
+            "Project".to_string(),
+            None,
+            "project".to_string(),
+            Some(env.project.to_string_lossy().into_owned()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create project");
+        let project_file = env
+            .project
+            .join(".agent-skill-manager")
+            .join("sets.json");
+        assert!(project_file.exists(), "project sets.json should exist");
+
+        // Invalid scope is rejected.
+        let bad = create_set_impl(
+            "Bad".to_string(),
+            None,
+            "weird".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
+        assert!(bad.is_err());
+
+        // Project scope without projectPath is rejected.
+        let bad2 = create_set_impl(
+            "Bad2".to_string(),
+            None,
+            "project".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
+        assert!(bad2.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_set_patches_specific_fields() {
+        let env = make_set_env().await;
+        let created = create_set_impl(
+            "Old name".to_string(),
+            Some("old desc".to_string()),
+            "global".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create");
+
+        let updated = update_set_impl(
+            created.set.id.clone(),
+            serde_json::json!({
+                "name": "  New name  ",
+                "entries": [
+                    { "skillName": "x", "targetKey": "claude-global" }
+                ],
+            }),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("update");
+
+        assert_eq!(updated.set.id, created.set.id);
+        assert_eq!(updated.set.name, "New name");
+        // description was not in the patch, so it's preserved
+        assert_eq!(updated.set.description, "old desc");
+        assert_eq!(updated.set.entries.len(), 1);
+
+        // Updating an unknown id returns NotFound.
+        let bad =
+            update_set_impl("set_unknown".to_string(), serde_json::json!({}), None, Some(env.app_home.clone()))
+                .await;
+        assert!(bad.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_set_removes_from_storage() {
+        let env = make_set_env().await;
+        let g = create_set_impl(
+            "G".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create global");
+        let p = create_set_impl(
+            "P".to_string(),
+            None,
+            "project".to_string(),
+            Some(env.project.to_string_lossy().into_owned()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create project");
+
+        delete_set_impl(g.set.id.clone(), None, Some(env.app_home.clone()))
+            .await
+            .expect("delete global");
+        let config = Config::load(&env.app_home.join("config.json"))
+            .await
+            .unwrap();
+        assert!(config.sets.is_empty());
+
+        delete_set_impl(
+            p.set.id.clone(),
+            Some(env.project.to_string_lossy().into_owned()),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("delete project");
+        let remaining = sets_mod::read_project_sets(&env.project).await.unwrap();
+        assert!(remaining.is_empty());
+
+        // Unknown id → error.
+        let bad = delete_set_impl(
+            "set_unknown".to_string(),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
+        assert!(bad.is_err());
+    }
+
+    #[tokio::test]
+    async fn snapshot_set_captures_current_state() {
+        let env = make_set_env().await;
+        write_skill_file(&env.vault.join("a"), "SkillA", "x").await;
+        write_skill_file(&env.vault.join("b"), "SkillB", "x").await;
+
+        // Enable both skills on the custom target.
+        bulk_toggle_skills_impl(
+            vec!["a".to_string(), "b".to_string()],
+            vec![env.target_global_id.clone()],
+            true,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let snap = snapshot_set_impl(
+            "Snap".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            Some(vec![env.target_global_id.clone()]),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("snapshot");
+
+        assert_eq!(snap.set.entries.len(), 2);
+        let names: Vec<String> = snap.set.entries.iter().map(|e| e.skill_name.clone()).collect();
+        assert!(names.contains(&"SkillA".to_string()));
+        assert!(names.contains(&"SkillB".to_string()));
+        for entry in &snap.set.entries {
+            assert_eq!(entry.target_key, env.target_global_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_set_requires_target_keys() {
+        let env = make_set_env().await;
+        let bad = snapshot_set_impl(
+            "Snap".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
+        assert!(bad.is_err());
+    }
+
+    #[tokio::test]
+    async fn plan_apply_set_diffs_against_current_state() {
+        let env = make_set_env().await;
+        write_skill_file(&env.vault.join("a"), "SkillA", "x").await;
+        write_skill_file(&env.vault.join("b"), "SkillB", "x").await;
+        write_skill_file(&env.vault.join("c"), "SkillC", "x").await;
+
+        // Currently enabled: SkillA. Desired: SkillB. Missing: SkillZ.
+        toggle_skill_impl(
+            "a".to_string(),
+            env.target_global_id.clone(),
+            Some(true),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let created = create_set_impl(
+            "Plan".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            Some(vec![
+                SetEntry {
+                    skill_name: "SkillB".to_string(),
+                    target_key: env.target_global_id.clone(),
+                },
+                SetEntry {
+                    skill_name: "SkillZ".to_string(),
+                    target_key: env.target_global_id.clone(),
+                },
+            ]),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let plan = plan_apply_set_impl(
+            created.set.id,
+            env.project.to_string_lossy().into_owned(),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("plan");
+
+        assert_eq!(plan.targets.len(), 1);
+        let t = &plan.targets[0];
+        assert_eq!(t.target_id, env.target_global_id);
+        assert_eq!(t.to_enable, vec!["SkillB".to_string()]);
+        assert_eq!(t.to_disable, vec!["SkillA".to_string()]);
+        assert_eq!(t.missing, vec!["SkillZ".to_string()]);
+        assert!(!t.missing_target);
+    }
+
+    #[tokio::test]
+    async fn apply_set_changes_symlinks_to_match() {
+        let env = make_set_env().await;
+        write_skill_file(&env.vault.join("a"), "SkillA", "x").await;
+        write_skill_file(&env.vault.join("b"), "SkillB", "x").await;
+
+        // Pre-enable SkillA so apply needs to disable it.
+        toggle_skill_impl(
+            "a".to_string(),
+            env.target_global_id.clone(),
+            Some(true),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let created = create_set_impl(
+            "Apply".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            Some(vec![SetEntry {
+                skill_name: "SkillB".to_string(),
+                target_key: env.target_global_id.clone(),
+            }]),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let result = apply_set_impl(
+            created.set.id,
+            env.project.to_string_lossy().into_owned(),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("apply");
+
+        assert_eq!(result.per_target_result.len(), 1);
+        assert_eq!(result.per_target_result[0].status, "applied");
+
+        // After apply: target has SkillB, not SkillA.
+        let target = result
+            .state
+            .targets
+            .iter()
+            .find(|t| t.id == env.target_global_id)
+            .unwrap();
+        assert!(target.enabled_skill_ids.contains(&"b".to_string()));
+        assert!(!target.enabled_skill_ids.contains(&"a".to_string()));
+
+        // Target dir on disk reflects this too.
+        let mut entries = fs::read_dir(&env.target_global).await.unwrap();
+        let mut names: Vec<String> = Vec::new();
+        while let Some(e) = entries.next_entry().await.unwrap() {
+            names.push(e.file_name().to_string_lossy().into_owned());
+        }
+        // safe_segment lowercases for the on-disk link name.
+        assert!(names.iter().any(|n| n == "skillb"));
+        assert!(!names.iter().any(|n| n == "skilla"));
+    }
+
+    #[tokio::test]
+    async fn apply_set_warns_on_missing_skill_and_continues() {
+        let env = make_set_env().await;
+        write_skill_file(&env.vault.join("a"), "SkillA", "x").await;
+
+        let created = create_set_impl(
+            "Mixed".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            Some(vec![
+                SetEntry {
+                    skill_name: "SkillA".to_string(),
+                    target_key: env.target_global_id.clone(),
+                },
+                SetEntry {
+                    skill_name: "GhostSkill".to_string(),
+                    target_key: env.target_global_id.clone(),
+                },
+            ]),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let result = apply_set_impl(
+            created.set.id,
+            env.project.to_string_lossy().into_owned(),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("apply");
+
+        assert_eq!(result.per_target_result[0].status, "applied");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("GhostSkill")),
+            "missing skill should surface as a warning"
+        );
+        let target = result
+            .state
+            .targets
+            .iter()
+            .find(|t| t.id == env.target_global_id)
+            .unwrap();
+        assert!(target.enabled_skill_ids.contains(&"a".to_string()));
+    }
+
+    #[tokio::test]
+    async fn set_project_pinned_sets_updates_project_record() {
+        let env = make_set_env().await;
+        let g = create_set_impl(
+            "Pin me".to_string(),
+            None,
+            "global".to_string(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let state = set_project_pinned_sets_impl(
+            env.project.to_string_lossy().into_owned(),
+            vec![g.set.id.clone(), "set_phantom".to_string()],
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("pin");
+
+        // Project record should now exist in state with pinnedSetIds populated.
+        let normalized = normalize_project_path(&env.project)
+            .to_string_lossy()
+            .into_owned();
+        let project_record = state
+            .projects
+            .iter()
+            .find(|p| p.path == normalized)
+            .expect("project record present");
+        assert_eq!(project_record.pinned_set_ids.len(), 2);
+        assert!(project_record.pinned_set_ids.contains(&g.set.id));
+        assert!(project_record
+            .pinned_set_ids
+            .contains(&"set_phantom".to_string()));
+
+        // list_sets should resolve the known id and report the phantom as missing.
+        let listed = list_sets_impl(
+            Some(env.project.to_string_lossy().into_owned()),
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("list");
+        assert_eq!(listed.pinned.ids.len(), 2);
+        assert_eq!(listed.pinned.resolved.len(), 1);
+        assert_eq!(listed.pinned.resolved[0].id, g.set.id);
+        assert_eq!(listed.pinned.missing, vec!["set_phantom".to_string()]);
     }
 }
