@@ -27,6 +27,7 @@
     "desktop:dev": "tauri dev",
     "desktop:sidecar": "node scripts/build-tauri-sidecar.js",
     "desktop:build": "tauri build",
+    "desktop:sign": "bash scripts/sign-sidecar.sh",
     "test": "node --test"
   },
   "devDependencies": {

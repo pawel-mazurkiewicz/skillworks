@@ -7,3 +7,4 @@ dist/
 .serena/
 src-tauri/target/
 src-tauri/binaries/skillworks-server-*
+/.env.release

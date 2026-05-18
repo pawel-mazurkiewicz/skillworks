@@ -1,4 +1,5 @@
 const http = require("node:http");
+const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs/promises");
@@ -520,6 +521,48 @@ async function fetchMarketplaceSkills({ query, view, page, perPage }) {
   }
 }
 
+function httpsGet(url, headers = {}, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) {
+      return reject(new Error("Too many redirects"));
+    }
+    const parsed = typeof url === "string" ? new URL(url) : url;
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || 443,
+      path: parsed.pathname + parsed.search,
+      method: "GET",
+      headers,
+    };
+    const req = https.request(options, (res) => {
+      const status = res.statusCode || 0;
+      if (status >= 300 && status < 400 && res.headers.location) {
+        resolve(httpsGet(new URL(res.headers.location, parsed), headers, redirectCount + 1));
+        return;
+      }
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          text: () => Promise.resolve(body),
+          json: () => {
+            try {
+              return Promise.resolve(JSON.parse(body));
+            } catch {
+              return Promise.resolve({});
+            }
+          },
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 async function fetchSkillsJson(pathname, params = {}) {
   const url = new URL(pathname, "https://skills.sh");
   for (const [key, value] of Object.entries(params)) {
@@ -534,8 +577,8 @@ async function fetchSkillsJson(pathname, params = {}) {
   if (process.env.SKILLS_SH_API_KEY) {
     headers.authorization = `Bearer ${process.env.SKILLS_SH_API_KEY}`;
   }
-  const response = await fetch(url, { headers });
-  const payload = await response.json().catch(() => ({}));
+  const response = await httpsGet(url, headers);
+  const payload = await response.json();
   if (!response.ok) {
     if (payload.error === "authentication_required") {
       const error = new Error("skills.sh returned 401 authentication_required for an unauthenticated request.");
@@ -575,11 +618,9 @@ async function scrapeMarketplaceSkills({ query, view, page, perPage }) {
 
 async function fetchSkillsPage(pagePath) {
   const url = new URL(pagePath, "https://skills.sh");
-  const response = await fetch(url, {
-    headers: {
-      "accept": "text/html",
-      "user-agent": "Skillworks/0.1.0",
-    },
+  const response = await httpsGet(url, {
+    "accept": "text/html",
+    "user-agent": "Skillworks/0.1.0",
   });
   if (!response.ok) {
     throw new Error(`skills.sh page fetch failed (${response.status})`);
