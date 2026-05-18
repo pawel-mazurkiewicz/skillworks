@@ -50,6 +50,14 @@ pub fn run() {
             backend::commands::import_suggested_skills,
             backend::commands::preview_git_install,
             backend::commands::install_from_git,
+            backend::commands::list_sets,
+            backend::commands::create_set,
+            backend::commands::update_set,
+            backend::commands::delete_set,
+            backend::commands::snapshot_set,
+            backend::commands::plan_apply_set,
+            backend::commands::apply_set,
+            backend::commands::set_project_pinned_sets,
         ])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]
