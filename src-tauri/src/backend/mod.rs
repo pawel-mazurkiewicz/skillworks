@@ -2,6 +2,7 @@ pub mod commands;
 pub mod config;
 pub mod frontmatter;
 pub mod fs_atomic;
+pub mod fs_helpers;
 pub mod projects;
 pub mod skills;
 pub mod state;

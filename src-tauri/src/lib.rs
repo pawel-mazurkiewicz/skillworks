@@ -28,7 +28,18 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DesktopServer(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![backend::commands::get_state])
+        .invoke_handler(tauri::generate_handler![
+            backend::commands::get_state,
+            backend::commands::read_skill_file,
+            backend::commands::save_skill_file,
+            backend::commands::toggle_skill,
+            backend::commands::bulk_toggle_skills,
+            backend::commands::bulk_copy_skills,
+            backend::commands::bulk_move_skills,
+            backend::commands::bulk_delete_skills,
+            backend::commands::find_vault_duplicates,
+            backend::commands::dedupe_vault_skills,
+        ])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]
             start_server_sidecar(_app);

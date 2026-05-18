@@ -280,3 +280,44 @@ pub struct DiscoverySummary {
     pub skill_count: u32,
     pub config_file_count: u32,
 }
+
+// ---------------------------------------------------------------------------
+// Skill CRUD DTOs (Phase 3).
+// ---------------------------------------------------------------------------
+
+/// Result of `read_skill_file`. Mirrors `core.js::readSkillFile`, which
+/// returns `{ skill, content }`. We keep the `id` and `path` flat for
+/// convenience in the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFileContent {
+    pub id: String,
+    pub path: String,
+    pub content: String,
+}
+
+/// One skill in a duplicate group as reported by `findVaultDuplicates`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateSkillEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub relative_path: String,
+    /// Modification time in milliseconds since the Unix epoch (matches the
+    /// JS `mtimeMs` field).
+    pub mtime_ms: u64,
+    pub bytes: u64,
+}
+
+/// Group of duplicate vault skills (identical `SKILL.md` bytes). Mirrors
+/// the shape `core.js::findVaultDuplicates` emits for each group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroup {
+    pub hash: String,
+    pub suggested_keeper_id: String,
+    pub count: u32,
+    pub skills: Vec<DuplicateSkillEntry>,
+}
