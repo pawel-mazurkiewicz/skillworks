@@ -46,6 +46,10 @@ pub fn run() {
             backend::commands::clear_scanned_projects,
             backend::commands::scan_projects,
             backend::commands::pick_directory,
+            backend::commands::import_skills,
+            backend::commands::import_suggested_skills,
+            backend::commands::preview_git_install,
+            backend::commands::install_from_git,
         ])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]

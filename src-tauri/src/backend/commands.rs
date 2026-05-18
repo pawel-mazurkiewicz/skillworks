@@ -1111,6 +1111,339 @@ pub async fn pick_directory(
     Ok(PickDirectoryResponse { path })
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5: imports + git installs.
+// ---------------------------------------------------------------------------
+
+use super::git_install::{
+    install_from_git as git_install_run, preview_git_install as git_install_preview,
+};
+use super::imports::{import_source as imports_import_source, ImportCandidate};
+use super::types::{
+    GitInstallPlan, ImportErrorEntry, ImportReport, ImportSkillsResponse, ImportSkipped,
+    ImportSuggestedResponse, ImportedSkill, InstallFromGitResponse, InstallReport,
+};
+
+#[tauri::command]
+pub async fn import_skills(
+    source_path: String,
+    project_path: Option<String>,
+) -> BackendResult<ImportSkillsResponse> {
+    import_skills_impl(source_path, project_path, None).await
+}
+
+pub async fn import_skills_impl(
+    source_path: String,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ImportSkillsResponse> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let (imported, skipped) =
+        imports_import_source(&ctx.vault_root, Path::new(&source_path), true).await?;
+    let state = build_state(project_path, app_home_override).await?;
+    Ok(ImportSkillsResponse {
+        imported,
+        skipped,
+        state,
+    })
+}
+
+#[tauri::command]
+pub async fn import_suggested_skills(
+    source_paths: Vec<String>,
+    project_path: Option<String>,
+) -> BackendResult<ImportSuggestedResponse> {
+    import_suggested_skills_impl(source_paths, project_path, None).await
+}
+
+pub async fn import_suggested_skills_impl(
+    source_paths: Vec<String>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ImportSuggestedResponse> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let mut imported_total: Vec<ImportedSkill> = Vec::new();
+    let mut skipped_total: Vec<ImportSkipped> = Vec::new();
+    let mut errors_total: Vec<ImportErrorEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    for raw in &source_paths {
+        let path = clean_destination(raw);
+        if seen.contains(&path) {
+            continue;
+        }
+        seen.insert(path.clone());
+
+        if !fs::try_exists(&path).await.unwrap_or(false) {
+            skipped_total.push(ImportSkipped {
+                path: path.to_string_lossy().into_owned(),
+                reason: "Path does not exist".to_string(),
+            });
+            continue;
+        }
+
+        match imports_import_source(&ctx.vault_root, &path, false).await {
+            Ok((imported, skipped)) => {
+                imported_total.extend(imported);
+                skipped_total.extend(skipped);
+            }
+            Err(err) => {
+                errors_total.push(ImportErrorEntry {
+                    path: path.to_string_lossy().into_owned(),
+                    reason: err.to_string(),
+                });
+            }
+        }
+    }
+
+    let report = ImportReport {
+        imported: imported_total.len() as u32,
+        skipped: skipped_total.len() as u32,
+        errors: errors_total.len() as u32,
+    };
+    let state = build_state(project_path, app_home_override).await?;
+    Ok(ImportSuggestedResponse { state, report })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn preview_git_install(
+    repo_url: String,
+    #[allow(non_snake_case)] r#ref: Option<String>,
+    target_ids: Option<Vec<String>>,
+    target_id: Option<String>,
+    project_path: Option<String>,
+) -> BackendResult<GitInstallPlan> {
+    preview_git_install_impl(repo_url, r#ref, target_ids, target_id, project_path, None).await
+}
+
+pub async fn preview_git_install_impl(
+    repo_url: String,
+    git_ref: Option<String>,
+    target_ids: Option<Vec<String>>,
+    target_id: Option<String>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<GitInstallPlan> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let custom = safe_read_custom_targets(&serde_json::Value::Array(
+        ctx.config.custom_targets.clone(),
+    ));
+    let all_targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
+
+    // Resolve the targets the caller asked to link into.
+    let resolved_target_ids = resolve_target_id_selector(target_ids.as_deref(), target_id.as_deref());
+    let mut targets: Vec<TargetRecord> = Vec::new();
+    for tid in &resolved_target_ids {
+        let t = all_targets
+            .iter()
+            .find(|t| &t.id == tid)
+            .ok_or_else(|| BackendError::NotFound(format!("Unknown target: {tid}")))?
+            .clone();
+        targets.push(t);
+    }
+
+    git_install_preview(
+        &repo_url,
+        git_ref.as_deref(),
+        &ctx.vault_root,
+        targets,
+    )
+    .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn install_from_git(
+    repo_url: String,
+    #[allow(non_snake_case)] r#ref: Option<String>,
+    target_ids: Option<Vec<String>>,
+    target_id: Option<String>,
+    per_skill_targets: Option<std::collections::HashMap<String, Vec<String>>>,
+    project_path: Option<String>,
+) -> BackendResult<InstallFromGitResponse> {
+    install_from_git_impl(
+        repo_url,
+        r#ref,
+        target_ids,
+        target_id,
+        per_skill_targets,
+        project_path,
+        None,
+    )
+    .await
+}
+
+pub async fn install_from_git_impl(
+    repo_url: String,
+    git_ref: Option<String>,
+    target_ids: Option<Vec<String>>,
+    target_id: Option<String>,
+    per_skill_targets: Option<std::collections::HashMap<String, Vec<String>>>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<InstallFromGitResponse> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let custom = safe_read_custom_targets(&serde_json::Value::Array(
+        ctx.config.custom_targets.clone(),
+    ));
+    let all_targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
+
+    let default_target_ids =
+        resolve_target_id_selector(target_ids.as_deref(), target_id.as_deref());
+
+    // Validate up-front.
+    for tid in &default_target_ids {
+        if !all_targets.iter().any(|t| &t.id == tid) {
+            return Err(BackendError::NotFound(format!("Unknown target: {tid}")));
+        }
+    }
+    if let Some(pst) = &per_skill_targets {
+        for ids in pst.values() {
+            for id in ids {
+                if id == "vault" || id.is_empty() {
+                    continue;
+                }
+                if !all_targets.iter().any(|t| &t.id == id) {
+                    return Err(BackendError::NotFound(format!("Unknown target: {id}")));
+                }
+            }
+        }
+    }
+
+    let (imported, skipped, install_root, candidates) =
+        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root).await?;
+
+    // Refresh skill discovery so we can map vault destinations back to
+    // skill records when enabling them on targets.
+    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let mut errors: Vec<ImportErrorEntry> = Vec::new();
+    let mut enabled_count: u32 = 0;
+
+    // Build a per-source-key target-ids map. The `source_key` here mirrors
+    // the JS `path.relative(sourceRoot, item.from)` calculation.
+    let per_skill_resolver =
+        build_per_skill_resolver(&default_target_ids, per_skill_targets.as_ref());
+
+    for item in &imported {
+        // Resolve the candidate the importer started from.
+        let source_key = candidate_source_key(&item.from, &install_root, &candidates);
+        let ids = per_skill_resolver(&source_key);
+        if ids.is_empty() {
+            continue;
+        }
+
+        // Find the skill that now lives at `item.to`.
+        let target_skill_real = match fs::canonicalize(&item.to).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let skill = match skills_all.iter().find(|s| {
+            std::path::PathBuf::from(&s.real_path) == target_skill_real
+                || std::path::PathBuf::from(&s.path) == std::path::PathBuf::from(&item.to)
+        }) {
+            Some(s) => s.clone(),
+            None => {
+                errors.push(ImportErrorEntry {
+                    path: item.to.clone(),
+                    reason: "Installed skill was not discoverable in the vault".to_string(),
+                });
+                continue;
+            }
+        };
+
+        for tid in &ids {
+            let target = match all_targets.iter().find(|t| &t.id == tid) {
+                Some(t) => t.clone(),
+                None => {
+                    errors.push(ImportErrorEntry {
+                        path: tid.clone(),
+                        reason: format!("Unknown target: {tid}"),
+                    });
+                    continue;
+                }
+            };
+            match enable_skill_inner(&target, &skill).await {
+                Ok(()) => enabled_count += 1,
+                Err(err) => errors.push(ImportErrorEntry {
+                    path: skill.id.clone(),
+                    reason: err.to_string(),
+                }),
+            }
+        }
+    }
+
+    let report = InstallReport {
+        imported: imported.len() as u32,
+        skipped: skipped.len() as u32,
+        enabled: enabled_count,
+        errors: errors.len() as u32,
+    };
+    let state = build_state(project_path, app_home_override).await?;
+    Ok(InstallFromGitResponse { state, report })
+}
+
+/// Normalize the `targetIds` / `targetId` selector into a deduped list,
+/// stripping the synthetic `"vault"` id. Mirrors
+/// `core.js::resolveInstallTargetIds`.
+fn resolve_target_id_selector(
+    target_ids: Option<&[String]>,
+    target_id: Option<&str>,
+) -> Vec<String> {
+    if let Some(ids) = target_ids {
+        return ids
+            .iter()
+            .filter(|id| !id.is_empty() && id.as_str() != "vault")
+            .cloned()
+            .collect();
+    }
+    match target_id {
+        Some(id) if !id.is_empty() && id != "vault" => vec![id.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// Given an imported item's `from` path and the original install root,
+/// rebuild the source-key the JS layer would have used to look up
+/// `perSkillTargets` overrides.
+fn candidate_source_key(
+    from: &str,
+    install_root: &Path,
+    _candidates: &[ImportCandidate],
+) -> String {
+    let from_path = Path::new(from);
+    from_path
+        .strip_prefix(install_root)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| from.to_string())
+}
+
+fn build_per_skill_resolver(
+    defaults: &[String],
+    per_skill: Option<&std::collections::HashMap<String, Vec<String>>>,
+) -> impl Fn(&str) -> Vec<String> {
+    let defaults = defaults.to_vec();
+    let overrides: std::collections::HashMap<String, Vec<String>> = per_skill
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        v.iter()
+                            .filter(|id| !id.is_empty() && id.as_str() != "vault")
+                            .cloned()
+                            .collect(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    move |source_key: &str| {
+        overrides
+            .get(source_key)
+            .cloned()
+            .unwrap_or_else(|| defaults.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1710,5 +2043,112 @@ mod tests {
             .iter()
             .any(|s| s.path.ends_with("skills") && !s.path.contains(".claude")));
         assert!(sources.iter().any(|s| s.path.contains(".claude")));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5 tests.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn import_skills_moves_into_vault() {
+        let env = make_env().await;
+        let source = env._root.path().join("src");
+        let skill_dir = source.join("my-skill");
+        fs::create_dir_all(&skill_dir).await.unwrap();
+        fs::write(
+            skill_dir.join(SKILL_FILE),
+            "---\nname: My Skill\ndescription: hello\n---\n\nbody\n",
+        )
+        .await
+        .unwrap();
+
+        let result = import_skills_impl(
+            source.to_string_lossy().into_owned(),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("import_skills");
+
+        assert_eq!(result.imported.len(), 1);
+        assert!(result.skipped.is_empty());
+        // Source is gone (moved).
+        assert!(!skill_dir.exists());
+        // Vault has it (safe_segment("My Skill") -> "my-skill").
+        assert!(env.vault.join("my-skill").join(SKILL_FILE).is_file());
+        // State reflects the new skill.
+        assert!(result.state.skills.iter().any(|s| s.name == "My Skill"));
+    }
+
+    #[tokio::test]
+    async fn import_suggested_handles_multiple_sources_with_errors() {
+        let env = make_env().await;
+
+        // Source 1: a real skill that will import successfully.
+        let good = env._root.path().join("good");
+        let good_skill = good.join("a");
+        fs::create_dir_all(&good_skill).await.unwrap();
+        fs::write(
+            good_skill.join(SKILL_FILE),
+            "---\nname: GoodA\ndescription: x\n---\n",
+        )
+        .await
+        .unwrap();
+
+        // Source 2: a directory with no SKILL.md (should produce a skip).
+        let empty = env._root.path().join("empty");
+        fs::create_dir_all(&empty).await.unwrap();
+
+        // Source 3: a path that does not exist (skip with "Path does not exist").
+        let missing = env._root.path().join("ghost");
+
+        let result = import_suggested_skills_impl(
+            vec![
+                good.to_string_lossy().into_owned(),
+                empty.to_string_lossy().into_owned(),
+                missing.to_string_lossy().into_owned(),
+            ],
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("import_suggested");
+
+        // 1 imported (from `good`), at least 2 skipped (empty + missing).
+        assert_eq!(result.report.imported, 1);
+        assert!(result.report.skipped >= 2);
+        // Vault has the good skill.
+        assert!(env.vault.join("gooda").join(SKILL_FILE).is_file()
+            || result
+                .state
+                .skills
+                .iter()
+                .any(|s| s.name == "GoodA"));
+    }
+
+    #[tokio::test]
+    async fn import_suggested_dedupes_repeated_paths() {
+        let env = make_env().await;
+        let source = env._root.path().join("dupe");
+        let skill_dir = source.join("a");
+        fs::create_dir_all(&skill_dir).await.unwrap();
+        fs::write(
+            skill_dir.join(SKILL_FILE),
+            "---\nname: A\n---\n",
+        )
+        .await
+        .unwrap();
+
+        let path_str = source.to_string_lossy().into_owned();
+        let result = import_suggested_skills_impl(
+            vec![path_str.clone(), path_str],
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("dedupe");
+        // Even though the path was provided twice, we should only have
+        // imported once.
+        assert_eq!(result.report.imported, 1);
     }
 }

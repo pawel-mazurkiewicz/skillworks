@@ -375,3 +375,160 @@ pub struct PickDirectoryResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: imports + git install DTOs.
+// ---------------------------------------------------------------------------
+
+/// One skill the importer moved (or deduped) into the vault. Mirrors the
+/// per-item shape produced by `core.js::importSource` (the `imported` list).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedSkill {
+    pub name: String,
+    pub from: String,
+    pub moved_source: String,
+    pub to: String,
+    /// `"directory" | "symlink"`.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deduped: bool,
+}
+
+/// A path the importer chose not to move, with a human-readable reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSkipped {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Per-source error in `import_suggested_skills` / `import_paths`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportErrorEntry {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Aggregate counts returned alongside the refreshed state from an import.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub imported: u32,
+    pub skipped: u32,
+    pub errors: u32,
+}
+
+/// Response shape for `import_skills`: full per-item lists plus the
+/// refreshed state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSkillsResponse {
+    pub imported: Vec<ImportedSkill>,
+    pub skipped: Vec<ImportSkipped>,
+    pub state: State,
+}
+
+/// Response shape for `import_suggested_skills`: collapsed counts plus the
+/// refreshed state (matches the existing `/api/import-paths` server route).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSuggestedResponse {
+    pub state: State,
+    pub report: ImportReport,
+}
+
+/// A single candidate row in `preview_git_install`'s plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallCandidate {
+    pub name: String,
+    pub source_path: String,
+    pub real_source_path: String,
+    pub source_key: String,
+    pub kind: String,
+    /// `"move" | "dedupe" | "skip"`.
+    pub action: String,
+    #[serde(default)]
+    pub skip_reason: String,
+    #[serde(default)]
+    pub will_dedupe: bool,
+    pub vault_destination: String,
+    pub link_name: String,
+    pub target_links: Vec<GitInstallTargetLink>,
+}
+
+/// Per-target link entry inside a `GitInstallCandidate`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallTargetLink {
+    pub target_id: String,
+    pub target_label: String,
+    pub scope: String,
+    pub link_name: String,
+    pub link_path: String,
+}
+
+/// One of the targets the install plan would link skills into.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallTarget {
+    pub id: String,
+    pub label: String,
+    pub scope: String,
+    pub path: String,
+}
+
+/// Origin descriptor echoed in the plan (parsed from `repoUrl` + `ref`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallSource {
+    pub repo_url: String,
+    #[serde(default)]
+    pub r#ref: String,
+    #[serde(default)]
+    pub subdir: String,
+}
+
+/// Aggregate counts for the plan. Mirrors `previewInstall.summary` in
+/// `core.js`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallSummary {
+    pub candidates: u32,
+    pub to_move: u32,
+    pub to_dedupe: u32,
+    pub to_skip: u32,
+}
+
+/// Top-level response for `preview_git_install`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInstallPlan {
+    pub source: GitInstallSource,
+    pub vault_root: String,
+    pub candidates: Vec<GitInstallCandidate>,
+    pub targets: Vec<GitInstallTarget>,
+    pub summary: GitInstallSummary,
+}
+
+/// Aggregate counts returned by `install_from_git`. Mirrors the
+/// `/api/install-git` response (`{ state, report: { imported, skipped,
+/// enabled, errors } }`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallReport {
+    pub imported: u32,
+    pub skipped: u32,
+    pub enabled: u32,
+    pub errors: u32,
+}
+
+/// Top-level response for `install_from_git`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallFromGitResponse {
+    pub state: State,
+    pub report: InstallReport,
+}

@@ -3,6 +3,8 @@ pub mod config;
 pub mod frontmatter;
 pub mod fs_atomic;
 pub mod fs_helpers;
+pub mod git_install;
+pub mod imports;
 pub mod projects;
 pub mod scan;
 pub mod skills;
