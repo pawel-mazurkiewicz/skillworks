@@ -98,3 +98,185 @@ impl Default for Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(transparent)]
 pub struct ManifestEntry(pub serde_json::Value);
+
+// ---------------------------------------------------------------------------
+// Target DTOs (Phase 2B).
+// ---------------------------------------------------------------------------
+
+/// A skill destination directory the manager knows about.
+///
+/// Field set matches the union of `buildTargets` (in `core.js`, returns the
+/// skeleton including `pathParts`/`custom`) and `inspectTarget` (which adds
+/// `exists`, `manifestPath`, `enabledSkillIds`, `skillStatuses`, and the
+/// `unmanaged` list). All fields are included unconditionally so the
+/// frontend doesn't need to defend against optional shapes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetRecord {
+    pub id: String,
+    pub label: String,
+    pub harness: String,
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_label: Option<String>,
+    /// Absolute path to the target directory.
+    pub path: String,
+    /// Components used to compose `path` (relative to home or project).
+    /// Empty for custom targets (which set `path`/`relativePath` directly).
+    #[serde(default)]
+    pub path_parts: Vec<String>,
+    pub custom: bool,
+
+    // Fields populated by `inspect_target`. Defaulted so the bare
+    // `build_targets` result can serialize without inspection.
+    #[serde(default)]
+    pub exists: bool,
+    #[serde(default)]
+    pub manifest_path: String,
+    #[serde(default)]
+    pub enabled_skill_ids: Vec<String>,
+    /// Per-skill status keyed by skill id. Uses `BTreeMap` for deterministic
+    /// JSON ordering.
+    #[serde(default)]
+    pub skill_statuses: BTreeMap<String, SkillStatus>,
+    #[serde(default)]
+    pub unmanaged: Vec<UnmanagedEntry>,
+}
+
+/// Status of a single skill inside a target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillStatus {
+    pub enabled: bool,
+    pub managed: bool,
+    pub link_name: String,
+    pub link_path: String,
+    pub conflict: bool,
+    pub stale_manifest: bool,
+}
+
+/// An entry inside a target directory that wasn't installed by the manager.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmanagedEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub path: String,
+    #[serde(default)]
+    pub real_path: String,
+    /// Always present for symlink entries; empty otherwise.
+    #[serde(default)]
+    pub target: String,
+    /// `"symlink" | "broken-symlink" | "directory"`.
+    pub kind: String,
+    pub importable: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Project DTOs (Phase 2B).
+// ---------------------------------------------------------------------------
+
+/// A project the user has registered or that scanning has discovered.
+/// Mirrors `core.js::normalizeProjectRecords` / `buildProjectRecord`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub path: String,
+    pub name: String,
+    /// `"manual" | "scan" | "recent"` (free-form to match JS).
+    pub source: String,
+    #[serde(default)]
+    pub skill_source_count: u32,
+    #[serde(default)]
+    pub skill_sources: Vec<ProjectSkillSource>,
+    #[serde(default)]
+    pub last_seen_at: String,
+    #[serde(default)]
+    pub pinned_set_ids: Vec<String>,
+}
+
+/// Origin of a [`ProjectRecord`] when constructing one from scratch.
+#[derive(Debug, Clone, Copy)]
+pub enum ProjectSource {
+    Manual,
+    Scanned,
+    Recent,
+}
+
+impl ProjectSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectSource::Manual => "manual",
+            ProjectSource::Scanned => "scan",
+            ProjectSource::Recent => "recent",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSkillSource {
+    pub path: String,
+    pub skill_count: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate state returned by `get_state`.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct State {
+    pub app_home: String,
+    pub config_path: String,
+    pub vault_root: String,
+    pub project: ProjectSelection,
+    pub recent_projects: Vec<String>,
+    pub projects: Vec<ProjectRecord>,
+    pub skills: Vec<SkillRecord>,
+    pub custom_targets: Vec<serde_json::Value>,
+    pub hidden_target_ids: Vec<String>,
+    pub targets: Vec<TargetRecord>,
+    pub summary: StateSummary,
+    pub discovery: DiscoveryReport,
+    pub suggested_imports: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSelection {
+    pub path: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateSummary {
+    pub skill_count: u32,
+    pub target_count: u32,
+    pub enabled_count: u32,
+    pub unmanaged_count: u32,
+}
+
+/// Minimal port of `core.js::discoverSources`. The frontend currently consumes
+/// `discovery.sources` (each with `path`, `exists`, `importable`,
+/// `importMode`, `skillCount`, `configFileCount`, `samples`) and
+/// `discovery.summary`. We emit those fields with sensible defaults; the full
+/// inspection pass will land in a later phase.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryReport {
+    pub sources: Vec<serde_json::Value>,
+    pub summary: DiscoverySummary,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverySummary {
+    pub source_count: u32,
+    pub existing_count: u32,
+    pub importable_count: u32,
+    pub skill_count: u32,
+    pub config_file_count: u32,
+}
