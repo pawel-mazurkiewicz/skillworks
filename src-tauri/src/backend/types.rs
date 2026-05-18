@@ -321,3 +321,57 @@ pub struct DuplicateGroup {
     pub count: u32,
     pub skills: Vec<DuplicateSkillEntry>,
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4: scan / project / dialog DTOs.
+// ---------------------------------------------------------------------------
+
+/// Skipped scan entry: a directory the walker bailed on, with a reason.
+/// Mirrors the `{ path, reason }` shape emitted by
+/// `core.js::scanProjectRoots`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanSkippedEntry {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Per-scan summary returned to the frontend. Mirrors the fields the JS
+/// client consumes from `scanProjects`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanReport {
+    /// Resolved roots that were walked.
+    pub roots: Vec<String>,
+    /// Project records discovered by this scan (post-merge dedup with
+    /// existing config records happens upstream).
+    #[serde(default)]
+    pub projects: Vec<ProjectRecord>,
+    /// Directories that were skipped (with their reason).
+    #[serde(default)]
+    pub skipped: Vec<ScanSkippedEntry>,
+    /// Aggregate counts for the simplified Phase-4 surface.
+    #[serde(default)]
+    pub discovered: u32,
+    /// Total skipped count (mirrors `skipped.len()`).
+    #[serde(default)]
+    pub skipped_count: u32,
+}
+
+/// Top-level response for `scan_projects`: scan report + the refreshed
+/// application state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProjectsResponse {
+    pub state: State,
+    pub report: ScanReport,
+}
+
+/// Response for `pick_directory`. `path` is `None` when the user cancelled
+/// the picker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickDirectoryResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}

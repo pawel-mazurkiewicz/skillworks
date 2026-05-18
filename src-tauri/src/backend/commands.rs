@@ -15,17 +15,20 @@ use tokio::fs;
 use super::config::Config;
 use super::fs_helpers::{copy_directory, move_directory, unique_skill_destination};
 use super::projects::{
-    build_project_record, expand_home, normalize_project_path, normalize_project_records,
-    path_exists,
+    build_project_record, expand_home, merge_project_records, normalize_project_path,
+    normalize_project_records, path_exists,
 };
+use super::scan::scan_project_roots;
 use super::skills::{discover_skills, read_manifest, write_manifest, MANIFEST_FILE, SKILL_FILE};
 use super::state::{BackendError, BackendResult};
 use super::symlinks::{is_skill_enabled_in_target, is_symlink_to, list_target_entries};
-use super::targets::{build_targets, inspect_target, safe_read_custom_targets};
+use super::targets::{
+    build_targets, inspect_target, normalize_custom_targets, safe_read_custom_targets,
+};
 use super::types::{
-    DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry, ProjectRecord,
-    ProjectSelection, ProjectSource, SkillFileContent, SkillRecord, State, StateSummary,
-    TargetRecord,
+    DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry, PickDirectoryResponse,
+    ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse, ScanReport,
+    SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
 };
 
 const APP_CONFIG_DIR: &str = ".skillworks";
@@ -792,6 +795,322 @@ fn clean_destination(raw: &str) -> PathBuf {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: config writes, project management, scan, dialog.
+// ---------------------------------------------------------------------------
+
+/// Helper that overlays incoming optional fields on top of the current
+/// on-disk config. Mirrors the merge semantics of `core.js::writeConfig`,
+/// where fields the caller omits are preserved.
+fn merge_config(
+    mut current: Config,
+    vault_root: Option<String>,
+    recent_projects: Option<Vec<serde_json::Value>>,
+    projects: Option<Vec<ProjectRecord>>,
+    custom_targets: Option<Vec<serde_json::Value>>,
+    hidden_target_ids: Option<Vec<String>>,
+    sets: Option<Vec<serde_json::Value>>,
+) -> BackendResult<Config> {
+    if let Some(vr) = vault_root.as_deref().filter(|s| !s.is_empty()) {
+        current.vault_root = Some(expand_home(Path::new(vr)));
+    }
+    if let Some(rp) = recent_projects {
+        // The JS layer keeps `recentProjects` as a list of path strings.
+        // Accept either raw strings or objects with a `path` field, mirroring
+        // the JS contract loosely.
+        let normalized: Vec<String> = rp
+            .into_iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) => Some(s),
+                serde_json::Value::Object(obj) => obj
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect();
+        current.recent_projects = normalized;
+    }
+    if let Some(ps) = projects {
+        // Round-trip through serde to apply the same normalize_project_records
+        // rules used elsewhere (dedup, defaults).
+        let raw_values: Vec<serde_json::Value> = ps
+            .into_iter()
+            .filter_map(|p| serde_json::to_value(p).ok())
+            .collect();
+        let normalized = normalize_project_records(raw_values);
+        current.projects = normalized
+            .into_iter()
+            .filter_map(|p| serde_json::to_value(p).ok())
+            .collect();
+    }
+    if let Some(ct) = custom_targets {
+        let value = serde_json::Value::Array(ct);
+        let normalized = normalize_custom_targets(&value)
+            .map_err(BackendError::Validation)?;
+        current.custom_targets = normalized;
+    }
+    if let Some(ids) = hidden_target_ids {
+        current.hidden_target_ids = ids
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Some(s) = sets {
+        current.sets = s;
+    }
+    Ok(current)
+}
+
+/// Persist the merged config back to disk. Returns nothing — call sites
+/// follow up with `build_state` to refresh the frontend snapshot.
+async fn save_merged_config(app_home: &Path, config: &Config) -> BackendResult<()> {
+    let config_path = app_home.join("config.json");
+    config.save(&config_path).await
+}
+
+#[tauri::command]
+pub async fn write_config(
+    vault_root: Option<String>,
+    recent_projects: Option<Vec<serde_json::Value>>,
+    projects: Option<Vec<ProjectRecord>>,
+    custom_targets: Option<Vec<serde_json::Value>>,
+    hidden_target_ids: Option<Vec<String>>,
+    sets: Option<Vec<serde_json::Value>>,
+    project_path: Option<String>,
+) -> BackendResult<State> {
+    write_config_impl(
+        vault_root,
+        recent_projects,
+        projects,
+        custom_targets,
+        hidden_target_ids,
+        sets,
+        project_path,
+        None,
+    )
+    .await
+}
+
+pub async fn write_config_impl(
+    vault_root: Option<String>,
+    recent_projects: Option<Vec<serde_json::Value>>,
+    projects: Option<Vec<ProjectRecord>>,
+    custom_targets: Option<Vec<serde_json::Value>>,
+    hidden_target_ids: Option<Vec<String>>,
+    sets: Option<Vec<serde_json::Value>>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let merged = merge_config(
+        ctx.config,
+        vault_root,
+        recent_projects,
+        projects,
+        custom_targets,
+        hidden_target_ids,
+        sets,
+    )?;
+    save_merged_config(&ctx.app_home, &merged).await?;
+    build_state(project_path, app_home_override).await
+}
+
+#[tauri::command]
+pub async fn add_project(
+    project_path: String,
+    name: Option<String>,
+    current_project_path: Option<String>,
+) -> BackendResult<State> {
+    add_project_impl(project_path, name, current_project_path, None).await
+}
+
+pub async fn add_project_impl(
+    project_path: String,
+    name: Option<String>,
+    current_project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    if project_path.is_empty() {
+        return Err(BackendError::Validation(
+            "project_path is required".to_string(),
+        ));
+    }
+    let ctx = load_context(
+        current_project_path.clone(),
+        app_home_override.clone(),
+    )
+    .await?;
+
+    let target = Path::new(&project_path).to_path_buf();
+    let mut record = build_project_record(&target, ProjectSource::Manual).await;
+    if let Some(n) = name.filter(|s| !s.is_empty()) {
+        record.name = n;
+    }
+
+    let existing = normalize_project_records(ctx.config.projects.clone());
+    let merged = merge_project_records(existing, vec![record]);
+
+    let projects_json: Vec<serde_json::Value> = merged
+        .into_iter()
+        .filter_map(|p| serde_json::to_value(p).ok())
+        .collect();
+
+    let mut next = ctx.config.clone();
+    next.projects = projects_json;
+    save_merged_config(&ctx.app_home, &next).await?;
+    build_state(current_project_path, app_home_override).await
+}
+
+#[tauri::command]
+pub async fn remove_project(
+    project_path: String,
+    current_project_path: Option<String>,
+) -> BackendResult<State> {
+    remove_project_impl(project_path, current_project_path, None).await
+}
+
+pub async fn remove_project_impl(
+    project_path: String,
+    current_project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    let ctx = load_context(
+        current_project_path.clone(),
+        app_home_override.clone(),
+    )
+    .await?;
+
+    let normalized = normalize_project_path(Path::new(&project_path))
+        .to_string_lossy()
+        .into_owned();
+
+    // Drop matching project records.
+    let kept: Vec<serde_json::Value> = ctx
+        .config
+        .projects
+        .iter()
+        .filter(|v| {
+            let p = v.get("path").and_then(|p| p.as_str()).unwrap_or("");
+            p != normalized
+        })
+        .cloned()
+        .collect();
+
+    let mut next = ctx.config.clone();
+    next.projects = kept;
+    save_merged_config(&ctx.app_home, &next).await?;
+
+    // `core.js::removeProject` does not touch `recentProjects`; we match
+    // that behavior for parity.
+    let resolved_current = current_project_path.unwrap_or(normalized);
+    build_state(Some(resolved_current), app_home_override).await
+}
+
+#[tauri::command]
+pub async fn clear_scanned_projects(
+    project_path: Option<String>,
+) -> BackendResult<State> {
+    clear_scanned_projects_impl(project_path, None).await
+}
+
+pub async fn clear_scanned_projects_impl(
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    // Keep only entries whose source is "manual".
+    let kept: Vec<serde_json::Value> = ctx
+        .config
+        .projects
+        .iter()
+        .filter(|v| {
+            v.get("source")
+                .and_then(|s| s.as_str())
+                .map(|s| s == "manual")
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    let mut next = ctx.config.clone();
+    next.projects = kept;
+    save_merged_config(&ctx.app_home, &next).await?;
+    build_state(project_path, app_home_override).await
+}
+
+#[tauri::command]
+pub async fn scan_projects(
+    roots: Option<Vec<String>>,
+    max_depth: Option<u32>,
+    project_path: Option<String>,
+) -> BackendResult<ScanProjectsResponse> {
+    scan_projects_impl(roots, max_depth, project_path, None).await
+}
+
+pub async fn scan_projects_impl(
+    roots: Option<Vec<String>>,
+    max_depth: Option<u32>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<ScanProjectsResponse> {
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    let report = scan_project_roots(
+        roots.as_deref(),
+        max_depth,
+        &ctx.home_dir,
+        &ctx.app_home,
+        &ctx.vault_root,
+    )
+    .await;
+
+    // Merge discovered projects into the config and persist.
+    let existing = normalize_project_records(ctx.config.projects.clone());
+    let merged = merge_project_records(existing, report.projects.clone());
+    let projects_json: Vec<serde_json::Value> = merged
+        .into_iter()
+        .filter_map(|p| serde_json::to_value(p).ok())
+        .collect();
+    let mut next = ctx.config.clone();
+    next.projects = projects_json;
+    save_merged_config(&ctx.app_home, &next).await?;
+
+    let state = build_state(project_path, app_home_override).await?;
+    Ok(ScanProjectsResponse {
+        state,
+        report: ScanReport {
+            roots: report.roots,
+            // Drop per-project records from the wire payload to keep it
+            // light: the frontend reads `state.projects` for the merged
+            // list. Skipped/discovered/skipped_count remain.
+            projects: Vec::new(),
+            skipped: report.skipped,
+            discovered: report.discovered,
+            skipped_count: report.skipped_count,
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn pick_directory(
+    app: tauri::AppHandle,
+) -> BackendResult<PickDirectoryResponse> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+
+    app.dialog().file().pick_folder(move |folder| {
+        let path = folder
+            .and_then(|fp| fp.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned());
+        let _ = tx.send(path);
+    });
+
+    let path = rx
+        .await
+        .map_err(|e| BackendError::Validation(format!("dialog error: {e}")))?;
+    Ok(PickDirectoryResponse { path })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1202,5 +1521,194 @@ mod tests {
         let ids: Vec<&str> = state.skills.iter().map(|s| s.id.as_str()).collect();
         assert!(ids.contains(&"a/dup"));
         assert!(!ids.contains(&"b/dup"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 tests.
+    // -----------------------------------------------------------------------
+
+    /// Helper: load the persisted config straight from disk.
+    async fn load_config(app_home: &Path) -> Config {
+        Config::load(&app_home.join("config.json"))
+            .await
+            .expect("load config")
+    }
+
+    #[tokio::test]
+    async fn write_config_partial_only_updates_present_fields() {
+        let env = make_env().await;
+
+        // Seed a recent_projects list we can verify is preserved.
+        {
+            let mut c = load_config(&env.app_home).await;
+            c.recent_projects = vec!["/tmp/keep-me".to_string()];
+            c.hidden_target_ids = vec!["claude-global".to_string()];
+            c.save(&env.app_home.join("config.json")).await.unwrap();
+        }
+
+        // Now only update hidden_target_ids; recent_projects must stay.
+        write_config_impl(
+            None,
+            None,
+            None,
+            None,
+            Some(vec!["codex-global".to_string()]),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("write_config");
+
+        let after = load_config(&env.app_home).await;
+        assert_eq!(after.recent_projects, vec!["/tmp/keep-me".to_string()]);
+        assert_eq!(after.hidden_target_ids, vec!["codex-global".to_string()]);
+        // Custom targets must be unchanged (still the one from make_env).
+        assert_eq!(after.custom_targets.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_project_dedupes_against_existing() {
+        let env = make_env().await;
+        let proj = env._root.path().join("manual-proj");
+        fs::create_dir_all(&proj).await.unwrap();
+
+        // First add.
+        add_project_impl(
+            proj.to_string_lossy().into_owned(),
+            Some("First".to_string()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("first add");
+
+        // Second add of the same project — should not duplicate.
+        let state = add_project_impl(
+            proj.to_string_lossy().into_owned(),
+            Some("Second".to_string()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("second add");
+
+        let matching: Vec<&ProjectRecord> = state
+            .projects
+            .iter()
+            .filter(|p| p.path == proj.to_string_lossy())
+            .collect();
+        assert_eq!(matching.len(), 1, "project should be deduped");
+        // Manual entries keep their original source.
+        assert_eq!(matching[0].source, "manual");
+    }
+
+    #[tokio::test]
+    async fn remove_project_drops_from_list_and_recent() {
+        let env = make_env().await;
+        let proj = env._root.path().join("to-remove");
+        fs::create_dir_all(&proj).await.unwrap();
+
+        add_project_impl(
+            proj.to_string_lossy().into_owned(),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        // Sanity: it's present.
+        let before = load_config(&env.app_home).await;
+        assert!(before.projects.iter().any(|v| v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|s| s == proj.to_string_lossy())
+            .unwrap_or(false)));
+
+        remove_project_impl(
+            proj.to_string_lossy().into_owned(),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("remove");
+
+        let after = load_config(&env.app_home).await;
+        assert!(!after.projects.iter().any(|v| v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|s| s == proj.to_string_lossy())
+            .unwrap_or(false)));
+    }
+
+    #[tokio::test]
+    async fn clear_scanned_projects_keeps_manual_projects() {
+        let env = make_env().await;
+
+        // Seed a mix of manual + scan projects directly into the config.
+        {
+            let mut c = load_config(&env.app_home).await;
+            c.projects = vec![
+                serde_json::json!({
+                    "path": "/tmp/manual-1",
+                    "name": "manual-1",
+                    "source": "manual",
+                }),
+                serde_json::json!({
+                    "path": "/tmp/scan-1",
+                    "name": "scan-1",
+                    "source": "scan",
+                }),
+                serde_json::json!({
+                    "path": "/tmp/scan-2",
+                    "name": "scan-2",
+                    "source": "scan",
+                }),
+            ];
+            c.save(&env.app_home.join("config.json")).await.unwrap();
+        }
+
+        clear_scanned_projects_impl(None, Some(env.app_home.clone()))
+            .await
+            .expect("clear");
+
+        let after = load_config(&env.app_home).await;
+        let paths: Vec<String> = after
+            .projects
+            .iter()
+            .map(|v| {
+                v.get("path")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+        assert!(paths.contains(&"/tmp/manual-1".to_string()));
+        assert!(!paths.contains(&"/tmp/scan-1".to_string()));
+        assert!(!paths.contains(&"/tmp/scan-2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn find_project_skill_sources_finds_known_dirs() {
+        use crate::backend::projects::find_project_skill_sources;
+
+        let dir = TempDir::new().unwrap();
+        let project = dir.path().join("proj");
+        // Standard `skills/` with one skill.
+        let s1 = project.join("skills").join("a");
+        fs::create_dir_all(&s1).await.unwrap();
+        fs::write(s1.join("SKILL.md"), "---\nname: a\n---\n").await.unwrap();
+        // .claude/skills/ with one skill.
+        let s2 = project.join(".claude").join("skills").join("b");
+        fs::create_dir_all(&s2).await.unwrap();
+        fs::write(s2.join("SKILL.md"), "---\nname: b\n---\n").await.unwrap();
+
+        let sources = find_project_skill_sources(&project).await;
+        assert_eq!(sources.len(), 2, "should find skills/ and .claude/skills/");
+        assert!(sources
+            .iter()
+            .any(|s| s.path.ends_with("skills") && !s.path.contains(".claude")));
+        assert!(sources.iter().any(|s| s.path.contains(".claude")));
     }
 }

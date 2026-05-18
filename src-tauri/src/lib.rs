@@ -27,6 +27,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(DesktopServer(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             backend::commands::get_state,
@@ -39,6 +40,12 @@ pub fn run() {
             backend::commands::bulk_delete_skills,
             backend::commands::find_vault_duplicates,
             backend::commands::dedupe_vault_skills,
+            backend::commands::write_config,
+            backend::commands::add_project,
+            backend::commands::remove_project,
+            backend::commands::clear_scanned_projects,
+            backend::commands::scan_projects,
+            backend::commands::pick_directory,
         ])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]
