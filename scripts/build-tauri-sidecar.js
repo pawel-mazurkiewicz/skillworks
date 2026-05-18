@@ -1,4 +1,12 @@
 const fs = require("node:fs");
+
+// When SKILLWORKS_SIDECAR_PREBUILT=1 the release script has already built and
+// lipo'd the sidecar. Skip so we don't overwrite the universal binary.
+if (process.env.SKILLWORKS_SIDECAR_PREBUILT) {
+  console.log("Skipping sidecar build — SKILLWORKS_SIDECAR_PREBUILT is set");
+  process.exit(0);
+}
+
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 

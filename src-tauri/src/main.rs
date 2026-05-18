@@ -3,7 +3,10 @@
 use std::sync::Mutex;
 
 use tauri::Manager;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::process::CommandChild;
+#[cfg(not(debug_assertions))]
+use tauri_plugin_shell::process::CommandEvent;
+#[cfg(not(debug_assertions))]
 use tauri_plugin_shell::ShellExt;
 
 struct DesktopServer(Mutex<Option<CommandChild>>);
@@ -21,15 +24,26 @@ impl Drop for DesktopServer {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DesktopServer(Mutex::new(None)))
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(not(debug_assertions))]
-            start_server_sidecar(app);
+            start_server_sidecar(_app);
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Skillworks desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Skillworks desktop")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let server = app_handle.state::<DesktopServer>();
+                if let Ok(mut child) = server.0.lock() {
+                    if let Some(c) = child.take() {
+                        let _ = c.kill();
+                    }
+                };
+            }
+        });
 }
 
 #[cfg(not(debug_assertions))]
