@@ -434,6 +434,60 @@ pub async fn save_skill_file_impl(
     build_state(project_path, app_home_override).await
 }
 
+/// Create a brand-new vault skill from scratch. Mirrors
+/// `core.js::createSkill({ name, description, content })`.
+///
+/// Returns the freshly built `State` so the frontend can `applyState()` the
+/// result directly, matching the legacy HTTP shape.
+#[tauri::command]
+pub async fn create_skill(
+    name: String,
+    description: Option<String>,
+    content: Option<String>,
+    project_path: Option<String>,
+) -> BackendResult<State> {
+    create_skill_impl(name, description, content, project_path, None).await
+}
+
+pub async fn create_skill_impl(
+    name: String,
+    description: Option<String>,
+    content: Option<String>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<State> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(BackendError::Validation(
+            "Skill name is required".to_string(),
+        ));
+    }
+
+    let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
+    fs::create_dir_all(&ctx.vault_root).await?;
+    let destination = unique_skill_destination(&ctx.vault_root, trimmed_name).await;
+    fs::create_dir_all(&destination).await?;
+
+    let body = match content.as_ref().map(|s| s.as_str()) {
+        Some(raw) if !raw.trim().is_empty() => raw.to_string(),
+        _ => {
+            let desc = description
+                .as_ref()
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| "Describe when this skill should be used.".to_string());
+            format!(
+                "---\nname: {name}\ndescription: {desc}\n---\n\n# Workflow\n\nAdd the operating instructions for this skill here.\n",
+                name = trimmed_name,
+                desc = desc,
+            )
+        }
+    };
+
+    fs::write(destination.join(SKILL_FILE), body).await?;
+    build_state(project_path, app_home_override).await
+}
+
 #[tauri::command]
 pub async fn toggle_skill(
     skill_id: String,
@@ -2259,6 +2313,98 @@ mod tests {
             .await
             .unwrap();
         assert!(on_disk.contains("updated"));
+    }
+
+    #[tokio::test]
+    async fn create_skill_writes_default_skill_file() {
+        let env = make_env().await;
+
+        let state = create_skill_impl(
+            "My New Skill".to_string(),
+            Some("A test skill".to_string()),
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create");
+
+        // State should now contain the freshly created skill.
+        assert!(
+            state
+                .skills
+                .iter()
+                .any(|s| s.name == "My New Skill" || s.id.contains("my-new-skill")),
+            "new skill missing from state: {:?}",
+            state.skills.iter().map(|s| &s.id).collect::<Vec<_>>(),
+        );
+
+        // SKILL.md should have been written with the frontmatter and default body.
+        let dirs: Vec<_> = std::fs::read_dir(&env.vault)
+            .unwrap()
+            .filter_map(|d| d.ok())
+            .filter(|d| d.path().is_dir())
+            .collect();
+        assert_eq!(dirs.len(), 1, "vault should contain exactly one skill dir");
+        let skill_md = dirs[0].path().join(SKILL_FILE);
+        let body = std::fs::read_to_string(&skill_md).unwrap();
+        assert!(body.contains("name: My New Skill"));
+        assert!(body.contains("description: A test skill"));
+        assert!(body.contains("# Workflow"));
+    }
+
+    #[tokio::test]
+    async fn create_skill_uses_explicit_content_when_provided() {
+        let env = make_env().await;
+
+        let custom = "---\nname: Custom\ndescription: x\n---\n\nhello\n";
+        create_skill_impl(
+            "Custom".to_string(),
+            None,
+            Some(custom.to_string()),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create");
+
+        let skill_md = env.vault.join("custom").join(SKILL_FILE);
+        let body = std::fs::read_to_string(&skill_md).unwrap();
+        assert_eq!(body, custom);
+    }
+
+    #[tokio::test]
+    async fn create_skill_rejects_empty_name() {
+        let env = make_env().await;
+        let result = create_skill_impl(
+            "   ".to_string(),
+            None,
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
+        assert!(matches!(result, Err(BackendError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn create_skill_disambiguates_existing_destination() {
+        let env = make_env().await;
+        write_skill_file(&env.vault.join("duplicate"), "Duplicate", "orig").await;
+
+        create_skill_impl(
+            "Duplicate".to_string(),
+            None,
+            None,
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await
+        .expect("create");
+
+        // The original is preserved; the new skill lands at duplicate-2.
+        assert!(env.vault.join("duplicate").join(SKILL_FILE).is_file());
+        assert!(env.vault.join("duplicate-2").join(SKILL_FILE).is_file());
     }
 
     #[tokio::test]

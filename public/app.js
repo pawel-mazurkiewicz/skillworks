@@ -3,10 +3,10 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import { mountCreateSkillEditor, mountSkillEditor, unmountAllSkillEditors, unmountSkillEditor } from "./skill-editor.jsx";
+import { api } from "./api-shim.js";
 import "./styles.css";
 
 const PROJECT_CACHE_KEY = "asm.projects";
-const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
 const SIDEBAR_COLLAPSE_KEY = "skillworks.sidebarCollapsed";
 
 const state = {
@@ -170,6 +170,9 @@ const elements = {
 bootstrap();
 
 async function bootstrap() {
+  // Allow the api-shim to surface error messages through the same toast
+  // pipeline the legacy fetch helper used.
+  window.__SKILLWORKS_TOAST__ = showToast;
   elements.topTabs.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeTopTab = button.dataset.topTab;
@@ -2256,30 +2259,6 @@ async function bulkDelete() {
     render();
     showToast(`Deleted ${result.deleted.length}, errors ${result.errors.length}`);
   });
-}
-
-async function api(url, options = {}) {
-  const response = await fetch(apiUrl(url), {
-    method: options.method || "GET",
-    headers: options.body ? { "content-type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    showToast(payload.error || "Request failed");
-    throw new Error(payload.error || "Request failed");
-  }
-  return payload;
-}
-
-function apiUrl(url) {
-  const value = String(url);
-  if (/^https?:\/\//.test(value)) {
-    return value;
-  }
-  return isTauriDesktop() && value.startsWith("/api/")
-    ? `${DESKTOP_API_ORIGIN}${value}`
-    : value;
 }
 
 function isTauriDesktop() {
