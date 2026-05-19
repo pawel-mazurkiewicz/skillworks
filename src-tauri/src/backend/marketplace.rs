@@ -8,6 +8,7 @@
 //! can inject a deterministic mock without spinning up a real server.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -136,10 +137,222 @@ pub async fn fetch_marketplace_skills_with<C: HttpClient + ?Sized>(
     match attempt {
         Ok(resp) => Ok(resp),
         Err(BackendError::Validation(msg)) if msg == AUTH_REQUIRED_MARKER => {
-            scrape_marketplace_skills(client, &trimmed, &view, &page, &per_page).await
+            // For real search queries, the single-page `/trending` scrape only
+            // sees ~24 results and almost always returns nothing useful. Use
+            // the sitemap (broad index of every skill) to actually search.
+            if trimmed.len() >= 2 {
+                let limit: u32 = per_page.parse().ok().filter(|n| *n >= 1).unwrap_or(24).min(100);
+                match scrape_search_all(client, &trimmed, limit as usize).await {
+                    Ok(resp) => Ok(resp),
+                    // Sitemap blew up — fall back to the per-page scrape so we
+                    // at least return something rather than an opaque error.
+                    Err(_) => {
+                        scrape_marketplace_skills(client, &trimmed, &view, &page, &per_page).await
+                    }
+                }
+            } else {
+                scrape_marketplace_skills(client, &trimmed, &view, &page, &per_page).await
+            }
         }
         Err(e) => Err(e),
     }
+}
+
+/// Cached sitemap entries (skill URLs) for the lifetime of the process.
+/// Searches are read-only, so a single `Mutex<Option<...>>` is enough; we
+/// don't need a full RwLock or async cache.
+static SITEMAP_CACHE: Lazy<Mutex<Option<Vec<MarketplaceSkill>>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Broad search across skills.sh. Tries the sitemap first (cheap, indexes
+/// every skill) and falls back to multi-page HTML scraping if the sitemap
+/// isn't available. The result is filtered client-side by `query` and
+/// trimmed to `limit` entries.
+async fn scrape_search_all<C: HttpClient + ?Sized>(
+    client: &C,
+    query: &str,
+    limit: usize,
+) -> BackendResult<MarketplaceSkillsResponse> {
+    let normalized = query.to_lowercase();
+    let cached = { SITEMAP_CACHE.lock().unwrap().clone() };
+    let all_skills = if let Some(cached) = cached {
+        cached
+    } else {
+        match fetch_sitemap_skills(client).await {
+            Ok(skills) if !skills.is_empty() => {
+                *SITEMAP_CACHE.lock().unwrap() = Some(skills.clone());
+                skills
+            }
+            _ => scrape_multi_page_all(client).await?,
+        }
+    };
+
+    let filtered: Vec<MarketplaceSkill> = all_skills
+        .into_iter()
+        .filter(|skill| skill_matches_query(skill, &normalized))
+        .collect();
+    let total = filtered.len() as u32;
+    let data: Vec<MarketplaceSkill> = filtered.into_iter().take(limit).collect();
+
+    Ok(MarketplaceSkillsResponse {
+        data,
+        scraped: Some(true),
+        query: Some(query.to_string()),
+        count: Some(total),
+        pagination: Some(MarketplacePagination {
+            page: 0,
+            per_page: limit as u32,
+            total,
+            has_more: false,
+        }),
+        ..MarketplaceSkillsResponse::default()
+    })
+}
+
+fn skill_matches_query(skill: &MarketplaceSkill, normalized_query: &str) -> bool {
+    let hay = format!(
+        "{} {} {}",
+        skill.id,
+        skill.name.as_deref().unwrap_or(""),
+        skill.source.as_deref().unwrap_or("")
+    )
+    .to_lowercase();
+    hay.contains(normalized_query)
+}
+
+/// Fetches the skills.sh sitemap index, then each child sitemap, and
+/// returns every skill URL as a `MarketplaceSkill`. Returns an empty list
+/// if the sitemap is missing or unparseable — the caller is expected to
+/// fall back to multi-page HTML scraping in that case.
+async fn fetch_sitemap_skills<C: HttpClient + ?Sized>(
+    client: &C,
+) -> BackendResult<Vec<MarketplaceSkill>> {
+    let index = fetch_sitemap_text(client, "/sitemap.xml").await?;
+    let child_urls = extract_loc_urls(&index);
+    // The index either points at child sitemaps (typical) or already
+    // contains skill URLs directly. Handle both.
+    let mut all_locs: Vec<String> = Vec::new();
+    let mut had_child_sitemap = false;
+    for url in &child_urls {
+        if url.contains("/sitemap") && url.ends_with(".xml") {
+            had_child_sitemap = true;
+            if let Ok(child) = fetch_sitemap_absolute(client, url).await {
+                all_locs.extend(extract_loc_urls(&child));
+            }
+        }
+    }
+    if !had_child_sitemap {
+        all_locs = child_urls;
+    }
+
+    let mut skills: Vec<MarketplaceSkill> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for url in all_locs {
+        if let Some(skill) = skill_from_sitemap_url(&url) {
+            if seen.insert(skill.id.clone()) {
+                skills.push(skill);
+            }
+        }
+    }
+    Ok(skills)
+}
+
+async fn fetch_sitemap_text<C: HttpClient + ?Sized>(
+    client: &C,
+    pathname: &str,
+) -> BackendResult<String> {
+    fetch_sitemap_absolute(client, &format!("{}{}", BASE_URL, pathname)).await
+}
+
+async fn fetch_sitemap_absolute<C: HttpClient + ?Sized>(
+    client: &C,
+    url: &str,
+) -> BackendResult<String> {
+    let resp = client
+        .get(url, &[("accept", "application/xml"), ("user-agent", USER_AGENT)])
+        .await?;
+    if !resp.is_ok() {
+        return Err(BackendError::Validation(format!(
+            "sitemap fetch failed ({}) for {}",
+            resp.status, url
+        )));
+    }
+    Ok(resp.body)
+}
+
+static LOC_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"<loc>\s*([^<]+?)\s*</loc>").expect("valid loc regex")
+});
+
+/// Pulls every `<loc>` value out of a sitemap XML doc. Works for both the
+/// sitemap index and per-file sitemaps since they share the same envelope.
+fn extract_loc_urls(xml: &str) -> Vec<String> {
+    LOC_PATTERN
+        .captures_iter(xml)
+        .filter_map(|cap| cap.get(1).map(|m| decode_html(m.as_str().trim())))
+        .collect()
+}
+
+/// Parse a `https://www.skills.sh/{owner}/{repo}/{slug}` URL into a
+/// `MarketplaceSkill`. Returns `None` for URLs that aren't skill pages
+/// (the sitemap also contains owner pages and chrome).
+fn skill_from_sitemap_url(url: &str) -> Option<MarketplaceSkill> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    if !(host == "skills.sh" || host == "www.skills.sh") {
+        return None;
+    }
+    let path = parsed.path().trim_matches('/').to_string();
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    if is_non_skill_path(&parts) {
+        return None;
+    }
+    let owner = parts[0];
+    let repo = parts[1];
+    let slug = parts[2];
+    let key = format!("{}/{}/{}", owner, repo, slug);
+    Some(MarketplaceSkill {
+        id: key.clone(),
+        slug: Some(slug.to_string()),
+        name: Some(humanize_skill_slug(slug)),
+        source: Some(format!("{}/{}", owner, repo)),
+        source_type: Some("github".to_string()),
+        install_url: Some(format!("https://github.com/{}/{}", owner, repo)),
+        url: Some(format!("https://skills.sh/{}", key)),
+        owner: None,
+        scraped: Some(true),
+        extra: serde_json::Map::new(),
+    })
+}
+
+/// Sitemap-less fallback. Scrapes the first few `/all-time` pages so a
+/// search still has more than one page of candidates to filter through.
+async fn scrape_multi_page_all<C: HttpClient + ?Sized>(
+    client: &C,
+) -> BackendResult<Vec<MarketplaceSkill>> {
+    const PAGE_COUNT: u32 = 6;
+    let mut all: Vec<MarketplaceSkill> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for page in 0..PAGE_COUNT {
+        let path = if page == 0 {
+            "/all-time".to_string()
+        } else {
+            format!("/all-time?page={}", page)
+        };
+        let html = match fetch_skills_page(client, &path).await {
+            Ok(html) => html,
+            Err(_) => continue,
+        };
+        for skill in extract_skill_links(&html) {
+            if seen.insert(skill.id.clone()) {
+                all.push(skill);
+            }
+        }
+    }
+    Ok(all)
 }
 
 /// Sentinel error message used to flag the 401-authentication-required
@@ -675,6 +888,73 @@ mod tests {
         assert!(is_non_skill_path(&["o", "x", "security"]));
         assert!(is_non_skill_path(&["o", "security", "y"]));
         assert!(!is_non_skill_path(&["o", "r", "s"]));
+    }
+
+    #[tokio::test]
+    async fn search_falls_back_to_sitemap_on_401() {
+        // Search query → API → 401 → sitemap index → child sitemap → filter.
+        let body_401 = r#"{"error":"authentication_required"}"#;
+        let sitemap_index = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap><loc>https://www.skills.sh/sitemap-skills-1.xml</loc></sitemap>
+            </sitemapindex>"#;
+        let child_sitemap = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://www.skills.sh/anthropic/skills/markdown-magic</loc></url>
+              <url><loc>https://www.skills.sh/acme/repo/typescript-guru</loc></url>
+              <url><loc>https://www.skills.sh/_next/static/foo.js</loc></url>
+              <url><loc>https://www.skills.sh/acme/repo/typescript-types</loc></url>
+              <url><loc>https://www.skills.sh/other/repo/python-stuff</loc></url>
+            </urlset>"#;
+        let client = MockClient::new(vec![
+            HttpResponse {
+                status: 401,
+                body: body_401.to_string(),
+            },
+            ok_json(sitemap_index),
+            ok_json(child_sitemap),
+        ]);
+        // Reset the cache so this test sees a fresh fetch.
+        *SITEMAP_CACHE.lock().unwrap() = None;
+        let resp = fetch_marketplace_skills_with(
+            &client,
+            Some("typescript".to_string()),
+            Some("trending".to_string()),
+            None,
+            Some("24".to_string()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.scraped, Some(true));
+        assert_eq!(resp.count, Some(2));
+        assert_eq!(resp.data.len(), 2);
+        let ids: Vec<&str> = resp.data.iter().map(|s| s.id.as_str()).collect();
+        assert!(ids.contains(&"acme/repo/typescript-guru"));
+        assert!(ids.contains(&"acme/repo/typescript-types"));
+        // Clear cache so other tests aren't tainted.
+        *SITEMAP_CACHE.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn skill_from_sitemap_url_filters_chrome() {
+        assert!(skill_from_sitemap_url("https://www.skills.sh/owner/repo/slug").is_some());
+        assert!(skill_from_sitemap_url("https://skills.sh/owner/repo/slug").is_some());
+        assert!(skill_from_sitemap_url("https://www.skills.sh/_next/static/foo").is_none());
+        assert!(skill_from_sitemap_url("https://www.skills.sh/agents/index/x").is_none());
+        assert!(skill_from_sitemap_url("https://example.com/owner/repo/slug").is_none());
+        assert!(skill_from_sitemap_url("https://www.skills.sh/just/two").is_none());
+    }
+
+    #[test]
+    fn extract_loc_urls_parses_index_and_urlset() {
+        let xml = r#"
+            <urlset>
+              <url><loc>https://example/a</loc></url>
+              <url><loc>  https://example/b  </loc></url>
+            </urlset>
+        "#;
+        let urls = extract_loc_urls(xml);
+        assert_eq!(urls, vec!["https://example/a", "https://example/b"]);
     }
 
     #[tokio::test]
