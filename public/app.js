@@ -1104,7 +1104,9 @@ async function loadMarketplace() {
   if (state.marketplace.query) {
     params.set("q", state.marketplace.query);
   }
-  elements.marketplaceStatus.textContent = "Loading skills.sh...";
+  elements.marketplaceStatus.textContent = state.marketplace.query.length >= 2
+    ? `Searching skills.sh for "${state.marketplace.query}"...`
+    : "Loading skills.sh...";
   try {
     const payload = await api(`/api/marketplace/skills?${params.toString()}`);
     state.marketplace.items = Array.isArray(payload.data) ? payload.data : [];
@@ -1152,6 +1154,28 @@ function renderMarketplace() {
   elements.marketplaceResults.querySelectorAll("[data-marketplace-install]").forEach((button) => {
     button.addEventListener("click", () => installMarketplaceSkill(button.dataset.marketplaceInstall));
   });
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-open]").forEach((button) => {
+    button.addEventListener("click", () => openExternalUrl(button.dataset.marketplaceOpen));
+  });
+}
+
+async function openExternalUrl(url) {
+  if (!url) {
+    return;
+  }
+  try {
+    const opener = window.__TAURI__ && window.__TAURI__.opener;
+    if (opener && typeof opener.openUrl === "function") {
+      await opener.openUrl(url);
+      return;
+    }
+  } catch (error) {
+    console.error("openUrl failed", error);
+    showToast("Could not open link");
+    return;
+  }
+  // Browser fallback (when running outside Tauri shell, e.g. dev server).
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function renderMarketplaceSkill(skill) {
@@ -1173,7 +1197,7 @@ function renderMarketplaceSkill(skill) {
         </div>
       </div>
       <div class="marketplace-card-actions">
-        ${skill.url ? `<a class="button ghost marketplace-link" href="${escapeAttr(skill.url)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+        ${skill.url ? `<button class="button ghost marketplace-link" type="button" data-marketplace-open="${escapeAttr(skill.url)}">Open</button>` : ""}
         <button class="button primary" type="button" data-marketplace-install="${escapeHtml(skill.id)}">${installed ? "Use Git again" : "Use Git"}</button>
       </div>
     </article>
@@ -1873,6 +1897,10 @@ async function renderDetail() {
     button.addEventListener("click", () => copySelectedSkillPath());
   });
 
+  elements.skillPreview.querySelectorAll("[data-delete-selected-skill]").forEach((button) => {
+    button.addEventListener("click", () => deleteSelectedSkill());
+  });
+
   elements.skillPreview.querySelectorAll("[data-detail-target-id]").forEach((button) => {
     button.addEventListener("click", () => runAction(async () => {
       const nextEnabled = button.dataset.enabled !== "true";
@@ -2005,7 +2033,10 @@ function renderDetailPane(skill) {
           <p class="eyebrow">${escapeHtml(skillType(skill))} / ${escapeHtml(skillAuthor(skill))}</p>
           <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
         </div>
-        <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
+        <div class="detail-title-actions">
+          <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
+          <button class="button ghost" data-delete-selected-skill type="button">Delete</button>
+        </div>
       </div>
       <p class="description">${escapeHtml(skill.description || "No description")}</p>
       <section class="assignment-panel" aria-label="Agent assignment">
@@ -2035,6 +2066,31 @@ function copySelectedSkillPath() {
     }
     await navigator.clipboard.writeText(skill.path);
     showToast("Path copied");
+  });
+}
+
+function deleteSelectedSkill() {
+  return runAction(async () => {
+    const skill = selectedSkill();
+    if (!skill) {
+      return;
+    }
+    if (!window.confirm(`Delete "${skill.name}" from the vault? This cannot be undone.`)) {
+      return;
+    }
+    const result = await api("/api/bulk-delete", {
+      method: "POST",
+      body: {
+        projectPath: elements.projectInput.value,
+        skillIds: [skill.id],
+      },
+    });
+    applyState(result.state);
+    state.selectedSkillIds.delete(skill.id);
+    state.selectedSkillId = null;
+    render();
+    const errors = result.errors ? result.errors.length : 0;
+    showToast(errors ? `Delete failed (${errors} error${errors === 1 ? "" : "s"})` : `Deleted ${skill.name}`);
   });
 }
 

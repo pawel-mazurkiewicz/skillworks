@@ -786,6 +786,12 @@ textarea {
   letter-spacing: -0.005em;
 }
 
+.detail-title-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .path-list {
   display: grid;
   gap: 10px;
