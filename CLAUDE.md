@@ -2,7 +2,7 @@
 
 A local, project-aware skill workspace for coding agents (Claude Code, Codex, Cursor, OpenCode, etc.). The app keeps a canonical skill library in a hidden home-directory vault and symlinks skills into agent-specific global or project directories on demand.
 
-Stack: Tauri desktop shell with a **native Rust backend** (`src-tauri/src/backend/`) + Vite + React frontend + plain CSS design tokens. The frontend invokes Tauri commands directly — there is no Node sidecar in the desktop build. A legacy Node API server (`src/server.js`) still powers `npm run dev` (browser CLI mode) and the MCP stdio server (`src/mcp-server.js`); both are independent of the desktop app and share data on disk.
+Stack: Tauri desktop shell with a **native Rust backend** (`src-tauri/src/backend/`) + Vite + React frontend + plain CSS design tokens. The frontend invokes Tauri commands directly — there is no Node sidecar in the desktop build. A legacy MCP stdio server (`src/mcp-server.js`) is the only remaining Node entrypoint; it shares vault, config, and manifest files on disk with the desktop app but runs as an independent process for agent-driven activation.
 
 ## Design Context
 

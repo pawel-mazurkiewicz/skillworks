@@ -18,9 +18,7 @@
     "README.md"
   ],
   "scripts": {
-    "start": "node src/server.js",
     "mcp": "node src/mcp-server.js",
-    "static": "node src/server.js --host 127.0.0.1 --port 5179",
     "dev": "node scripts/vite-dev.js",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",

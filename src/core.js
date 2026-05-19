@@ -1,7 +1,7 @@
-// LEGACY (Node.js only): This module powers `npm start` (browser-based CLI mode)
-// and is no longer used by the desktop app. The desktop app uses native Rust
-// Tauri commands in `src-tauri/src/backend/`. Kept for backward compatibility
-// with the browser/CLI use case; new business logic belongs in Rust.
+// LEGACY (Node.js only): This module is consumed by `src/mcp-server.js`
+// (the MCP stdio server, `npm run mcp`) and is not used by the desktop app.
+// The desktop app uses native Rust Tauri commands in `src-tauri/src/backend/`.
+// Kept for the MCP server only; new business logic belongs in Rust.
 
 const crypto = require("node:crypto");
 const syncFs = require("node:fs");
