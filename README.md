@@ -6,6 +6,12 @@ A local, project-aware skill workspace for coding agents.
 
 The app keeps the canonical skill library in a hidden home-directory vault and activates skills by symlinking them into agent-specific global or project directories. The UI is built with Vite and can run in a browser during development or inside the Tauri desktop shell for release builds.
 
+## Architecture
+
+The desktop app (Tauri) uses **native Rust backend commands** in `src-tauri/src/backend/` — no Node sidecar is bundled or required. The frontend invokes Tauri commands directly via the `@tauri-apps/api` shim.
+
+The legacy **Node API server** (`src/server.js`) still powers the browser/CLI mode (`npm run dev`, `npm start`) and the **MCP stdio server** (`src/mcp-server.js`) for agent-driven activation. Both share data files on disk (vault, config, manifests) with the desktop app, but they are independent processes.
+
 ## Run
 
 For browser development with the Node API server and Vite dev server:
