@@ -41,11 +41,11 @@ WINDOWS_SIG=$(cat "$WINDOWS_SIG_FILE")
 # ── 2. Resolve exact artifact filenames from the release ──────────────────────
 log "Resolving artifact filenames..."
 MACOS_TAR=$(gh release view "$VERSION" --repo "$GITHUB_REPO" --json assets \
-  --jq '[.assets[].name | select(test("\\.app\\.tar\\.gz$"))] | first')
+  --jq '[.assets[].name | select(test("\\.app\\.tar\\.gz$"))] | first // empty')
 LINUX_TAR=$(gh release view "$VERSION" --repo "$GITHUB_REPO" --json assets \
-  --jq '[.assets[].name | select(test("\\.AppImage\\.tar\\.gz$"))] | first')
+  --jq '[.assets[].name | select(test("\\.AppImage\\.tar\\.gz$"))] | first // empty')
 WINDOWS_ZIP=$(gh release view "$VERSION" --repo "$GITHUB_REPO" --json assets \
-  --jq '[.assets[].name | select(test("\\.nsis\\.zip$"))] | first')
+  --jq '[.assets[].name | select(test("\\.nsis\\.zip$"))] | first // empty')
 
 [[ -z "$MACOS_TAR" ]]    && err "No .app.tar.gz asset found in the release"
 [[ -z "$LINUX_TAR" ]]    && err "No .AppImage.tar.gz asset found in the release"

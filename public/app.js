@@ -1121,7 +1121,6 @@ async function loadMarketplace() {
     state.marketplace.loaded = true;
     state.marketplace.error = error.message || "Marketplace unavailable.";
     renderMarketplace();
-    throw error;
   }
 }
 

@@ -4061,6 +4061,7 @@ dependencies = [
  "git2",
  "glob",
  "hex",
+ "libc",
  "once_cell",
  "rand 0.8.6",
  "regex",
