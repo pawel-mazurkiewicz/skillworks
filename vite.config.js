@@ -13,9 +13,6 @@ module.exports = defineConfig({
     host: tauriHost || "127.0.0.1",
     port: 5173,
     strictPort: true,
-    proxy: {
-      "/api": "http://127.0.0.1:5179",
-    },
     hmr: tauriHost
       ? {
           protocol: "ws",

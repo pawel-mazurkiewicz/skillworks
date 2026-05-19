@@ -2,11 +2,12 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
-import { mountSkillEditor, unmountAllSkillEditors } from "./skill-editor.jsx";
+import { mountCreateSkillEditor, mountSkillEditor, unmountAllSkillEditors, unmountSkillEditor } from "./skill-editor.jsx";
+import { api } from "./api-shim.js";
 import "./styles.css";
 
 const PROJECT_CACHE_KEY = "asm.projects";
-const DESKTOP_API_ORIGIN = "http://127.0.0.1:5179";
+const SIDEBAR_COLLAPSE_KEY = "skillworks.sidebarCollapsed";
 
 const state = {
   data: null,
@@ -15,9 +16,24 @@ const state = {
   activeTag: "All",
   activeTopTab: "manage",
   search: "",
+  filterTargetId: "all",
+  filterStatus: "all",
+  filterType: "all",
+  sortBy: "name-asc",
   preview: null,
   dedupe: null,
   dedupeChoices: new Map(),
+  activeInstallTab: "marketplace",
+  marketplace: {
+    query: "",
+    view: "trending",
+    page: 0,
+    perPage: 24,
+    items: [],
+    pagination: null,
+    loaded: false,
+    error: "",
+  },
 };
 
 let setsState = {
@@ -55,10 +71,12 @@ const elements = {
   pathForm: document.querySelector("#pathForm"),
   projectInput: document.querySelector("#projectInput"),
   browseProjectButton: document.querySelector("#browseProjectButton"),
+  projectSelect: document.querySelector("#projectSelect"),
   vaultInput: document.querySelector("#vaultInput"),
   browseVaultButton: document.querySelector("#browseVaultButton"),
   saveVaultButton: document.querySelector("#saveVaultButton"),
   refreshButton: document.querySelector("#refreshButton"),
+  configureProjectsButton: document.querySelector("#configureProjectsButton"),
   skillCount: document.querySelector("#skillCount"),
   enabledCount: document.querySelector("#enabledCount"),
   unmanagedCount: document.querySelector("#unmanagedCount"),
@@ -70,16 +88,34 @@ const elements = {
   discoverySummary: document.querySelector("#discoverySummary"),
   discoveryList: document.querySelector("#discoveryList"),
   unmanagedList: document.querySelector("#unmanagedList"),
-  createSkillForm: document.querySelector("#createSkillForm"),
-  newSkillName: document.querySelector("#newSkillName"),
-  newSkillDescription: document.querySelector("#newSkillDescription"),
+  openCreateSkillButton: document.querySelector("#openCreateSkillButton"),
+  closeCreateSkillButton: document.querySelector("#closeCreateSkillButton"),
+  createSkillModal: document.querySelector('[data-modal="create-skill"]'),
+  createSkillEditorRoot: document.querySelector("#createSkillEditorRoot"),
   gitInstallForm: document.querySelector("#gitInstallForm"),
   gitRepoInput: document.querySelector("#gitRepoInput"),
   gitRefInput: document.querySelector("#gitRefInput"),
+  gitTargetPicker: document.querySelector("#gitTargetPicker"),
+  gitTargetSummary: document.querySelector("#gitTargetSummary"),
   gitTargetCheckboxes: document.querySelector("#gitTargetCheckboxes"),
   gitPreviewButton: document.querySelector("#gitPreviewButton"),
   gitPreviewResult: document.querySelector("#gitPreviewResult"),
+  installTabs: document.querySelectorAll("[data-install-tab]"),
+  installPanels: document.querySelectorAll("[data-install-panel]"),
+  marketplaceSearchInput: document.querySelector("#marketplaceSearchInput"),
+  marketplaceViewSelect: document.querySelector("#marketplaceViewSelect"),
+  marketplaceRefreshButton: document.querySelector("#marketplaceRefreshButton"),
+  marketplaceTargetSummary: document.querySelector("#marketplaceTargetSummary"),
+  marketplaceTargetCheckboxes: document.querySelector("#marketplaceTargetCheckboxes"),
+  marketplaceStatus: document.querySelector("#marketplaceStatus"),
+  marketplaceResults: document.querySelector("#marketplaceResults"),
+  marketplacePreviousButton: document.querySelector("#marketplacePreviousButton"),
+  marketplaceNextButton: document.querySelector("#marketplaceNextButton"),
   searchInput: document.querySelector("#searchInput"),
+  agentFilterSelect: document.querySelector("#agentFilterSelect"),
+  statusFilterSelect: document.querySelector("#statusFilterSelect"),
+  typeFilterSelect: document.querySelector("#typeFilterSelect"),
+  sortSelect: document.querySelector("#sortSelect"),
   bulkSelectedCount: document.querySelector("#bulkSelectedCount"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   bulkTargetSelect: document.querySelector("#bulkTargetSelect"),
@@ -107,7 +143,7 @@ const elements = {
   customTargetScope: document.querySelector("#customTargetScope"),
   customTargetPath: document.querySelector("#customTargetPath"),
   customTargetList: document.querySelector("#customTargetList"),
-  tagFilters: document.querySelector("#tagFilters"),
+  targetVisibilityList: document.querySelector("#targetVisibilityList"),
   targetStrip: document.querySelector("#targetStrip"),
   matrixHead: document.querySelector("#matrixHead"),
   matrixBody: document.querySelector("#matrixBody"),
@@ -122,6 +158,9 @@ const elements = {
   skillPreview: document.querySelector("#skillPreview"),
   copyPathButton: document.querySelector("#copyPathButton"),
   toast: document.querySelector("#toast"),
+  bulkFloating: document.querySelector("#bulkFloating"),
+  manageGrid: document.querySelector("#manageTab .manage-grid"),
+  sidebarToggle: document.querySelector('[data-action="sidebar-toggle"]'),
   dedupeScanButton: document.querySelector("#dedupeScanButton"),
   dedupeApplyButton: document.querySelector("#dedupeApplyButton"),
   dedupeSummary: document.querySelector("#dedupeSummary"),
@@ -131,6 +170,9 @@ const elements = {
 bootstrap();
 
 async function bootstrap() {
+  // Allow the api-shim to surface error messages through the same toast
+  // pipeline the legacy fetch helper used.
+  window.__SKILLWORKS_TOAST__ = showToast;
   elements.topTabs.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeTopTab = button.dataset.topTab;
@@ -140,10 +182,12 @@ async function bootstrap() {
           await loadSets();
           renderSets();
         });
+      } else if (state.activeTopTab === "install" && !state.marketplace.loaded) {
+        runAction(() => loadMarketplace());
       }
     });
   });
-  window.addEventListener("resize", relocateManageControls);
+  initSidebarToggle();
   renderTopTabs();
 
   initSetsPanel();
@@ -156,7 +200,24 @@ async function bootstrap() {
     });
   });
 
+  elements.projectSelect.addEventListener("change", () => {
+    const path = elements.projectSelect.value;
+    if (!path) return;
+    runAction(async () => {
+      elements.projectInput.value = path;
+      localStorage.setItem("asm.projectPath", path);
+      await loadState();
+      showToast("Project loaded");
+    });
+  });
+
   elements.refreshButton.addEventListener("click", () => runAction(() => loadState()));
+
+  elements.configureProjectsButton.addEventListener("click", () => {
+    state.activeTopTab = "configure";
+    renderTopTabs();
+    document.getElementById("projectsPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   elements.browseProjectButton.addEventListener("click", () => pickDirectoryInto(elements.projectInput));
   elements.browseVaultButton.addEventListener("click", () => pickDirectoryInto(elements.vaultInput));
@@ -213,27 +274,50 @@ async function bootstrap() {
     showToast(`Moved ${report.imported}, skipped ${report.skipped}, errors ${report.errors}`);
   }));
 
-  elements.createSkillForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await runAction(async () => {
-      const name = elements.newSkillName.value.trim();
-      if (!name) {
-        showToast("Skill name is required");
-        return;
+  elements.installTabs.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeInstallTab = button.dataset.installTab;
+      renderInstallTabs();
+      if (state.activeInstallTab === "marketplace" && !state.marketplace.loaded) {
+        runAction(() => loadMarketplace());
       }
-      applyState(await api("/api/create-skill", {
-        method: "POST",
-        body: {
-          name,
-          description: elements.newSkillDescription.value.trim(),
-          projectPath: elements.projectInput.value,
-        },
-      }));
-      elements.newSkillName.value = "";
-      elements.newSkillDescription.value = "";
-      render();
-      showToast("Skill created");
     });
+  });
+
+  elements.marketplaceSearchInput.addEventListener("input", () => {
+    state.marketplace.query = elements.marketplaceSearchInput.value;
+    state.marketplace.page = 0;
+    window.clearTimeout(elements.marketplaceSearchInput.searchTimeout);
+    elements.marketplaceSearchInput.searchTimeout = window.setTimeout(() => {
+      runAction(() => loadMarketplace());
+    }, 260);
+  });
+
+  elements.marketplaceViewSelect.addEventListener("change", () => {
+    state.marketplace.view = elements.marketplaceViewSelect.value;
+    state.marketplace.page = 0;
+    runAction(() => loadMarketplace());
+  });
+
+  elements.marketplaceRefreshButton.addEventListener("click", () => runAction(() => loadMarketplace()));
+  elements.marketplacePreviousButton.addEventListener("click", () => runAction(() => loadMarketplacePage(-1)));
+  elements.marketplaceNextButton.addEventListener("click", () => runAction(() => loadMarketplacePage(1)));
+  elements.marketplaceTargetCheckboxes.addEventListener("change", (event) => {
+    if (event.target.matches("input[type=checkbox]")) {
+      updateMarketplaceTargetSummary();
+    }
+  });
+
+  elements.openCreateSkillButton.addEventListener("click", () => openCreateSkillModal());
+  elements.closeCreateSkillButton.addEventListener("click", () => closeCreateSkillModal());
+  elements.createSkillModal.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeCreateSkillModal();
+  });
+  elements.createSkillModal.addEventListener("close", () => {
+    if (!elements.createSkillModal.open) {
+      unmountCreateSkillModal();
+    }
   });
 
   elements.gitPreviewButton.addEventListener("click", () => runAction(async () => {
@@ -257,6 +341,12 @@ async function bootstrap() {
     renderInstallPreview(plan, { repoUrl });
     showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
   }));
+
+  elements.gitTargetCheckboxes.addEventListener("change", (event) => {
+    if (event.target.matches("input[type=checkbox]")) {
+      updateGitTargetSummary();
+    }
+  });
 
   elements.gitInstallForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -298,6 +388,29 @@ async function bootstrap() {
     renderBulkBar();
   });
 
+  elements.agentFilterSelect.addEventListener("change", () => {
+    state.filterTargetId = elements.agentFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.statusFilterSelect.addEventListener("change", () => {
+    state.filterStatus = elements.statusFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.typeFilterSelect.addEventListener("change", () => {
+    state.filterType = elements.typeFilterSelect.value;
+    renderMatrix();
+    renderBulkBar();
+  });
+
+  elements.sortSelect.addEventListener("change", () => {
+    state.sortBy = elements.sortSelect.value;
+    renderMatrix();
+  });
+
   elements.clearSelectionButton.addEventListener("click", () => {
     state.selectedSkillIds.clear();
     renderMatrix();
@@ -337,6 +450,48 @@ async function bootstrap() {
   await runAction(() => loadState());
 }
 
+function openCreateSkillModal() {
+  mountCreateSkillEditor(elements.createSkillEditorRoot, {
+    onCancel: closeCreateSkillModal,
+    onToast: showToast,
+    onCreate: async ({ name, content }) => {
+      applyState(await api("/api/create-skill", {
+        method: "POST",
+        body: {
+          name,
+          content,
+          projectPath: elements.projectInput.value,
+        },
+      }));
+      state.selectedSkillId = state.data.skills.find((skill) => skill.name === name)?.id || state.selectedSkillId;
+      closeCreateSkillModal();
+      render();
+      showToast("Skill created");
+    },
+  });
+
+  if (typeof elements.createSkillModal.showModal === "function") {
+    elements.createSkillModal.showModal();
+  } else {
+    elements.createSkillModal.setAttribute("open", "");
+  }
+}
+
+function closeCreateSkillModal() {
+  if (elements.createSkillModal.open && typeof elements.createSkillModal.close === "function") {
+    elements.createSkillModal.close();
+  } else {
+    elements.createSkillModal.removeAttribute("open");
+    unmountCreateSkillModal();
+  }
+}
+
+function unmountCreateSkillModal() {
+  if (elements.createSkillEditorRoot) {
+    unmountSkillEditor(elements.createSkillEditorRoot);
+  }
+}
+
 async function loadState() {
   const project = elements.projectInput.value.trim();
   const url = new URL("/api/state", window.location.origin);
@@ -360,9 +515,16 @@ function applyState(nextData) {
   const serverProjects = normalizeProjectCache(nextData?.projects || []);
   const projects = mergeProjects(serverProjects, cachedProjects);
 
+  const hiddenIds = new Set(Array.isArray(nextData?.hiddenTargetIds) ? nextData.hiddenTargetIds : []);
+  const allTargets = Array.isArray(nextData?.targets) ? nextData.targets : [];
+  const visibleTargets = allTargets.filter((target) => !hiddenIds.has(target.id));
+
   state.data = {
     ...nextData,
     projects,
+    allTargets,
+    targets: visibleTargets,
+    hiddenTargetIds: Array.from(hiddenIds),
   };
 
   writeCachedProjects(projects);
@@ -438,6 +600,21 @@ function render() {
   }
 
   elements.projectInput.value = data.project.path;
+
+  // Populate the project selector dropdown
+  const _allProjects = data.projects || [];
+  const _currentPath = data.project.path || "";
+  const _projectsForSelect = _allProjects.some((p) => p.path === _currentPath)
+    ? _allProjects
+    : (_currentPath ? [{ name: projectNameFromPath(_currentPath), path: _currentPath }, ..._allProjects] : _allProjects);
+  if (_projectsForSelect.length) {
+    elements.projectSelect.innerHTML = _projectsForSelect
+      .map((p) => `<option value="${escapeAttr(p.path)}"${p.path === _currentPath ? " selected" : ""}>${escapeHtml(p.name)} — ${escapeHtml(p.path)}</option>`)
+      .join("");
+  } else {
+    elements.projectSelect.innerHTML = `<option value="${escapeAttr(_currentPath)}" selected>${escapeHtml(_currentPath || "No project loaded")}</option>`;
+  }
+
   elements.vaultInput.value = data.vaultRoot;
   elements.skillCount.textContent = data.summary.skillCount;
   elements.enabledCount.textContent = data.summary.enabledCount;
@@ -446,8 +623,11 @@ function render() {
   renderImports();
   renderProjects();
   renderCustomTargets();
+  renderTargetVisibility();
   renderDiscovery();
   renderInstallTargets();
+  renderInstallTabs();
+  renderMarketplace();
   renderBulkTargets();
   renderBulkBar();
   renderTopTabs();
@@ -591,6 +771,106 @@ function renderCustomTargets() {
   });
 }
 
+function renderTargetVisibility() {
+  if (!elements.targetVisibilityList) return;
+  const all = state.data?.allTargets || [];
+  const builtins = all.filter((target) => !target.custom);
+  if (!builtins.length) {
+    elements.targetVisibilityList.innerHTML = `<p class="empty-copy">No built-in harnesses available.</p>`;
+    return;
+  }
+
+  const hiddenIds = new Set(state.data?.hiddenTargetIds || []);
+  const groups = new Map();
+  const order = [];
+  for (const target of builtins) {
+    const harness = (target.harness && target.harness.trim()) || "Custom";
+    if (!groups.has(harness)) {
+      order.push(harness);
+      groups.set(harness, { harness, global: null, project: null, extras: [] });
+    }
+    const group = groups.get(harness);
+    if (target.scope === "global" && !group.global) {
+      group.global = target;
+    } else if (target.scope === "project" && !group.project) {
+      group.project = target;
+    } else {
+      group.extras.push(target);
+    }
+  }
+
+  const renderScopeBox = (target, fallbackLabel) => {
+    if (!target) {
+      return `<label class="visibility-scope is-empty" aria-hidden="true"><span class="scope-name">${escapeHtml(fallbackLabel)}</span></label>`;
+    }
+    const isVisible = !hiddenIds.has(target.id);
+    const scopeLabel = target.scope === "global" ? "Global" : "Project";
+    return `
+      <label class="visibility-scope" title="${escapeHtml(target.label)}">
+        <input
+          type="checkbox"
+          data-visibility-toggle="${escapeHtml(target.id)}"
+          ${isVisible ? "checked" : ""}
+        />
+        <span class="scope-name">${escapeHtml(scopeLabel)}</span>
+      </label>
+    `;
+  };
+
+  elements.targetVisibilityList.innerHTML = order
+    .map((harness) => {
+      const group = groups.get(harness);
+      const cells = [
+        renderScopeBox(group.global, "Global"),
+        renderScopeBox(group.project, "Project"),
+      ];
+      const extras = group.extras
+        .map((target) => renderScopeBox(target, target.scope === "global" ? "Global" : "Project"))
+        .join("");
+      return `
+        <div class="visibility-row">
+          <div class="visibility-label">
+            <strong>${escapeHtml(harness)}</strong>
+          </div>
+          <div class="visibility-scopes">${cells.join("")}${extras}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  elements.targetVisibilityList.querySelectorAll("[data-visibility-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const targetId = input.dataset.visibilityToggle;
+      const nextHidden = !input.checked;
+      setTargetVisibility(targetId, nextHidden);
+    });
+  });
+}
+
+async function setTargetVisibility(targetId, hidden) {
+  await runAction(async () => {
+    const current = new Set(state.data?.hiddenTargetIds || []);
+    if (hidden) {
+      current.add(targetId);
+    } else {
+      current.delete(targetId);
+    }
+    const nextHidden = Array.from(current);
+    await api("/api/config", {
+      method: "POST",
+      body: {
+        vaultRoot: state.data?.vaultRoot,
+        recentProjects: state.data?.recentProjects || [],
+        projects: state.data?.projects || readCachedProjects(),
+        customTargets: state.data?.customTargets || [],
+        hiddenTargetIds: nextHidden,
+      },
+    });
+    await loadState();
+    showToast(hidden ? "Harness hidden" : "Harness restored");
+  });
+}
+
 async function addCustomTarget() {
   await runAction(async () => {
     const id = elements.customTargetId.value.trim();
@@ -706,26 +986,275 @@ function renderInstallTargets() {
   const targets = state.data.targets || [];
   if (!targets.length) {
     elements.gitTargetCheckboxes.innerHTML =
-      `<legend>Install to (vault by default; pick any extra targets)</legend>` +
+      `<legend>Extra targets</legend>` +
       `<p class="empty-copy">No targets available.</p>`;
+    elements.marketplaceTargetCheckboxes.innerHTML =
+      `<legend>Extra targets</legend>` +
+      `<p class="empty-copy">No targets available.</p>`;
+    updateGitTargetSummary();
+    updateMarketplaceTargetSummary();
     return;
   }
   const previouslyChecked = new Set(
     Array.from(elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
   );
+  const marketplaceChecked = new Set(
+    Array.from(elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
+  );
   const items = targets
     .map((target) => {
       const checked = previouslyChecked.has(target.id) ? "checked" : "";
+      const locator = target.scope === "project" ? "Project target" : "Global target";
       return `
         <label class="target-checkbox">
           <input type="checkbox" value="${escapeHtml(target.id)}" ${checked} />
-          <span>${escapeHtml(target.label)}</span>
+          <span>
+            <strong>${escapeHtml(target.label)}</strong>
+            <small>${escapeHtml(locator)}</small>
+          </span>
+        </label>
+      `;
+    })
+    .join("");
+  const marketplaceItems = targets
+    .map((target) => {
+      const checked = marketplaceChecked.has(target.id) ? "checked" : "";
+      const locator = target.scope === "project" ? "Project target" : "Global target";
+      return `
+        <label class="target-checkbox">
+          <input type="checkbox" value="${escapeHtml(target.id)}" ${checked} />
+          <span>
+            <strong>${escapeHtml(target.label)}</strong>
+            <small>${escapeHtml(locator)}</small>
+          </span>
         </label>
       `;
     })
     .join("");
   elements.gitTargetCheckboxes.innerHTML =
-    `<legend>Install to (vault by default; pick any extra targets)</legend>${items}`;
+    `<legend>Extra targets</legend>${items}`;
+  elements.marketplaceTargetCheckboxes.innerHTML =
+    `<legend>Extra targets</legend>${marketplaceItems}`;
+  updateGitTargetSummary();
+  updateMarketplaceTargetSummary();
+}
+
+function updateGitTargetSummary() {
+  if (!elements.gitTargetSummary || !elements.gitTargetCheckboxes) {
+    return;
+  }
+  const checked = Array.from(
+    elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  );
+  if (!checked.length) {
+    elements.gitTargetSummary.textContent = "Vault only";
+    return;
+  }
+  const labelsById = new Map((state.data?.targets || []).map((target) => [target.id, target.label]));
+  const names = checked.map((input) => labelsById.get(input.value) || input.value);
+  elements.gitTargetSummary.textContent =
+    names.length <= 2 ? `Vault + ${names.join(", ")}` : `Vault + ${names.length} targets`;
+}
+
+function updateMarketplaceTargetSummary() {
+  if (!elements.marketplaceTargetSummary || !elements.marketplaceTargetCheckboxes) {
+    return;
+  }
+  const checked = Array.from(
+    elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  );
+  if (!checked.length) {
+    elements.marketplaceTargetSummary.textContent = "Vault only";
+    return;
+  }
+  const labelsById = new Map((state.data?.targets || []).map((target) => [target.id, target.label]));
+  const names = checked.map((input) => labelsById.get(input.value) || input.value);
+  elements.marketplaceTargetSummary.textContent =
+    names.length <= 2 ? `Vault + ${names.join(", ")}` : `Vault + ${names.length} targets`;
+}
+
+function renderInstallTabs() {
+  elements.installTabs.forEach((button) => {
+    const active = button.dataset.installTab === state.activeInstallTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  elements.installPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.installPanel !== state.activeInstallTab);
+  });
+}
+
+async function loadMarketplacePage(delta) {
+  const nextPage = Math.max(0, state.marketplace.page + delta);
+  if (nextPage === state.marketplace.page) {
+    return;
+  }
+  state.marketplace.page = nextPage;
+  await loadMarketplace();
+}
+
+async function loadMarketplace() {
+  state.marketplace.query = elements.marketplaceSearchInput.value.trim();
+  state.marketplace.view = elements.marketplaceViewSelect.value;
+  const params = new URLSearchParams({
+    view: state.marketplace.view,
+    page: String(state.marketplace.page),
+    per_page: String(state.marketplace.perPage),
+  });
+  if (state.marketplace.query) {
+    params.set("q", state.marketplace.query);
+  }
+  elements.marketplaceStatus.textContent = state.marketplace.query.length >= 2
+    ? `Searching skills.sh for "${state.marketplace.query}"...`
+    : "Loading skills.sh...";
+  try {
+    const payload = await api(`/api/marketplace/skills?${params.toString()}`);
+    state.marketplace.items = Array.isArray(payload.data) ? payload.data : [];
+    state.marketplace.pagination = payload.pagination || null;
+    state.marketplace.loaded = true;
+    state.marketplace.error = "";
+    renderMarketplace();
+  } catch (error) {
+    elements.marketplaceStatus.textContent = error.message || "Marketplace unavailable.";
+    state.marketplace.items = [];
+    state.marketplace.pagination = null;
+    state.marketplace.loaded = true;
+    state.marketplace.error = error.message || "Marketplace unavailable.";
+    renderMarketplace();
+  }
+}
+
+function renderMarketplace() {
+  if (!elements.marketplaceResults) {
+    return;
+  }
+  const items = state.marketplace.items || [];
+  const pagination = state.marketplace.pagination;
+  const query = state.marketplace.query.trim();
+  const mode = query.length >= 2 ? `Search: ${query}` : marketplaceViewLabel(state.marketplace.view);
+  const count = pagination?.total || items.length;
+  const scraped = items.some((item) => item.scraped);
+  elements.marketplaceStatus.textContent = state.marketplace.error
+    ? state.marketplace.error
+    : state.marketplace.loaded
+    ? `${mode} / ${count} skill${count === 1 ? "" : "s"}${pagination ? ` / page ${pagination.page + 1}` : ""}${scraped ? " / parsed from public pages" : ""}`
+    : "Load marketplace skills to begin.";
+  elements.marketplacePreviousButton.disabled = !pagination || pagination.page <= 0 || query.length >= 2;
+  elements.marketplaceNextButton.disabled = !pagination || !pagination.hasMore || query.length >= 2;
+
+  if (!items.length) {
+    elements.marketplaceResults.innerHTML = state.marketplace.error
+      ? `<p class="empty-copy">skills.sh returned <code>401 authentication_required</code> for a public API request. Their docs say unauthenticated access should work with lower rate limits, so this looks like an upstream docs/API mismatch. Optional <code>SKILLS_SH_API_KEY</code> can work around it if you have one.</p>`
+      : `<p class="empty-copy">No marketplace skills found.</p>`;
+    return;
+  }
+
+  elements.marketplaceResults.innerHTML = items.map((skill) => renderMarketplaceSkill(skill)).join("");
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-install]").forEach((button) => {
+    button.addEventListener("click", () => installMarketplaceSkill(button.dataset.marketplaceInstall));
+  });
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-open]").forEach((button) => {
+    button.addEventListener("click", () => openExternalUrl(button.dataset.marketplaceOpen));
+  });
+}
+
+async function openExternalUrl(url) {
+  if (!url) {
+    return;
+  }
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    showToast("Invalid link");
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    showToast("Blocked unsafe link");
+    return;
+  }
+  const safeUrl = parsed.toString();
+  try {
+    const opener = window.__TAURI__ && window.__TAURI__.opener;
+    if (opener && typeof opener.openUrl === "function") {
+      await opener.openUrl(safeUrl);
+      return;
+    }
+  } catch (error) {
+    console.error("openUrl failed", error);
+    showToast("Could not open link");
+    return;
+  }
+  // Browser fallback (when running outside Tauri shell, e.g. dev server).
+  window.open(safeUrl, "_blank", "noopener,noreferrer");
+}
+
+function renderMarketplaceSkill(skill) {
+  const installed = isMarketplaceInstalled(skill);
+  const installCount = Number(skill.installs);
+  return `
+    <article class="marketplace-card">
+      <div class="marketplace-card-main">
+        <header>
+          <strong>${escapeHtml(skill.name || skill.slug || skill.id)}</strong>
+          <span>${escapeHtml(skill.source || "")}</span>
+        </header>
+        <p>${escapeHtml(skill.description || skill.id || "")}</p>
+        <div class="marketplace-card-meta">
+          ${Number.isFinite(installCount) ? `<span>${installCount.toLocaleString()} installs</span>` : ""}
+          <span>${escapeHtml(skill.sourceType || "source")}</span>
+          ${skill.scraped ? "<span>public page</span>" : ""}
+          ${skill.isDuplicate ? "<span>duplicate</span>" : ""}
+        </div>
+      </div>
+      <div class="marketplace-card-actions">
+        ${skill.url ? `<button class="button ghost marketplace-link" type="button" data-marketplace-open="${escapeAttr(skill.url)}">Open</button>` : ""}
+        <button class="button primary" type="button" data-marketplace-install="${escapeHtml(skill.id)}">${installed ? "Use Git again" : "Use Git"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function marketplaceViewLabel(view) {
+  return {
+    "all-time": "All time",
+    trending: "Trending",
+    hot: "Hot",
+    official: "Official",
+  }[view] || "Marketplace";
+}
+
+function isMarketplaceInstalled(skill) {
+  const source = String(skill.source || "").toLowerCase();
+  const slug = String(skill.slug || "").toLowerCase();
+  return (state.data?.skills || []).some((item) => {
+    const haystack = `${item.id} ${item.name} ${item.path}`.toLowerCase();
+    return (slug && haystack.includes(slug)) || (source && haystack.includes(source.replace("/", "-")));
+  });
+}
+
+async function installMarketplaceSkill(id) {
+  const skill = (state.marketplace.items || []).find((item) => item.id === id);
+  if (!skill || !skill.installUrl) {
+    showToast("GitHub source not available");
+    return;
+  }
+  elements.gitRepoInput.value = skill.installUrl;
+  elements.gitRefInput.value = "";
+  copyMarketplaceTargetsToGitTargets();
+  state.activeInstallTab = "git";
+  renderInstallTabs();
+  updateGitTargetSummary();
+  showToast(`Ready in From Git: ${skill.source}`);
+}
+
+function copyMarketplaceTargetsToGitTargets() {
+  const selected = new Set(
+    Array.from(elements.marketplaceTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value),
+  );
+  elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]").forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
 }
 
 function renderInstallPreview(plan, options = {}) {
@@ -859,7 +1388,20 @@ function renderBulkBar() {
   }
 
   const count = state.selectedSkillIds.size;
-  elements.bulkSelectedCount.textContent = `${count} selected`;
+  if (elements.bulkSelectedCount) {
+    const prev = Number(elements.bulkSelectedCount.dataset.value || "0");
+    if (prev !== count) {
+      const pill = elements.bulkSelectedCount.closest(".bulk-count-pill");
+      if (pill) {
+        pill.classList.remove("is-bumped");
+        // eslint-disable-next-line no-unused-expressions
+        pill.offsetHeight;
+        pill.classList.add("is-bumped");
+      }
+      elements.bulkSelectedCount.dataset.value = String(count);
+    }
+    elements.bulkSelectedCount.textContent = `${count} selected`;
+  }
   const disabled = count === 0;
   [
     elements.clearSelectionButton,
@@ -870,8 +1412,23 @@ function renderBulkBar() {
     elements.bulkMoveButton,
     elements.bulkDeleteButton,
   ].forEach((button) => {
-    button.disabled = disabled;
+    if (button) button.disabled = disabled;
   });
+
+  const panel = elements.bulkFloating;
+  if (panel) {
+    const shouldShow = count > 1;
+    if (shouldShow) {
+      panel.hidden = false;
+      // Force reflow so the transition can run, then add the visible class.
+      // eslint-disable-next-line no-unused-expressions
+      panel.offsetHeight;
+      panel.classList.add("is-visible");
+    } else {
+      panel.classList.remove("is-visible");
+      panel.hidden = true;
+    }
+  }
 }
 
 function renderTopTabs() {
@@ -883,30 +1440,40 @@ function renderTopTabs() {
   elements.tabPanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.topTabPanel !== state.activeTopTab);
   });
-  relocateManageControls();
+  if (elements.appShell) {
+    elements.appShell.setAttribute("data-active-tab", state.activeTopTab);
+  }
+}
+
+function initSidebarToggle() {
+  if (!elements.manageGrid || !elements.sidebarToggle) return;
+  const stored = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+  const collapsed = stored === null ? true : stored !== "false";
+  applySidebarState(collapsed);
+  elements.sidebarToggle.addEventListener("click", () => {
+    const next = elements.manageGrid.getAttribute("data-sidebar-collapsed") !== "false"
+      ? false
+      : true;
+    applySidebarState(next);
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, String(next));
+    } catch (_err) {
+      /* ignore storage errors */
+    }
+  });
+}
+
+function applySidebarState(collapsed) {
+  if (!elements.manageGrid) return;
+  elements.manageGrid.setAttribute("data-sidebar-collapsed", collapsed ? "true" : "false");
+  if (elements.sidebarToggle) {
+    elements.sidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
 }
 
 function relocateManageControls() {
-  if (!elements.appShell || !elements.toolbar || !elements.contextStrip || !elements.mainSurface || !elements.bulkBar || !elements.targetStrip) {
-    return;
-  }
-  const shouldDock = state.activeTopTab === "manage";
-  const shouldPromoteBulk = shouldDock;
-  if (shouldDock && elements.toolbar.parentElement !== elements.contextStrip) {
-    elements.contextStrip.appendChild(elements.toolbar);
-  } else if (!shouldDock && elements.toolbar.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.toolbar, elements.bulkBar);
-  }
-  if (shouldDock && elements.targetStrip.parentElement !== elements.contextStrip) {
-    elements.contextStrip.appendChild(elements.targetStrip);
-  } else if (!shouldDock && elements.targetStrip.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.targetStrip, elements.matrixBody.closest(".matrix-wrap"));
-  }
-  if (shouldPromoteBulk && elements.bulkBar.parentElement !== elements.appShell) {
-    elements.appShell.insertBefore(elements.bulkBar, elements.contextStrip.nextSibling);
-  } else if (!shouldPromoteBulk && elements.bulkBar.parentElement !== elements.mainSurface) {
-    elements.mainSurface.insertBefore(elements.bulkBar, elements.targetStrip);
-  }
+  // Layout is now static: header is permanent, sidebar/main/detail are wired in markup.
+  // Kept as a no-op so older call sites continue to compile.
 }
 
 async function scanDuplicates() {
@@ -1053,6 +1620,26 @@ function iconSprite(name, className = "icon") {
   return `<svg class="${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-${escapeAttr(name)}"></use></svg>`;
 }
 
+function harnessIconName(harness) {
+  const normalized = String(harness || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const icons = {
+    agents: "harness-agents",
+    antigravity: "harness-antigravity",
+    claude: "harness-claude",
+    codebuddy: "harness-codebuddy",
+    codex: "harness-codex",
+    copilot: "harness-copilot",
+    cursor: "harness-cursor",
+    gemini: "harness-gemini",
+    kiro: "harness-kiro",
+    openclaw: "harness-openclaw",
+    opencode: "harness-opencode",
+    qoder: "harness-qoder",
+    trae: "harness-trae",
+  };
+  return icons[normalized] || "harness-custom";
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value)) return "";
   if (value < 1024) return `${value} B`;
@@ -1061,11 +1648,15 @@ function formatBytes(value) {
 }
 
 function renderTargets() {
+  const activeTargetId = state.filterTargetId && state.filterTargetId !== "all"
+    ? state.filterTargetId
+    : null;
   elements.targetStrip.innerHTML = state.data.targets
     .map((target) => {
       const unmanaged = target.unmanaged.length ? `${target.unmanaged.length} unmanaged` : "clean";
+      const isActive = activeTargetId === target.id;
       return `
-        <article class="target-card">
+        <article class="target-card${isActive ? " is-active" : ""}" role="button" tabindex="0" data-target-id="${escapeAttr(target.id)}" aria-pressed="${isActive ? "true" : "false"}">
           <div class="target-card-head">
             ${iconSprite("folder", "icon target-card-icon")}
             <strong>${escapeHtml(target.label)}</strong>
@@ -1076,6 +1667,29 @@ function renderTargets() {
       `;
     })
     .join("");
+
+  elements.targetStrip.querySelectorAll("[data-target-id]").forEach((card) => {
+    const activate = () => {
+      const id = card.getAttribute("data-target-id");
+      const current = state.filterTargetId;
+      const next = current === id ? "all" : id;
+      state.filterTargetId = next;
+      if (elements.agentFilterSelect) {
+        const hasOption = Array.from(elements.agentFilterSelect.options).some((opt) => opt.value === next);
+        elements.agentFilterSelect.value = hasOption ? next : "all";
+      }
+      renderMatrix();
+      renderBulkBar();
+      renderTargets();
+    };
+    card.addEventListener("click", activate);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
+  });
 }
 
 function renderUnmanaged() {
@@ -1138,102 +1752,82 @@ function renderUnmanaged() {
 }
 
 function renderTags() {
-  const tags = new Set(["All"]);
+  const currentTarget = state.filterTargetId;
+  const currentType = state.filterType;
+  const types = new Set();
   for (const skill of state.data.skills) {
-    for (const tag of skill.tags) {
-      tags.add(tag);
-    }
+    types.add(skillType(skill));
   }
 
-  elements.tagFilters.innerHTML = [...tags]
-    .map(
-      (tag) => `
-        <button class="segment ${tag === state.activeTag ? "active" : ""}" type="button" data-tag="${escapeHtml(tag)}">
-          ${escapeHtml(tag)}
-        </button>
-      `,
-    )
-    .join("");
+  elements.agentFilterSelect.innerHTML = [
+    `<option value="all">Any agent</option>`,
+    ...state.data.targets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.label)}</option>`),
+  ].join("");
+  elements.agentFilterSelect.value = state.data.targets.some((target) => target.id === currentTarget)
+    ? currentTarget
+    : "all";
+  state.filterTargetId = elements.agentFilterSelect.value;
 
-  elements.tagFilters.querySelectorAll("button").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeTag = button.dataset.tag;
-      renderTags();
-      renderMatrix();
-    });
-  });
+  elements.typeFilterSelect.innerHTML = [
+    `<option value="all">Any type</option>`,
+    ...[...types].sort((left, right) => left.localeCompare(right)).map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`),
+  ].join("");
+  elements.typeFilterSelect.value = types.has(currentType) ? currentType : "all";
+  state.filterType = elements.typeFilterSelect.value;
+  elements.statusFilterSelect.value = state.filterStatus;
+  elements.sortSelect.value = state.sortBy;
 }
 
 function renderMatrix() {
-  unmountAllSkillEditors();
   const targets = state.data.targets;
   const skills = filteredSkills();
   const visibleSkillIds = skills.map((skill) => skill.id);
   const allVisibleSelected = visibleSkillIds.length > 0 && visibleSkillIds.every((id) => state.selectedSkillIds.has(id));
 
   elements.matrixHead.innerHTML = `
-    <tr>
-      <th class="checkbox-cell">
-        <input type="checkbox" id="selectVisibleCheckbox" ${allVisibleSelected ? "checked" : ""} aria-label="Select visible skills" />
-      </th>
-      <th>Skill</th>
-      ${targets.map((target) => `<th title="${escapeHtml(target.label)}">${escapeHtml(target.shortLabel)}</th>`).join("")}
-    </tr>
+    <label class="skill-list-select-all">
+      <input type="checkbox" id="selectVisibleCheckbox" ${allVisibleSelected ? "checked" : ""} aria-label="Select visible skills" />
+      <span>${skills.length} skill${skills.length === 1 ? "" : "s"}</span>
+    </label>
+    <span>${escapeHtml(activeFilterSummary())}</span>
   `;
 
   if (!skills.length) {
-    elements.matrixBody.innerHTML = `<tr><td class="empty-state" colspan="${targets.length + 2}">No skills match the current filter.</td></tr>`;
+    elements.matrixBody.innerHTML = `<div class="empty-state">No skills match these filters. Clear search or widen the filters to bring the list back.</div>`;
     bindSelectVisible(visibleSkillIds);
     return;
   }
 
   elements.matrixBody.innerHTML = skills
     .map((skill) => {
-      const cells = targets
-        .map((target) => {
-          const status = target.skillStatuses[skill.id];
-          const label = status.enabled ? "Disable" : "Enable";
-          const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
-          return `
-            <td>
-              <button
-                class="${classes}"
-                type="button"
-                title="${escapeHtml(label)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
-                data-skill-id="${escapeHtml(skill.id)}"
-                data-target-id="${escapeHtml(target.id)}"
-                data-enabled="${status.enabled ? "true" : "false"}"
-              ><span></span></button>
-            </td>
-          `;
-        })
-        .join("");
-
-      const row = `
-        <tr class="${skill.id === state.selectedSkillId ? "selected-row" : ""}">
-          <td class="checkbox-cell">
+      const activeTargets = targets.filter((target) => target.skillStatuses[skill.id]?.enabled);
+      const assignmentText = activeTargets.length
+        ? activeTargets.map((target) => target.shortLabel || target.label).join(", ")
+        : "Disabled";
+      return `
+        <article class="skill-list-item ${skill.id === state.selectedSkillId ? "is-selected" : ""}" data-select-skill="${escapeHtml(skill.id)}">
+          <label class="row-check" title="Select ${escapeHtml(skill.name)}">
             <input
               type="checkbox"
               aria-label="Select ${escapeHtml(skill.name)}"
               data-select-row="${escapeHtml(skill.id)}"
               ${state.selectedSkillIds.has(skill.id) ? "checked" : ""}
             />
-          </td>
-          <td class="skill-cell">
-            <div class="skill-name">
-              <button type="button" data-select-skill="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
-            </div>
-            <div class="skill-description">${escapeHtml(skill.description || "No description")}</div>
-            <div class="tag-row">
+          </label>
+          <button class="skill-list-button" type="button">
+            <span class="skill-list-title">
+              <strong>${escapeHtml(skill.name)}</strong>
+              <span>${escapeHtml(skillAuthor(skill))}</span>
+            </span>
+            <span class="skill-description">${escapeHtml(skill.description || "No description")}</span>
+            <span class="tag-row">
+              <span class="tag type-tag">${escapeHtml(skillType(skill))}</span>
               ${skill.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
-            </div>
-          </td>
-          ${cells}
-        </tr>
+            </span>
+          </button>
+          <span class="assignment-summary ${activeTargets.length ? "" : "is-disabled"}">${escapeHtml(assignmentText)}</span>
+        </article>
       `;
-      return skill.id === state.selectedSkillId
-        ? `${row}${renderInlineDetailRow(skill, targets.length + 2)}`
-        : row;
     })
     .join("");
 
@@ -1252,90 +1846,28 @@ function renderMatrix() {
     });
   });
 
-  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      state.selectedSkillId = state.selectedSkillId === button.dataset.selectSkill
-        ? null
-        : button.dataset.selectSkill;
+  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((row) => {
+    row.addEventListener("click", async (event) => {
+      if (event.target.closest("[data-select-row]")) {
+        return;
+      }
+      state.selectedSkillId = row.dataset.selectSkill;
       renderMatrix();
       await renderDetail();
+      scrollDetailIntoViewIfStacked();
     });
   });
 
-  elements.matrixBody.querySelectorAll("[data-copy-selected-path]").forEach((button) => {
-    button.addEventListener("click", () => copySelectedSkillPath());
-  });
-
-  elements.matrixBody.querySelectorAll("[data-target-id]").forEach((button) => {
-    button.addEventListener("click", () => runAction(async () => {
-      const nextEnabled = button.dataset.enabled !== "true";
-      const targetId = button.dataset.targetId;
-      applyState(await api("/api/toggle", {
-        method: "POST",
-        body: {
-          projectPath: elements.projectInput.value,
-          targetId,
-          skillId: button.dataset.skillId,
-          enabled: nextEnabled,
-        },
-      }));
-      if (lastAppliedSet && lastAppliedSet.touchedTargets.includes(targetId)) {
-        lastAppliedSet.modified = true;
-      }
-      render();
-      showToast(nextEnabled ? "Skill enabled" : "Skill disabled");
-    }));
-  });
 }
 
-function renderInlineDetailRow(skill, colspan) {
-  const links = state.data.targets
-    .map((target) => ({ target, status: target.skillStatuses[skill.id] }))
-    .filter((item) => item.status.enabled || item.status.conflict || item.status.staleManifest);
-
-  const linkHtml = links.length
-    ? links
-        .map(
-          ({ target, status }) => `
-            <div class="link-pill">
-              <strong>${escapeHtml(target.label)}${status.conflict ? " conflict" : ""}${status.staleManifest ? " stale" : ""}</strong>
-              <span>${escapeHtml(status.linkPath)}</span>
-            </div>
-          `,
-        )
-        .join("")
-    : `<div class="link-pill"><strong>Not linked</strong><span>No active target links for this skill.</span></div>`;
-
-  return `
-    <tr class="detail-row">
-      <td colspan="${colspan}">
-        <section class="panel detail-card inline-detail-card" data-inline-skill-detail="${escapeHtml(skill.id)}">
-          <div class="skill-detail">
-            <div class="detail-title-row">
-              <div>
-                <p class="eyebrow">${escapeHtml(skill.tags.join(" / "))}</p>
-                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
-              </div>
-              <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
-            </div>
-            <p class="description">${escapeHtml(skill.description || "No description")}</p>
-            <dl class="path-list">
-              <div>
-                <dt>Vault path</dt>
-                <dd>${escapeHtml(skill.path)}</dd>
-              </div>
-              <div>
-                <dt>Relative id</dt>
-                <dd>${escapeHtml(skill.id)}</dd>
-              </div>
-            </dl>
-            <div class="detail-links">${linkHtml}</div>
-            <div class="skill-editor-host" data-skill-editor-root>Loading editor...</div>
-          </div>
-        </section>
-      </td>
-    </tr>
-  `;
+function scrollDetailIntoViewIfStacked() {
+  const pane = document.querySelector("#manageTab .detail-pane");
+  if (!pane) return;
+  // When the layout collapses to "side main / detail detail" the detail pane
+  // can sit below the fold. Bring it into view on the workspace scroll axis.
+  const stacked = window.matchMedia("(max-width: 900px)").matches;
+  if (!stacked) return;
+  pane.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function bindSelectVisible(visibleSkillIds) {
@@ -1360,14 +1892,48 @@ function bindSelectVisible(visibleSkillIds) {
 async function renderDetail() {
   const skill = selectedSkill();
   if (!skill) {
+    unmountAllSkillEditors();
+    elements.emptyDetail.hidden = false;
+    elements.skillDetail.hidden = true;
+    elements.skillPreview.innerHTML = "";
     return;
   }
 
-  const detail = document.querySelector(`[data-inline-skill-detail="${cssEscape(skill.id)}"]`);
-  const editorNode = detail?.querySelector("[data-skill-editor-root]");
-  if (!editorNode) {
-    return;
-  }
+  unmountAllSkillEditors();
+  elements.emptyDetail.hidden = true;
+  elements.skillDetail.hidden = false;
+  elements.skillPreview.innerHTML = renderDetailPane(skill);
+
+  elements.skillPreview.querySelectorAll("[data-copy-selected-path]").forEach((button) => {
+    button.addEventListener("click", () => copySelectedSkillPath());
+  });
+
+  elements.skillPreview.querySelectorAll("[data-delete-selected-skill]").forEach((button) => {
+    button.addEventListener("click", () => deleteSelectedSkill());
+  });
+
+  elements.skillPreview.querySelectorAll("[data-detail-target-id]").forEach((button) => {
+    button.addEventListener("click", () => runAction(async () => {
+      const nextEnabled = button.dataset.enabled !== "true";
+      const targetId = button.dataset.detailTargetId;
+      applyState(await api("/api/toggle", {
+        method: "POST",
+        body: {
+          projectPath: elements.projectInput.value,
+          targetId,
+          skillId: button.dataset.skillId,
+          enabled: nextEnabled,
+        },
+      }));
+      if (lastAppliedSet && lastAppliedSet.touchedTargets.includes(targetId)) {
+        lastAppliedSet.modified = true;
+      }
+      render();
+      showToast(nextEnabled ? "Skill enabled" : "Skill disabled");
+    }));
+  });
+
+  const editorNode = elements.skillPreview.querySelector("[data-skill-editor-root]");
 
   const activeSkillId = skill.id;
   const preview = await api(`/api/skill?id=${encodeURIComponent(skill.id)}`);
@@ -1395,6 +1961,114 @@ async function renderDetail() {
   });
 }
 
+function renderDetailPane(skill) {
+  const harnessOrder = [];
+  const harnessGroups = new Map();
+  for (const target of state.data.targets) {
+    const harness = (target.harness && target.harness.trim()) || "Custom";
+    if (!harnessGroups.has(harness)) {
+      harnessOrder.push(harness);
+      harnessGroups.set(harness, { harness, global: null, project: null, extras: [] });
+    }
+    const group = harnessGroups.get(harness);
+    if (target.scope === "global" && !group.global) {
+      group.global = target;
+    } else if (target.scope === "project" && !group.project) {
+      group.project = target;
+    } else {
+      group.extras.push(target);
+    }
+  }
+
+  function renderScopeCell(target, scopeLabel) {
+    if (!target) {
+      return `<div class="assignment-scope is-empty" aria-hidden="true"><span class="scope-name">${escapeHtml(scopeLabel)}</span></div>`;
+    }
+    const status = target.skillStatuses[skill.id] || {};
+    const pathText = status.linkPath || target.path || "";
+    const toggleLabel = status.enabled ? "Disable" : "Enable";
+    const classes = ["toggle", status.enabled ? "is-on" : "", status.conflict ? "conflict" : ""].filter(Boolean).join(" ");
+    const note = status.conflict
+      ? "Conflict"
+      : status.staleManifest
+        ? "Stale link"
+        : status.enabled
+          ? "Enabled"
+          : "Disabled";
+    const tooltip = pathText ? `${target.label} — ${pathText}` : target.label;
+    return `
+      <div class="assignment-scope" title="${escapeHtml(tooltip)}">
+        <span class="scope-name">${escapeHtml(scopeLabel)}</span>
+        <button
+          class="${classes}"
+          type="button"
+          title="${escapeHtml(toggleLabel)} ${escapeHtml(skill.name)} in ${escapeHtml(target.label)}"
+          data-skill-id="${escapeHtml(skill.id)}"
+          data-detail-target-id="${escapeHtml(target.id)}"
+          data-enabled="${status.enabled ? "true" : "false"}"
+        ><span></span></button>
+        <span class="scope-status">${escapeHtml(note)}</span>
+      </div>
+    `;
+  }
+
+  const assignmentRows = harnessOrder
+    .map((harness) => {
+      const group = harnessGroups.get(harness);
+      const iconName = harnessIconName(harness);
+      const cells = [
+        renderScopeCell(group.global, "Global"),
+        renderScopeCell(group.project, "Project"),
+      ];
+      const extras = group.extras
+        .map((target) => renderScopeCell(target, target.scope === "global" ? "Global" : "Project"))
+        .join("");
+      return `
+        <div class="assignment-row">
+          <div class="assignment-label">
+            <span class="assignment-harness-icon assignment-harness-icon--${escapeAttr(iconName.replace("harness-", ""))}">
+              ${iconSprite(iconName, "icon")}
+            </span>
+            <strong>${escapeHtml(harness)}</strong>
+          </div>
+          <div class="assignment-scopes">${cells.join("")}${extras}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="skill-detail">
+      <div class="detail-title-row">
+        <div>
+          <p class="eyebrow">${escapeHtml(skillType(skill))} / ${escapeHtml(skillAuthor(skill))}</p>
+          <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>${escapeHtml(skill.name)}</span></h2>
+        </div>
+        <div class="detail-title-actions">
+          <button class="button ghost" data-copy-selected-path type="button">Copy path</button>
+          <button class="button ghost" data-delete-selected-skill type="button">Delete</button>
+        </div>
+      </div>
+      <p class="description">${escapeHtml(skill.description || "No description")}</p>
+      <section class="assignment-panel" aria-label="Agent assignment">
+        <h3>Agent Assignment</h3>
+        <div class="assignment-list">${assignmentRows}</div>
+      </section>
+      <dl class="path-list">
+        <div>
+          <dt>Vault path</dt>
+          <dd>${escapeHtml(skill.path)}</dd>
+        </div>
+        <div>
+          <dt>Relative id</dt>
+          <dd>${escapeHtml(skill.id)}</dd>
+        </div>
+      </dl>
+      <div class="skill-editor-host" data-skill-editor-root>Loading editor...</div>
+    </div>
+  `;
+}
+
 function copySelectedSkillPath() {
   return runAction(async () => {
     const skill = selectedSkill();
@@ -1403,6 +2077,31 @@ function copySelectedSkillPath() {
     }
     await navigator.clipboard.writeText(skill.path);
     showToast("Path copied");
+  });
+}
+
+function deleteSelectedSkill() {
+  return runAction(async () => {
+    const skill = selectedSkill();
+    if (!skill) {
+      return;
+    }
+    if (!window.confirm(`Delete "${skill.name}" from the vault? This cannot be undone.`)) {
+      return;
+    }
+    const result = await api("/api/bulk-delete", {
+      method: "POST",
+      body: {
+        projectPath: elements.projectInput.value,
+        skillIds: [skill.id],
+      },
+    });
+    applyState(result.state);
+    state.selectedSkillIds.delete(skill.id);
+    state.selectedSkillId = null;
+    render();
+    const errors = result.errors ? result.errors.length : 0;
+    showToast(errors ? `Delete failed (${errors} error${errors === 1 ? "" : "s"})` : `Deleted ${skill.name}`);
   });
 }
 
@@ -1415,11 +2114,49 @@ function cssEscape(value) {
 
 function filteredSkills() {
   const query = state.search.trim().toLowerCase();
-  return state.data.skills.filter((skill) => {
-    const matchesTag = state.activeTag === "All" || skill.tags.includes(state.activeTag);
-    const haystack = `${skill.name} ${skill.description} ${skill.tags.join(" ")} ${skill.id}`.toLowerCase();
-    return matchesTag && (!query || haystack.includes(query));
+  const filtered = state.data.skills.filter((skill) => {
+    const type = skillType(skill);
+    const matchesType = state.filterType === "all" || type === state.filterType;
+    const enabledTargets = state.data.targets.filter((target) => target.skillStatuses[skill.id]?.enabled);
+    const matchesTarget = state.filterTargetId === "all" || enabledTargets.some((target) => target.id === state.filterTargetId);
+    const matchesStatus = state.filterStatus === "all"
+      || (state.filterStatus === "enabled" && enabledTargets.length > 0)
+      || (state.filterStatus === "disabled" && enabledTargets.length === 0);
+    const haystack = `${skill.name} ${skill.description} ${skill.tags.join(" ")} ${skill.id} ${skillAuthor(skill)} ${type}`.toLowerCase();
+    return matchesType && matchesTarget && matchesStatus && (!query || haystack.includes(query));
   });
+
+  return filtered.sort((left, right) => {
+    if (state.sortBy === "name-desc") {
+      return right.name.localeCompare(left.name);
+    }
+    if (state.sortBy === "author-asc") {
+      return skillAuthor(left).localeCompare(skillAuthor(right)) || left.name.localeCompare(right.name);
+    }
+    if (state.sortBy === "author-desc") {
+      return skillAuthor(right).localeCompare(skillAuthor(left)) || left.name.localeCompare(right.name);
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function skillType(skill) {
+  return skill.type || (Array.isArray(skill.tags) && skill.tags[0]) || "General";
+}
+
+function skillAuthor(skill) {
+  return skill.author || (String(skill.id || "").split("/").filter(Boolean)[0] || "Local");
+}
+
+function activeFilterSummary() {
+  const parts = [];
+  if (state.filterTargetId !== "all") {
+    const target = state.data.targets.find((item) => item.id === state.filterTargetId);
+    if (target) parts.push(target.label);
+  }
+  if (state.filterStatus !== "all") parts.push(state.filterStatus === "enabled" ? "enabled" : "disabled");
+  if (state.filterType !== "all") parts.push(state.filterType);
+  return parts.length ? parts.join(" / ") : "All skills";
 }
 
 function selectedSkill() {
@@ -1591,30 +2328,6 @@ async function bulkDelete() {
   });
 }
 
-async function api(url, options = {}) {
-  const response = await fetch(apiUrl(url), {
-    method: options.method || "GET",
-    headers: options.body ? { "content-type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    showToast(payload.error || "Request failed");
-    throw new Error(payload.error || "Request failed");
-  }
-  return payload;
-}
-
-function apiUrl(url) {
-  const value = String(url);
-  if (/^https?:\/\//.test(value)) {
-    return value;
-  }
-  return isTauriDesktop() && value.startsWith("/api/")
-    ? `${DESKTOP_API_ORIGIN}${value}`
-    : value;
-}
-
 function isTauriDesktop() {
   return Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__) ||
     window.location.protocol === "tauri:" ||
@@ -1631,20 +2344,43 @@ async function pickDirectoryInto(input) {
 }
 
 async function runAction(action) {
+  setBusy(true);
   try {
     await action();
   } catch (error) {
     showToast(error.message || "Action failed");
+  } finally {
+    setBusy(false);
   }
 }
 
 function showToast(message) {
+  const tone = toastTone(message);
   elements.toast.textContent = message;
+  elements.toast.dataset.tone = tone;
   elements.toast.classList.add("visible");
   window.clearTimeout(showToast.timeout);
   showToast.timeout = window.setTimeout(() => {
     elements.toast.classList.remove("visible");
   }, 2600);
+}
+
+function setBusy(isBusy) {
+  setBusy.count = Math.max(0, (setBusy.count || 0) + (isBusy ? 1 : -1));
+  const busy = setBusy.count > 0;
+  elements.appShell.classList.toggle("is-busy", busy);
+  elements.appShell.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function toastTone(message) {
+  const normalized = String(message || "").toLowerCase();
+  if (/(fail|failed|error|required|choose|select|missing|warning|nothing)/.test(normalized)) {
+    return "attention";
+  }
+  if (/(saved|created|moved|installed|enabled|disabled|loaded|copied|applied|updated|added|removed|deleted|merged|pinned|restored|cleared|discovered)/.test(normalized)) {
+    return "success";
+  }
+  return "neutral";
 }
 
 function escapeHtml(value) {
@@ -1791,7 +2527,7 @@ function renderSets() {
   const filtered = all.filter((s) => setsState.filter === "all" || s._scope === setsState.filter);
 
   if (filtered.length === 0) {
-    rowsEl.appendChild(makeEl("li", { class: "muted set-row-empty" }, "No sets yet."));
+    rowsEl.appendChild(makeEl("li", { class: "muted set-row-empty" }, "No sets yet. Snapshot current links or create a set."));
   } else {
     for (const s of filtered) {
       const li = makeEl("li", {

@@ -1,3 +1,8 @@
+// LEGACY (Node.js only): This module is consumed by `src/mcp-server.js`
+// (the MCP stdio server, `npm run mcp`) and is not used by the desktop app.
+// The desktop app uses native Rust Tauri commands in `src-tauri/src/backend/`.
+// Kept for the MCP server only; new business logic belongs in Rust.
+
 const crypto = require("node:crypto");
 const syncFs = require("node:fs");
 const fs = require("node:fs/promises");
@@ -39,6 +44,86 @@ const HARNESS_TARGETS = [
     shortLabel: "AG G",
     pathParts: [".agents", "skills"],
   },
+  {
+    id: "gemini-global",
+    harness: "Gemini",
+    scope: "global",
+    label: "Gemini global",
+    shortLabel: "GM G",
+    pathParts: [".gemini", "skills"],
+  },
+  {
+    id: "copilot-global",
+    harness: "Copilot",
+    scope: "global",
+    label: "Copilot global",
+    shortLabel: "CP G",
+    pathParts: [".copilot", "skills"],
+  },
+  {
+    id: "opencode-global",
+    harness: "OpenCode",
+    scope: "global",
+    label: "OpenCode global",
+    shortLabel: "OC G",
+    pathParts: [".config", "opencode", "skills"],
+  },
+  {
+    id: "antigravity-global",
+    harness: "Antigravity",
+    scope: "global",
+    label: "Antigravity global",
+    shortLabel: "AV G",
+    pathParts: [".gemini", "antigravity", "skills"],
+  },
+  {
+    id: "cursor-global",
+    harness: "Cursor",
+    scope: "global",
+    label: "Cursor global",
+    shortLabel: "CR G",
+    pathParts: [".cursor", "skills"],
+  },
+  {
+    id: "kiro-global",
+    harness: "Kiro",
+    scope: "global",
+    label: "Kiro global",
+    shortLabel: "KR G",
+    pathParts: [".kiro", "skills"],
+  },
+  {
+    id: "codebuddy-global",
+    harness: "CodeBuddy",
+    scope: "global",
+    label: "CodeBuddy global",
+    shortLabel: "CB G",
+    pathParts: [".codebuddy", "skills"],
+  },
+  {
+    id: "openclaw-global",
+    harness: "OpenClaw",
+    scope: "global",
+    label: "OpenClaw global",
+    shortLabel: "OW G",
+    pathParts: [".openclaw", "skills"],
+  },
+  {
+    id: "trae-global",
+    harness: "Trae",
+    scope: "global",
+    label: "Trae global",
+    shortLabel: "TR G",
+    pathParts: [".trae", "skills"],
+  },
+  {
+    id: "qoder-global",
+    harness: "Qoder",
+    scope: "global",
+    label: "Qoder global",
+    shortLabel: "QD G",
+    pathParts: [".qoder", "skills"],
+  },
 ];
 
 const PROJECT_TARGETS = [
@@ -65,6 +150,78 @@ const PROJECT_TARGETS = [
     label: "Agents project",
     shortLabel: "AG P",
     pathParts: [".agents", "skills"],
+  },
+  {
+    id: "gemini-project",
+    harness: "Gemini",
+    scope: "project",
+    label: "Gemini project",
+    shortLabel: "GM P",
+    pathParts: [".gemini", "skills"],
+  },
+  {
+    id: "copilot-project",
+    harness: "Copilot",
+    scope: "project",
+    label: "Copilot project",
+    shortLabel: "CP P",
+    pathParts: [".copilot", "skills"],
+  },
+  {
+    id: "opencode-project",
+    harness: "OpenCode",
+    scope: "project",
+    label: "OpenCode project",
+    shortLabel: "OC P",
+    pathParts: [".opencode", "skills"],
+  },
+  {
+    id: "cursor-project",
+    harness: "Cursor",
+    scope: "project",
+    label: "Cursor project",
+    shortLabel: "CR P",
+    pathParts: [".cursor", "skills"],
+  },
+  {
+    id: "kiro-project",
+    harness: "Kiro",
+    scope: "project",
+    label: "Kiro project",
+    shortLabel: "KR P",
+    pathParts: [".kiro", "skills"],
+  },
+  {
+    id: "codebuddy-project",
+    harness: "CodeBuddy",
+    scope: "project",
+    label: "CodeBuddy project",
+    shortLabel: "CB P",
+    pathParts: [".codebuddy", "skills"],
+  },
+  {
+    id: "openclaw-project",
+    harness: "OpenClaw",
+    scope: "project",
+    label: "OpenClaw project",
+    shortLabel: "OW P",
+    pathParts: [".openclaw", "skills"],
+  },
+  {
+    id: "trae-project",
+    harness: "Trae",
+    scope: "project",
+    label: "Trae project",
+    shortLabel: "TR P",
+    pathParts: [".trae", "skills"],
+  },
+  {
+    id: "qoder-project",
+    harness: "Qoder",
+    scope: "project",
+    label: "Qoder project",
+    shortLabel: "QD P",
+    pathParts: [".qoder", "skills"],
   },
 ];
 
@@ -197,6 +354,9 @@ function createManager(options = {}) {
       recentProjects: Array.isArray(config.recentProjects) ? config.recentProjects : [],
       projects: normalizeProjectRecords(config.projects || []),
       customTargets: safeReadCustomTargets(config.customTargets),
+      hiddenTargetIds: Array.isArray(config.hiddenTargetIds)
+        ? config.hiddenTargetIds.filter((id) => typeof id === "string" && id.length > 0)
+        : [],
       sets: Array.isArray(config.sets) ? config.sets : [],
     };
   }
@@ -212,6 +372,9 @@ function createManager(options = {}) {
       customTargets: nextConfig.customTargets !== undefined
         ? normalizeCustomTargets(nextConfig.customTargets)
         : current.customTargets,
+      hiddenTargetIds: Array.isArray(nextConfig.hiddenTargetIds)
+        ? nextConfig.hiddenTargetIds.filter((id) => typeof id === "string" && id.length > 0)
+        : current.hiddenTargetIds,
       sets: Array.isArray(nextConfig.sets) ? nextConfig.sets : current.sets,
     };
     await writeJson(configPath, merged);
@@ -317,6 +480,7 @@ function createManager(options = {}) {
       projects: (await readConfig()).projects,
       skills,
       customTargets: config.customTargets,
+      hiddenTargetIds: config.hiddenTargetIds,
       targets: targetStates,
       summary: {
         skillCount: skills.length,
@@ -820,7 +984,7 @@ function createManager(options = {}) {
     return { enabled, errors };
   }
 
-  async function createSkill({ name, description = "" }) {
+  async function createSkill({ name, description = "", content }) {
     if (!name || !name.trim()) {
       throw new Error("Skill name is required");
     }
@@ -829,17 +993,19 @@ function createManager(options = {}) {
     await ensureDir(config.vaultRoot);
     const destination = await uniqueSkillDestination(config.vaultRoot, name);
     await ensureDir(destination);
-    const body = [
-      "---",
-      `name: ${name.trim()}`,
-      `description: ${description.trim() || "Describe when this skill should be used."}`,
-      "---",
-      "",
-      "# Workflow",
-      "",
-      "Add the operating instructions for this skill here.",
-      "",
-    ].join("\n");
+    const body = typeof content === "string" && content.trim()
+      ? content
+      : [
+          "---",
+          `name: ${name.trim()}`,
+          `description: ${description.trim() || "Describe when this skill should be used."}`,
+          "---",
+          "",
+          "# Workflow",
+          "",
+          "Add the operating instructions for this skill here.",
+          "",
+        ].join("\n");
     await fs.writeFile(path.join(destination, SKILL_FILE), body, "utf8");
     return { created: destination, state: await getState(process.cwd()) };
   }
@@ -1312,6 +1478,8 @@ async function discoverSkills(vaultRoot) {
       id,
       name: metadata.name || path.basename(root),
       description: metadata.description || "",
+      author: metadata.author || inferAuthor(id),
+      type: metadata.type || "",
       path: root,
       realPath: await realPath(root),
       relativePath: id,
@@ -1333,6 +1501,14 @@ async function discoverSkills(vaultRoot) {
   }
 
   return skills;
+}
+
+function inferAuthor(id) {
+  const parts = String(id || "").split("/").filter(Boolean);
+  if (parts.length > 1) {
+    return parts[0];
+  }
+  return "Local";
 }
 
 async function findSkillRoots(root) {
@@ -1435,6 +1611,8 @@ async function readSkillMetadata(skillRoot) {
   return {
     name: frontmatter.name,
     description: frontmatter.description,
+    author: frontmatter.author,
+    type: frontmatter.type || frontmatter.category,
   };
 }
 
