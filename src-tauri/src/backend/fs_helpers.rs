@@ -81,13 +81,18 @@ fn copy_dir_blocking(from: &Path, to: &Path) -> BackendResult<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+const CROSS_DEVICE_ERROR: i32 = libc::EXDEV;
+#[cfg(windows)]
+const CROSS_DEVICE_ERROR: i32 = 17; // ERROR_NOT_SAME_DEVICE
+
 /// Move (rename) a directory. Falls back to copy + delete when the rename
 /// crosses a filesystem boundary. Mirrors `core.js::moveDirectory`.
 pub async fn move_directory(from: &Path, to: &Path) -> BackendResult<()> {
     match fs::rename(from, to).await {
         Ok(()) => Ok(()),
         Err(err) => {
-            let crosses_devices = err.raw_os_error() == Some(libc::EXDEV);
+            let crosses_devices = err.raw_os_error() == Some(CROSS_DEVICE_ERROR);
             if !crosses_devices {
                 return Err(BackendError::Io(err));
             }
@@ -111,13 +116,3 @@ pub async fn unique_skill_destination(root: &Path, name: &str) -> PathBuf {
     candidate
 }
 
-// Tiny shim so we don't pull in libc just for EXDEV.
-#[allow(non_camel_case_types)]
-mod libc {
-    #[cfg(target_os = "linux")]
-    pub const EXDEV: i32 = 18;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub const EXDEV: i32 = 18;
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
-    pub const EXDEV: i32 = 18;
-}

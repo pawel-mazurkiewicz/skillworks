@@ -33,9 +33,22 @@ pub async fn is_symlink_to(candidate: &Path, expected_real_path: &Path) -> bool 
 
 /// Best-effort unlink of `candidate` when it is a symlink. No-ops on
 /// non-symlink targets or missing paths. Matches `core.js::unlinkIfSymlink`.
+///
+/// On Windows, directory symlinks need `remove_dir`; `remove_file` fails with
+/// access denied. On Unix, both work for symlinks but `remove_file` is
+/// canonical.
 pub async fn unlink_if_symlink(candidate: &Path) -> BackendResult<()> {
     if let Ok(meta) = fs::symlink_metadata(candidate).await {
         if meta.file_type().is_symlink() {
+            #[cfg(windows)]
+            {
+                if let Ok(target_meta) = fs::metadata(candidate).await {
+                    if target_meta.is_dir() {
+                        fs::remove_dir(candidate).await?;
+                        return Ok(());
+                    }
+                }
+            }
             fs::remove_file(candidate).await?;
         }
     }

@@ -3,6 +3,10 @@
 **Date:** 2026-05-15
 **Topic:** Local release scripts for macOS (Universal, signed + notarized) + Windows x64 + Linux x64, with Tauri updater support.
 
+> **⚠️ Superseded.** This design doc described the build flow when Skillworks
+> shipped a Node.js sidecar. The sidecar was removed in PR #2 (Rust backend
+> port). For the current release procedure see `RELEASING.md`.
+
 ---
 
 ## Overview

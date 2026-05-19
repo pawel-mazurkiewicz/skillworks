@@ -379,14 +379,16 @@ async fn fetch_skills_json_raw<C: HttpClient + ?Sized>(
     params: &BTreeMap<&str, String>,
 ) -> BackendResult<serde_json::Value> {
     let url = build_url(pathname, params);
-    let auth_header;
     let mut headers: Vec<(&str, &str)> =
         vec![("accept", "application/json"), ("user-agent", USER_AGENT)];
-    if let Ok(key) = std::env::var("SKILLS_SH_API_KEY") {
-        if !key.is_empty() {
-            auth_header = format!("Bearer {}", key);
-            headers.push(("authorization", Box::leak(auth_header.into_boxed_str())));
-        }
+
+    let auth_header = std::env::var("SKILLS_SH_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .map(|k| format!("Bearer {}", k));
+
+    if let Some(ref auth) = auth_header {
+        headers.push(("authorization", auth.as_str()));
     }
 
     let resp = client.get(&url, &headers).await?;

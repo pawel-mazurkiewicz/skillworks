@@ -13,7 +13,9 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 # shellcheck source=/dev/null
+set -a
 source "$ENV_FILE"
+set +a
 
 log()     { printf '▶  %s\n' "$*"; }
 success() { printf '✓  %s\n' "$*"; }

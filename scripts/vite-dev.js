@@ -12,9 +12,19 @@ const child = spawn(vite, [], {
 });
 
 let shuttingDown = false;
+let pendingSignal = null;
 
 child.on("exit", (code, signal) => {
   if (shuttingDown) {
+    // We initiated the shutdown — re-raise the signal so the parent
+    // process exits cleanly instead of hanging on a dead child.
+    if (pendingSignal) {
+      process.kill(process.pid, pendingSignal);
+    } else if (signal) {
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code || 0);
+    }
     return;
   }
   shuttingDown = true;
@@ -33,6 +43,7 @@ function shutdown(signal) {
     return;
   }
   shuttingDown = true;
+  pendingSignal = signal;
   if (!child.killed) {
     child.kill(signal);
   }
