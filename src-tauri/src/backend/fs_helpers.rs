@@ -47,7 +47,12 @@ fn copy_dir_blocking(from: &Path, to: &Path) -> BackendResult<()> {
         std::os::unix::fs::symlink(&target, to)?;
         #[cfg(windows)]
         {
-            if target.is_dir() {
+            // Follow the symlink to determine whether it points at a file or
+            // directory. `read_link` returns the stored target path, which on
+            // Windows may be relative — `target.is_dir()` would resolve it
+            // against the CWD and misclassify the link. `metadata(from)`
+            // follows the symlink and reports the destination's actual type.
+            if std::fs::metadata(from)?.is_dir() {
                 std::os::windows::fs::symlink_dir(&target, to)?;
             } else {
                 std::os::windows::fs::symlink_file(&target, to)?;
