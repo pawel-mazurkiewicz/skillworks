@@ -269,3 +269,7 @@ npm test                                                    # Node side (MCP ser
 PATH="$HOME/.rustup/toolchains/$(rustc -vV | sed -n 's|host: ||p')/bin:$PATH" \
   cargo test --manifest-path src-tauri/Cargo.toml --lib     # Rust side (desktop backend)
 ```
+
+## License
+
+[MIT](LICENSE) © Paweł Mazurkiewicz
