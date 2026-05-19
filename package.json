@@ -2,6 +2,7 @@
   "name": "skillworks",
   "version": "0.1.0",
   "description": "Project-aware skill workspace for local coding agents.",
+  "license": "MIT",
   "type": "commonjs",
   "bin": {
     "skillworks": "src/mcp-server.js",

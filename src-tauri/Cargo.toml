@@ -2,7 +2,8 @@
 name = "skillworks-desktop"
 version = "0.1.0"
 description = "Skillworks desktop shell"
-authors = ["Skillworks"]
+authors = ["Paweł Mazurkiewicz"]
+license = "MIT"
 edition = "2021"
 
 [lib]
