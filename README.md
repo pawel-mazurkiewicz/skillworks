@@ -1,8 +1,16 @@
-# Skillworks
+<h1 align="center">Skillworks</h1>
 
-![Skillworks icon](assets/icon_256.png)
+<p align="center">
+  <img src="assets/icon_256.png" alt="Skillworks icon" width="160">
+</p>
 
-A local, project-aware skill workspace for coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, and more).
+<p align="center">
+  A local, project-aware skill workspace for coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, and more).
+</p>
+
+<p align="center">
+  <img src="assets/1.png" alt="Skillworks main window" width="900">
+</p>
 
 Skillworks keeps the canonical skill library in a hidden home-directory **vault** and activates skills by symlinking them into agent-specific global or project directories. The desktop app handles browsing, importing, installing from Git, switching between named sets, and discovering new skills from [skills.sh](https://skills.sh).
 
@@ -112,9 +120,17 @@ The Skillworks vault
 
 Global and project skill folders are considered safe `Move suggested` sources. Plugin caches and single-file configs are shown for visibility but are scan-only, because moving plugin-owned cache files can break the owning plugin installation.
 
-## Project Management
+## Configure tab
 
-The Manage tab has a Projects panel for:
+<p align="center">
+  <img src="assets/4.png" alt="Configure tab" width="900">
+</p>
+
+The Configure tab is where you set the vault root, add custom targets, hide unused harness targets, and manage the project list.
+
+### Project Management
+
+The Configure tab has a Projects panel for:
 
 - Adding a project manually
 - Loading saved projects
@@ -134,9 +150,17 @@ skills/**/SKILL.md
 
 It skips global harness folders, plugin caches, hidden dotfolder project roots, the Skillworks vault, and heavyweight directories such as `.git`, `node_modules`, build outputs, and OS cache/library folders. Scanned project roots must also look like real projects by containing a common marker such as `.git`, `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Package.swift`, or similar.
 
-## Install from Git
+## Install tab
 
-The Install tab can clone a Git repository, discover every `SKILL.md` under it, move those skills into the vault, and optionally link them to selected targets.
+<p align="center">
+  <img src="assets/2.png" alt="Install tab" width="900">
+</p>
+
+The Install tab has two sub-tabs — **From Git** and **Browse** — for adding skills to the vault.
+
+### From Git
+
+The From-Git form clones a Git repository, discovers every `SKILL.md` under it, moves those skills into the vault, and optionally links them to selected targets.
 
 Supported source forms:
 
@@ -150,9 +174,9 @@ HTTPS clones are supported out of the box (libgit2 is bundled with vendored Open
 
 You can target any combination of the built-in global/project targets, custom targets, or vault-only.
 
-## Browse the Marketplace
+### Browse the Marketplace
 
-The Install tab also has a **Browse** sub-tab that connects to [skills.sh](https://skills.sh) for discovery.
+The Browse sub-tab connects to [skills.sh](https://skills.sh) for discovery.
 
 - **Trending / Hot / All-time / Official** views pull the public listings.
 - **Search** queries hit the skills.sh sitemap (~10k skill URLs) when the auth-walled JSON API is unavailable, giving effective full-catalog search without an API key.
@@ -177,6 +201,10 @@ The skill details pane also has a **Delete** button for one-off removals (with a
 Move and delete remove managed symlinks first. Delete requires UI confirmation before the command is invoked.
 
 ## Sets
+
+<p align="center">
+  <img src="assets/3.png" alt="Sets tab" width="900">
+</p>
 
 Sets are saveable, switchable collections of `(skill, target)` pairs. Each set has a description so agents can choose the right set before activating it.
 
