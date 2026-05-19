@@ -1162,10 +1162,22 @@ async function openExternalUrl(url) {
   if (!url) {
     return;
   }
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    showToast("Invalid link");
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    showToast("Blocked unsafe link");
+    return;
+  }
+  const safeUrl = parsed.toString();
   try {
     const opener = window.__TAURI__ && window.__TAURI__.opener;
     if (opener && typeof opener.openUrl === "function") {
-      await opener.openUrl(url);
+      await opener.openUrl(safeUrl);
       return;
     }
   } catch (error) {
@@ -1174,7 +1186,7 @@ async function openExternalUrl(url) {
     return;
   }
   // Browser fallback (when running outside Tauri shell, e.g. dev server).
-  window.open(url, "_blank", "noopener,noreferrer");
+  window.open(safeUrl, "_blank", "noopener,noreferrer");
 }
 
 function renderMarketplaceSkill(skill) {
