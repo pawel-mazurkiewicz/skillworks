@@ -5,7 +5,7 @@
   "identifier": "dev.skillworks.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && npm run desktop:sidecar",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist"
   },
@@ -21,7 +21,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:5179; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY_FROM: npx tauri signer generate -w ~/.tauri/skillworks.key",
+      "endpoints": [
+        "https://github.com/pawel-mazurkiewicz/skillworks/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {
@@ -33,9 +41,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/skillworks-server"
     ],
     "macOS": {
       "minimumSystemVersion": "12.0"

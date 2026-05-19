@@ -5,14 +5,15 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+    "dialog:allow-open",
     {
-      "identifier": "shell:allow-execute",
+      "identifier": "opener:allow-open-url",
       "allow": [
-        {
-          "name": "binaries/skillworks-server",
-          "sidecar": true,
-          "args": ["--host", "127.0.0.1", "--port", "5179"]
-        }
+        { "url": "https://skills.sh/*" },
+        { "url": "https://www.skills.sh/*" },
+        { "url": "https://github.com/*" }
       ]
     }
   ]

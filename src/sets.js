@@ -1,3 +1,8 @@
+// LEGACY (Node.js only): This module is consumed by `src/mcp-server.js`
+// (the MCP stdio server, `npm run mcp`) and is not used by the desktop app.
+// The desktop app uses native Rust Tauri commands in `src-tauri/src/backend/`.
+// Kept for the MCP server only; new business logic belongs in Rust.
+
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");

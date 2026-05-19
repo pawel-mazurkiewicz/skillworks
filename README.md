@@ -6,34 +6,30 @@ A local, project-aware skill workspace for coding agents.
 
 The app keeps the canonical skill library in a hidden home-directory vault and activates skills by symlinking them into agent-specific global or project directories. The UI is built with Vite and can run in a browser during development or inside the Tauri desktop shell for release builds.
 
+## Architecture
+
+The desktop app (Tauri) uses **native Rust backend commands** in `src-tauri/src/backend/` — no Node sidecar is bundled or required. The frontend invokes Tauri commands directly via the `@tauri-apps/api` shim.
+
+The **MCP stdio server** (`src/mcp-server.js`) is the only remaining Node entrypoint; it shares vault, config, and manifest files on disk with the desktop app but runs as an independent process for agent-driven activation.
+
 ## Run
 
-For browser development with the Node API server and Vite dev server:
-
-```bash
-npm run dev
-```
-
-Open `http://127.0.0.1:5173`.
-
-For the legacy static server path:
-
-```bash
-npm run static
-```
-
-Open `http://127.0.0.1:5179`.
-
-For the desktop shell:
+Desktop dev shell (Tauri):
 
 ```bash
 npm run desktop:dev
 ```
 
-To start on a specific project:
+Production desktop build:
 
 ```bash
-node src/server.js --project /path/to/project --port 5179
+npm run desktop:build
+```
+
+MCP stdio server:
+
+```bash
+npm run mcp
 ```
 
 ## Storage
@@ -48,8 +44,8 @@ Default app state:
 Override the app home or vault:
 
 ```bash
-SKILLWORKS_HOME=/path/to/app-home node src/server.js
-SKILLWORKS_VAULT=/path/to/vault node src/server.js
+SKILLWORKS_HOME=/path/to/app-home npm run mcp
+SKILLWORKS_VAULT=/path/to/vault npm run mcp
 ```
 
 ## Targets
