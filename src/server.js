@@ -1,3 +1,8 @@
+// LEGACY (Node.js only): This module powers `npm start` (browser-based CLI mode)
+// and is no longer used by the desktop app. The desktop app uses native Rust
+// Tauri commands in `src-tauri/src/backend/`. Kept for backward compatibility
+// with the browser/CLI use case; new business logic belongs in Rust.
+
 const http = require("node:http");
 const https = require("node:https");
 const os = require("node:os");
