@@ -1822,7 +1822,10 @@ function renderMatrix() {
             <span class="skill-description">${escapeHtml(skill.description || "No description")}</span>
             <span class="tag-row">
               <span class="tag type-tag">${escapeHtml(skillType(skill))}</span>
-              ${skill.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
+              ${(skill.tags || [])
+                .filter((tag) => tag && tag !== skillType(skill))
+                .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
+                .join("")}
             </span>
           </button>
           <span class="assignment-summary ${activeTargets.length ? "" : "is-disabled"}">${escapeHtml(assignmentText)}</span>
