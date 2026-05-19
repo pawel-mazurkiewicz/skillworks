@@ -7,16 +7,6 @@
     "core:default",
     "updater:allow-check",
     "updater:allow-download-and-install",
-    "dialog:allow-open",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "binaries/skillworks-server",
-          "sidecar": true,
-          "args": ["--host", "127.0.0.1", "--port", "5179"]
-        }
-      ]
-    }
+    "dialog:allow-open"
   ]
 }

@@ -63,20 +63,12 @@ Set-Location $RepoRoot
 
 $BundleDir = Join-Path $RepoRoot 'src-tauri\target\x86_64-pc-windows-msvc\release\bundle'
 
-# ── 1. Build sidecar ─────────────────────────────────────────────────────────
-Log 'Building Windows x64 sidecar (node20-win-x64)...'
-$env:SKILLWORKS_PKG_TARGET   = 'node20-win-x64'
-$env:TAURI_ENV_TARGET_TRIPLE = 'x86_64-pc-windows-msvc'
-node scripts/build-tauri-sidecar.js
-if ($LASTEXITCODE -ne 0) { throw 'Sidecar build failed' }
-Success 'Windows sidecar ready'
-
-# ── 2. Tauri build ────────────────────────────────────────────────────────────
+# ── 1. Tauri build ────────────────────────────────────────────────────────────
 Log 'Building Tauri app for x86_64-pc-windows-msvc...'
 npx tauri build --target x86_64-pc-windows-msvc
 if ($LASTEXITCODE -ne 0) { throw 'Tauri build failed' }
 
-# ── 3. Locate artifacts ───────────────────────────────────────────────────────
+# ── 2. Locate artifacts ───────────────────────────────────────────────────────
 $NsisDir = Join-Path $BundleDir 'nsis'
 $MsiDir  = Join-Path $BundleDir 'msi'
 
@@ -92,7 +84,7 @@ if (-not $Sig) { throw ".nsis.zip.sig not found — check that TAURI_SIGNING_PRI
 $UploadFiles = @($Exe.FullName, $Zip.FullName, $Sig.FullName)
 if ($Msi) { $UploadFiles += $Msi.FullName }
 
-# ── 4. Upload to GitHub Release ───────────────────────────────────────────────
+# ── 3. Upload to GitHub Release ───────────────────────────────────────────────
 Log "Uploading Windows artifacts to GitHub Release $Version..."
 gh release upload $Version @UploadFiles --repo $env:GITHUB_REPO --clobber
 if ($LASTEXITCODE -ne 0) { throw 'Upload failed' }
