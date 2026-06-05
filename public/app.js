@@ -34,6 +34,11 @@ const state = {
     loaded: false,
     error: "",
   },
+  mcp: {
+    harnesses: [],
+    snippet: null,
+    loaded: false,
+  },
 };
 
 let setsState = {
@@ -184,6 +189,8 @@ async function bootstrap() {
         });
       } else if (state.activeTopTab === "install" && !state.marketplace.loaded) {
         runAction(() => loadMarketplace());
+      } else if (state.activeTopTab === "mcp" && !state.mcp.loaded) {
+        runAction(() => loadMcp());
       }
     });
   });
@@ -191,6 +198,7 @@ async function bootstrap() {
   renderTopTabs();
 
   initSetsPanel();
+  initMcpPanel();
 
   elements.pathForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2344,6 +2352,125 @@ async function pickDirectoryInto(input) {
       input.value = result.path;
     }
   });
+}
+
+const MCP_HARNESS_ICONS = {
+  claude: "icon-harness-claude",
+  codex: "icon-harness-codex",
+  opencode: "icon-harness-opencode",
+};
+
+function initMcpPanel() {
+  const list = document.querySelector("#mcpHarnessList");
+  if (list) {
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-mcp-action]");
+      if (!button) return;
+      const action = button.dataset.mcpAction;
+      const harnessId = button.dataset.harness;
+      if (action === "register") {
+        runAction(() => setMcpRegistration(harnessId, true));
+      } else if (action === "unregister") {
+        runAction(() => setMcpRegistration(harnessId, false));
+      }
+    });
+  }
+  const snippet = document.querySelector("#mcpSnippet");
+  if (snippet) {
+    snippet.addEventListener("click", (event) => {
+      if (event.target.closest('[data-mcp-action="copy-snippet"]')) {
+        copyMcpSnippet();
+      }
+    });
+  }
+}
+
+async function loadMcp() {
+  const [harnesses, snippet] = await Promise.all([
+    api("/api/mcp/status"),
+    api("/api/mcp/snippet"),
+  ]);
+  state.mcp.harnesses = Array.isArray(harnesses) ? harnesses : [];
+  state.mcp.snippet = snippet || null;
+  state.mcp.loaded = true;
+  renderMcp();
+}
+
+async function setMcpRegistration(harnessId, register) {
+  const path = register ? "/api/mcp/register" : "/api/mcp/unregister";
+  const harnesses = await api(path, {
+    method: "POST",
+    body: { harnessIds: [harnessId] },
+  });
+  state.mcp.harnesses = Array.isArray(harnesses) ? harnesses : state.mcp.harnesses;
+  renderMcp();
+  showToast(register ? "MCP server registered" : "MCP server removed");
+}
+
+function copyMcpSnippet() {
+  const text = state.mcp.snippet && state.mcp.snippet.snippet;
+  if (!text) {
+    showToast("Nothing to copy yet");
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => showToast("Snippet copied"))
+      .catch(() => showToast("Copy failed"));
+  } else {
+    showToast("Clipboard unavailable");
+  }
+}
+
+function renderMcp() {
+  const list = document.querySelector("#mcpHarnessList");
+  const warning = document.querySelector("#mcpNodeWarning");
+  const snippetCode = document.querySelector("#mcpSnippetCode");
+
+  const harnesses = state.mcp.harnesses || [];
+
+  if (warning) {
+    const nodeMissing =
+      harnesses.some((h) => h.nodePresent === false) ||
+      (state.mcp.snippet && state.mcp.snippet.nodePresent === false);
+    warning.classList.toggle("hidden", !nodeMissing);
+  }
+
+  if (list) {
+    if (!harnesses.length) {
+      list.innerHTML = `<p class="empty-copy">No harnesses available.</p>`;
+    } else {
+      list.innerHTML = harnesses
+        .map((harness) => {
+          const icon = MCP_HARNESS_ICONS[harness.harnessId] || "icon-harness-custom";
+          const registered = Boolean(harness.registered);
+          const statusClass = registered ? "mcp-status--on" : "mcp-status--off";
+          const statusLabel = registered ? "Registered" : "Not registered";
+          const button = registered
+            ? `<button class="button" type="button" data-mcp-action="unregister" data-harness="${escapeAttr(harness.harnessId)}">Remove</button>`
+            : `<button class="button primary" type="button" data-mcp-action="register" data-harness="${escapeAttr(harness.harnessId)}">Register</button>`;
+          return `
+            <div class="mcp-harness-row">
+              <div class="mcp-harness-id">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#${icon}"></use></svg>
+                <span class="mcp-harness-name">${escapeHtml(harness.label)}</span>
+              </div>
+              <div class="mcp-harness-meta">
+                <code class="mcp-harness-path">${escapeHtml(harness.configPath)}</code>
+                <span class="mcp-status ${statusClass}">${statusLabel}</span>
+              </div>
+              <div class="button-row">${button}</div>
+            </div>`;
+        })
+        .join("");
+    }
+  }
+
+  if (snippetCode) {
+    const snippet = state.mcp.snippet && state.mcp.snippet.snippet;
+    snippetCode.textContent = snippet || "Unavailable";
+  }
 }
 
 async function runAction(action) {

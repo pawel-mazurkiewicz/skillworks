@@ -6,10 +6,25 @@ const MCP_SERVER_NAME = "skillworks";
 
 const args = parseArgs(process.argv.slice(2));
 const initialProject = resolveInitialProject(args);
+const selfHarness = normalizeHarness(args.harness);
 const manager = createManager({
   appHome: args["app-home"],
   homeDir: args.home,
 });
+
+// Session-scoped active project. `activate_project` mutates this so subsequent
+// tool calls default to it without the agent passing projectPath every time.
+let activeProject = path.resolve(initialProject);
+
+// Map a harness identity (from --harness or a tool argument) to the
+// project-scoped target id that core.js understands.
+const HARNESS_PROJECT_TARGETS = {
+  claude: "claude-project",
+  codex: "codex-project",
+  opencode: "opencode-project",
+  gemini: "gemini-project",
+  cursor: "cursor-project",
+};
 
 let buffer = Buffer.alloc(0);
 
@@ -128,6 +143,101 @@ function tools() {
         ],
       },
     },
+    {
+      name: "add_project",
+      description: "Register a project with Skillworks so it can hold skills. Returns the created project record and current state.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute or ~-relative path to the project directory.",
+          },
+          name: {
+            type: "string",
+            description: "Optional display name. Defaults to the directory name.",
+          },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "activate_project",
+      description: "Set the active project for this session. Subsequent skill/set operations default to it when no projectPath is given. Registers the project if it is not already known.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute or ~-relative path to the project directory to activate.",
+          },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "search_skills",
+      description: "Search the Skillworks vault for skills by name, description, or tags. Returns matching skills with id, name, description, and tags.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search text matched against skill name, description, and tags. Empty returns all skills.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of results to return. Defaults to 50.",
+          },
+        },
+      },
+    },
+    {
+      name: "add_skills_to_project",
+      description: "Link one or more vault skills into the active project's skill directory. By default targets the calling harness; pass `harness` to target a different one.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          skills: {
+            type: "array",
+            items: { type: "string" },
+            description: "Skill ids (vault-relative paths) to add to the project.",
+          },
+          harness: {
+            type: "string",
+            description: "Harness to link for (claude, codex, opencode, gemini, cursor). Defaults to the harness this server was registered for.",
+          },
+          projectPath: {
+            type: "string",
+            description: "Project path to act on. Defaults to the active project.",
+          },
+        },
+        required: ["skills"],
+      },
+    },
+    {
+      name: "remove_skills_from_project",
+      description: "Unlink one or more skills from the active project's skill directory. By default targets the calling harness; pass `harness` to target a different one.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          skills: {
+            type: "array",
+            items: { type: "string" },
+            description: "Skill ids (vault-relative paths) to remove from the project.",
+          },
+          harness: {
+            type: "string",
+            description: "Harness to unlink from (claude, codex, opencode, gemini, cursor). Defaults to the harness this server was registered for.",
+          },
+          projectPath: {
+            type: "string",
+            description: "Project path to act on. Defaults to the active project.",
+          },
+        },
+        required: ["skills"],
+      },
+    },
   ];
 }
 
@@ -153,7 +263,126 @@ async function callTool(params) {
     });
   }
 
+  if (name === "add_project") {
+    const projectPath = requireProjectPath(args.path);
+    const result = await manager.addProject(projectPath, {
+      name: typeof args.name === "string" ? args.name : undefined,
+    });
+    return toolResult({ project: result.project, activeProject });
+  }
+
+  if (name === "activate_project") {
+    const projectPath = requireProjectPath(args.path);
+    const result = await manager.addProject(projectPath, {});
+    activeProject = projectPath;
+    return toolResult({ activeProject, project: result.project, state: result.state });
+  }
+
+  if (name === "search_skills") {
+    const query = typeof args.query === "string" ? args.query : "";
+    const limit = Number.isFinite(args.limit) && args.limit > 0 ? Math.floor(args.limit) : 50;
+    const state = await manager.getState(activeProject);
+    const matches = searchSkills(state.skills, query).slice(0, limit);
+    return toolResult({
+      query,
+      total: matches.length,
+      skills: matches.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        type: skill.type,
+        tags: skill.tags,
+      })),
+    });
+  }
+
+  if (name === "add_skills_to_project" || name === "remove_skills_from_project") {
+    const enabled = name === "add_skills_to_project";
+    const projectPath = normalizeProjectArg(args.projectPath);
+    const targetId = resolveProjectTargetId(args.harness);
+    const skillIds = normalizeSkillIds(args.skills);
+    if (skillIds.length === 0) {
+      throw new Error(`${name} requires a non-empty "skills" array`);
+    }
+    let state;
+    for (const skillId of skillIds) {
+      state = await manager.toggleSkill({ projectPath, targetId, skillId, enabled });
+    }
+    return toolResult({
+      targetId,
+      projectPath,
+      [enabled ? "added" : "removed"]: skillIds,
+      state,
+    });
+  }
+
   throw new Error(`Unknown tool: ${name}`);
+}
+
+function searchSkills(skills, query) {
+  const normalized = String(query || "").trim().toLowerCase();
+  if (!normalized) {
+    return skills;
+  }
+  const terms = normalized.split(/\s+/).filter(Boolean);
+  return skills.filter((skill) => {
+    const haystack = [
+      skill.id,
+      skill.name,
+      skill.description,
+      Array.isArray(skill.tags) ? skill.tags.join(" ") : "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+function resolveProjectTargetId(harnessArg) {
+  const harness = normalizeHarness(harnessArg) || selfHarness;
+  if (!harness) {
+    throw new Error(
+      'Cannot determine harness. Pass "harness" (claude, codex, opencode, gemini, cursor) or register the server with --harness.',
+    );
+  }
+  const targetId = HARNESS_PROJECT_TARGETS[harness];
+  if (!targetId) {
+    throw new Error(`Unsupported harness: ${harness}`);
+  }
+  return targetId;
+}
+
+function normalizeSkillIds(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function requireProjectPath(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error('A non-empty "path" is required');
+  }
+  return path.resolve(expandHomePath(value.trim()));
+}
+
+function expandHomePath(input) {
+  if (input === "~") {
+    return require("node:os").homedir();
+  }
+  if (input.startsWith("~/")) {
+    return path.join(require("node:os").homedir(), input.slice(2));
+  }
+  return input;
+}
+
+function normalizeHarness(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().toLowerCase();
 }
 
 async function resolveSetId(args, projectPath) {
@@ -207,9 +436,9 @@ function sendMessage(message) {
 
 function normalizeProjectArg(projectPath) {
   if (typeof projectPath === "string" && projectPath.trim()) {
-    return path.resolve(projectPath.trim());
+    return path.resolve(expandHomePath(projectPath.trim()));
   }
-  return path.resolve(initialProject);
+  return activeProject;
 }
 
 function resolveInitialProject(parsedArgs) {

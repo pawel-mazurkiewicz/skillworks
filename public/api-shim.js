@@ -297,6 +297,16 @@ const ROUTES = [
       id: m[1],
       project: url.searchParams.get("project") || undefined,
     })],
+
+  ["GET", /^\/api\/mcp\/status$/, "mcp_registration_status", () => ({})],
+
+  ["GET", /^\/api\/mcp\/snippet$/, "mcp_manual_snippet", () => ({})],
+
+  ["POST", /^\/api\/mcp\/register$/, "register_mcp_server",
+    (_url, body) => ({ harnessIds: (body && body.harnessIds) || [] })],
+
+  ["POST", /^\/api\/mcp\/unregister$/, "unregister_mcp_server",
+    (_url, body) => ({ harnessIds: (body && body.harnessIds) || [] })],
 ];
 
 function invokeFn() {

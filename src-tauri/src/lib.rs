@@ -38,6 +38,10 @@ pub fn run() {
             backend::commands::set_project_pinned_sets,
             backend::commands::fetch_marketplace_skills,
             backend::commands::create_skill,
+            backend::commands::mcp_registration_status,
+            backend::commands::register_mcp_server,
+            backend::commands::unregister_mcp_server,
+            backend::commands::mcp_manual_snippet,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Skillworks desktop");
