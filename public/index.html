@@ -179,6 +179,13 @@
             </span>
             <span class="top-tab-hint">Find &amp; merge duplicates</span>
           </button>
+          <button class="top-tab" data-top-tab="mcp" type="button">
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg>
+              <span class="top-tab-label">MCP server</span>
+            </span>
+            <span class="top-tab-hint">Connect agents to Skillworks</span>
+          </button>
         </nav>
       </header>
 
@@ -554,6 +561,36 @@
               <p class="empty-copy">Press <strong>Scan vault</strong> to find duplicate skills.</p>
             </div>
           </section>
+        </section>
+
+        <section class="tab-content hidden" id="mcpTab" data-top-tab-panel="mcp" aria-label="MCP server">
+          <div class="tab-grid configure-stack">
+            <section class="panel">
+              <div class="section-head">
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg><span>MCP server</span></h2>
+                <p class="section-sub">Let your coding agents reach Skillworks directly. Registering adds Skillworks as an MCP server in each harness's config — the harness launches and talks to it. The agent can then add projects, set the active project, search the vault, and add or remove project skills.</p>
+              </div>
+              <div class="mcp-node-warning hidden" id="mcpNodeWarning" role="status">
+                <strong>Node not found on PATH.</strong> The MCP server runs with Node. Install Node.js so harnesses can launch it.
+              </div>
+              <div class="mcp-harness-list" id="mcpHarnessList">
+                <p class="empty-copy">Loading harnesses…</p>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-harness-custom"></use></svg><span>Other harnesses</span></h2>
+                <p class="section-sub">For harnesses Skillworks doesn't configure automatically, add this MCP server manually using the command below. The agent passes the target harness per call when adding skills.</p>
+              </div>
+              <div class="mcp-snippet" id="mcpSnippet">
+                <pre class="mcp-snippet-pre"><code id="mcpSnippetCode">Loading…</code></pre>
+                <div class="button-row">
+                  <button class="button" type="button" data-mcp-action="copy-snippet">Copy snippet</button>
+                </div>
+              </div>
+            </section>
+          </div>
         </section>
       </main>
 

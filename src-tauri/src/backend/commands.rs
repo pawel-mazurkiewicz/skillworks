@@ -2167,6 +2167,165 @@ pub async fn fetch_marketplace_skills(
     super::marketplace::fetch_marketplace_skills(q, view, page, per_page).await
 }
 
+// ---------------------------------------------------------------------------
+// MCP server registration.
+// ---------------------------------------------------------------------------
+
+use super::mcp_register::{self, HarnessMcpStatus, McpInvocation};
+
+/// Resolve the absolute path to the bundled `mcp-server.js`. Falls back to the
+/// repo source tree during `tauri dev` where bundled resources may be absent.
+fn resolve_server_path(app: &tauri::AppHandle) -> PathBuf {
+    use tauri::Manager;
+    if let Ok(resolved) = app
+        .path()
+        .resolve("mcp/mcp-server.js", tauri::path::BaseDirectory::Resource)
+    {
+        if resolved.exists() {
+            return resolved;
+        }
+    }
+    // Dev fallback: <repo>/src/mcp-server.js relative to this crate.
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|repo| repo.join("src").join("mcp-server.js"))
+        .unwrap_or_else(|| PathBuf::from("src/mcp-server.js"))
+}
+
+fn require_home_dir() -> BackendResult<PathBuf> {
+    dirs::home_dir()
+        .ok_or_else(|| BackendError::Validation("home directory unavailable".to_string()))
+}
+
+async fn collect_status(
+    home_dir: &Path,
+    server_path: &Path,
+) -> BackendResult<Vec<HarnessMcpStatus>> {
+    let mut out = Vec::new();
+    for (id, _label) in mcp_register::auto_harnesses() {
+        out.push(mcp_register::status(home_dir, id, server_path).await?);
+    }
+    Ok(out)
+}
+
+/// Report MCP registration status for every auto-configurable harness.
+#[tauri::command]
+pub async fn mcp_registration_status(
+    app: tauri::AppHandle,
+) -> BackendResult<Vec<HarnessMcpStatus>> {
+    let home_dir = require_home_dir()?;
+    let server_path = resolve_server_path(&app);
+    collect_status(&home_dir, &server_path).await
+}
+
+/// Register the bundled MCP server with the named harnesses.
+#[tauri::command]
+pub async fn register_mcp_server(
+    app: tauri::AppHandle,
+    harness_ids: Vec<String>,
+) -> BackendResult<Vec<HarnessMcpStatus>> {
+    let home_dir = require_home_dir()?;
+    let app_home = resolve_app_home(&home_dir, None);
+    let server_path = resolve_server_path(&app);
+    // Attempt every harness before bailing so one failure cannot leave the
+    // batch half-applied with no status returned. Collect errors and report
+    // them only after all writes have been tried.
+    let mut errors = Vec::new();
+    for id in &harness_ids {
+        let invocation = mcp_register::invocation_for(id, &server_path, &app_home);
+        if let Err(err) = mcp_register::register(&home_dir, id, &invocation).await {
+            errors.push(format!("{id}: {err}"));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(BackendError::Validation(format!(
+            "Failed to register: {}",
+            errors.join("; ")
+        )));
+    }
+    collect_status(&home_dir, &server_path).await
+}
+
+/// Remove the bundled MCP server from the named harnesses.
+#[tauri::command]
+pub async fn unregister_mcp_server(
+    app: tauri::AppHandle,
+    harness_ids: Vec<String>,
+) -> BackendResult<Vec<HarnessMcpStatus>> {
+    let home_dir = require_home_dir()?;
+    let server_path = resolve_server_path(&app);
+    let mut errors = Vec::new();
+    for id in &harness_ids {
+        if let Err(err) = mcp_register::unregister(&home_dir, id).await {
+            errors.push(format!("{id}: {err}"));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(BackendError::Validation(format!(
+            "Failed to remove: {}",
+            errors.join("; ")
+        )));
+    }
+    collect_status(&home_dir, &server_path).await
+}
+
+/// A copyable, harness-agnostic snippet for harnesses we don't auto-configure.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpManualSnippet {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub server_path: String,
+    pub node_present: bool,
+    pub snippet: String,
+}
+
+/// Return the generic invocation + a ready-to-paste JSON snippet for other
+/// harnesses. The agent passes `harness` per call since the server has no fixed
+/// identity in this mode.
+#[tauri::command]
+pub async fn mcp_manual_snippet(app: tauri::AppHandle) -> BackendResult<McpManualSnippet> {
+    let home_dir = require_home_dir()?;
+    let app_home = resolve_app_home(&home_dir, None);
+    let server_path = resolve_server_path(&app);
+
+    let mut args = vec![server_path.to_string_lossy().into_owned()];
+    args.push("--harness".to_string());
+    // Placeholder: the user replaces this with their harness id (e.g. gemini,
+    // cursor) so add/remove skill tools know which project dir to link into.
+    args.push("<your-harness>".to_string());
+    args.push("--app-home".to_string());
+    args.push(app_home.to_string_lossy().into_owned());
+    args.push("--project-from-cwd".to_string());
+
+    let invocation = McpInvocation {
+        command: "node".to_string(),
+        args: args.clone(),
+        env: std::collections::BTreeMap::new(),
+    };
+
+    let snippet_value = serde_json::json!({
+        "mcpServers": {
+            "skillworks": {
+                "type": "stdio",
+                "command": invocation.command,
+                "args": invocation.args,
+            }
+        }
+    });
+    let snippet = serde_json::to_string_pretty(&snippet_value)?;
+
+    Ok(McpManualSnippet {
+        command: invocation.command,
+        args: invocation.args,
+        env: invocation.env,
+        server_path: server_path.to_string_lossy().into_owned(),
+        node_present: mcp_register::node_present(),
+        snippet,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

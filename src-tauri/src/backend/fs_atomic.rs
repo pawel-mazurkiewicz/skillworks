@@ -49,3 +49,35 @@ pub async fn write_json_atomic<T: Serialize + ?Sized>(
 
     Ok(())
 }
+
+/// Atomically write raw bytes to `path` using the same temp-then-rename strategy
+/// as [`write_json_atomic`]. Used for non-JSON config files (e.g. TOML).
+pub async fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> BackendResult<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| BackendError::Validation(format!("path has no parent: {}", path.display())))?;
+
+    fs::create_dir_all(parent).await?;
+
+    let pid = std::process::id();
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| BackendError::Validation(format!("path has no file name: {}", path.display())))?;
+    let mut tmp_name = file_name.to_os_string();
+    tmp_name.push(format!(".{}.tmp", pid));
+    let tmp_path = parent.join(&tmp_name);
+
+    {
+        let mut file = fs::File::create(&tmp_path).await?;
+        file.write_all(bytes).await?;
+        file.flush().await?;
+        file.sync_all().await?;
+    }
+
+    if let Err(err) = fs::rename(&tmp_path, path).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err.into());
+    }
+
+    Ok(())
+}
