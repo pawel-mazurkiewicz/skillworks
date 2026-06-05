@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use chrono::Utc;
 use serde::Serialize;
 use tokio::fs;
 
@@ -17,6 +18,24 @@ use super::state::{BackendError, BackendResult};
 
 /// Key under which the server is registered in every harness config.
 pub const MCP_SERVER_KEY: &str = "skillworks";
+
+/// Copy an existing config file to a timestamped sibling before we modify it,
+/// so a user can recover their previous harness config. No-op when the file
+/// does not yet exist (a fresh registration creating the file). Returns the
+/// backup path when one was written.
+async fn backup_existing(path: &Path) -> BackendResult<Option<PathBuf>> {
+    if !fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(None);
+    }
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+    let backup_path = path.with_file_name(format!("{file_name}.skillworks-backup-{timestamp}"));
+    fs::copy(path, &backup_path).await?;
+    Ok(Some(backup_path))
+}
 
 /// How a harness should spawn the MCP server.
 #[derive(Debug, Clone)]
@@ -223,6 +242,7 @@ async fn register_claude(path: &Path, invocation: &McpInvocation) -> BackendResu
             "env": invocation.env,
         }),
     );
+    backup_existing(path).await?;
     write_json_atomic(path, &serde_json::Value::Object(doc)).await
 }
 
@@ -248,6 +268,7 @@ async fn register_opencode(path: &Path, invocation: &McpInvocation) -> BackendRe
         entry["environment"] = serde_json::to_value(&invocation.env)?;
     }
     mcp.insert(MCP_SERVER_KEY.to_string(), entry);
+    backup_existing(path).await?;
     write_json_atomic(path, &serde_json::Value::Object(doc)).await
 }
 
@@ -261,6 +282,7 @@ async fn unregister_json(path: &Path, parent_key: &str) -> BackendResult<()> {
         changed = parent.remove(MCP_SERVER_KEY).is_some();
     }
     if changed {
+        backup_existing(path).await?;
         write_json_atomic(path, &serde_json::Value::Object(doc)).await?;
     }
     Ok(())
@@ -313,6 +335,7 @@ async fn register_codex(path: &Path, invocation: &McpInvocation) -> BackendResul
 
     servers.insert(MCP_SERVER_KEY, toml_edit::Item::Table(entry));
 
+    backup_existing(path).await?;
     write_bytes_atomic(path, doc.to_string().as_bytes()).await
 }
 
@@ -326,6 +349,7 @@ async fn unregister_codex(path: &Path) -> BackendResult<()> {
         changed = servers.remove(MCP_SERVER_KEY).is_some();
     }
     if changed {
+        backup_existing(path).await?;
         write_bytes_atomic(path, doc.to_string().as_bytes()).await?;
     }
     Ok(())
@@ -402,6 +426,42 @@ mod tests {
         let path = dir.path().join(".claude.json");
         register(dir.path(), "claude", &invocation()).await.unwrap();
         assert!(is_registered(&path, "claude").await.unwrap());
+
+        // No pre-existing file -> nothing to back up.
+        let backups = backup_files(dir.path(), ".claude.json").await;
+        assert!(backups.is_empty(), "no backup for fresh file; got {backups:?}");
+    }
+
+    async fn backup_files(dir: &Path, base: &str) -> Vec<String> {
+        let prefix = format!("{base}.skillworks-backup-");
+        let mut out = Vec::new();
+        let mut entries = fs::read_dir(dir).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&prefix) {
+                out.push(name);
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn register_backs_up_existing_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".claude.json");
+        let original = r#"{"mcpServers":{"other":{"command":"x"}}}"#;
+        fs::write(&path, original).await.unwrap();
+
+        register(dir.path(), "claude", &invocation()).await.unwrap();
+
+        let backups = backup_files(dir.path(), ".claude.json").await;
+        assert_eq!(backups.len(), 1, "one backup written; got {backups:?}");
+        let backup_path = dir.path().join(&backups[0]);
+        let backup_contents = fs::read_to_string(&backup_path).await.unwrap();
+        assert_eq!(
+            backup_contents, original,
+            "backup preserves the pre-modification contents"
+        );
     }
 
     #[tokio::test]
