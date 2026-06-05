@@ -72,6 +72,9 @@ unregister removes only that entry.
 
 Writes are atomic (reuse `fs_atomic`/temp-then-rename where applicable). Missing
 parent dirs are created. A missing config file is created with just our entry.
+Before modifying an existing config, the original is copied to a timestamped
+sibling (`<name>.skillworks-backup-<UTC timestamp>`) so the user can recover
+their previous harness config; fresh files (nothing to overwrite) skip backup.
 
 Other harnesses: `mcp_manual_snippet()` returns a generic
 `{command, args, env}` object plus a ready-to-paste JSON snippet.
