@@ -26,11 +26,16 @@ const HARNESS_PROJECT_TARGETS = {
   cursor: "cursor-project",
 };
 
-let buffer = Buffer.alloc(0);
+// MCP stdio transport: JSON-RPC messages are newline-delimited (one JSON
+// object per line), NOT LSP-style Content-Length framing.
+let buffer = "";
+let processing = Promise.resolve();
+
+process.stdin.setEncoding("utf8");
 
 process.stdin.on("data", (chunk) => {
-  buffer = Buffer.concat([buffer, chunk]);
-  drainMessages().catch((error) => {
+  buffer += chunk;
+  processing = processing.then(drainMessages).catch((error) => {
     process.stderr.write(`MCP server error: ${error.stack || error.message || error}\n`);
   });
 });
@@ -40,31 +45,20 @@ process.stdin.on("end", () => {
 });
 
 async function drainMessages() {
-  while (true) {
-    const parsed = readFrame();
-    if (!parsed) return;
-    await handleMessage(parsed);
+  let newlineIndex;
+  while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (error) {
+      process.stderr.write(`MCP server: skipping invalid JSON line: ${error.message}\n`);
+      continue;
+    }
+    await handleMessage(message);
   }
-}
-
-function readFrame() {
-  const headerEnd = buffer.indexOf("\r\n\r\n");
-  if (headerEnd === -1) return null;
-
-  const header = buffer.slice(0, headerEnd).toString("utf8");
-  const match = header.match(/content-length:\s*(\d+)/i);
-  if (!match) {
-    throw new Error("Missing Content-Length header");
-  }
-
-  const length = Number(match[1]);
-  const bodyStart = headerEnd + 4;
-  const bodyEnd = bodyStart + length;
-  if (buffer.length < bodyEnd) return null;
-
-  const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
-  buffer = buffer.slice(bodyEnd);
-  return JSON.parse(body);
 }
 
 async function handleMessage(message) {
@@ -430,8 +424,7 @@ function sendError(id, code, message) {
 }
 
 function sendMessage(message) {
-  const body = JSON.stringify(message);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function normalizeProjectArg(projectPath) {

@@ -16,8 +16,8 @@ async function writeSkill(dir, name, description) {
 }
 
 /**
- * Minimal stdio MCP client: spawns the server, frames JSON-RPC requests with
- * Content-Length headers, and resolves responses by id.
+ * Minimal stdio MCP client: spawns the server, frames JSON-RPC requests as
+ * newline-delimited JSON (the MCP stdio transport), and resolves responses by id.
  */
 function createClient({ appHome, home, project, harness }) {
   const args = ["--app-home", appHome, "--home", home, "--project", project];
@@ -32,23 +32,17 @@ function createClient({ appHome, home, project, harness }) {
     stderr += chunk.toString("utf8");
   });
 
-  let buffer = Buffer.alloc(0);
+  let buffer = "";
   const pending = new Map();
+  child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) return;
-      const header = buffer.slice(0, headerEnd).toString("utf8");
-      const match = header.match(/content-length:\s*(\d+)/i);
-      if (!match) return;
-      const length = Number(match[1]);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + length;
-      if (buffer.length < bodyEnd) return;
-      const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
-      buffer = buffer.slice(bodyEnd);
-      const message = JSON.parse(body);
+    buffer += chunk;
+    let newlineIndex;
+    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) continue;
+      const message = JSON.parse(line);
       if (message.id != null && pending.has(message.id)) {
         const { resolve } = pending.get(message.id);
         pending.delete(message.id);
@@ -63,9 +57,7 @@ function createClient({ appHome, home, project, harness }) {
     const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
-      child.stdin.write(
-        `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`,
-      );
+      child.stdin.write(`${payload}\n`);
     });
   }
 
