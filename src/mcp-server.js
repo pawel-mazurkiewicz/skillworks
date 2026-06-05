@@ -138,6 +138,67 @@ function tools() {
       },
     },
     {
+      name: "create_skill_set",
+      description: "Create a new skill set (a reusable bundle of skills). Optionally seed it with skills for a harness. Use activate_skill_set to apply it later.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Display name for the set.",
+          },
+          description: {
+            type: "string",
+            description: "Optional description of what the set is for.",
+          },
+          scope: {
+            type: "string",
+            enum: ["global", "project"],
+            description: "Whether the set is global (available everywhere) or project-local. Defaults to global.",
+          },
+          skills: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional skill ids to include in the set.",
+          },
+          harness: {
+            type: "string",
+            description: "Harness the seeded skills target (claude, codex, opencode, gemini, cursor). Defaults to the harness this server was registered for. Only used when skills are provided.",
+          },
+          projectPath: {
+            type: "string",
+            description: "Project path for project-scoped sets and target resolution. Defaults to the active project.",
+          },
+        },
+        required: ["name"],
+      },
+    },
+    {
+      name: "delete_skill_set",
+      description: "Delete a skill set by id or exact name. This removes the saved set definition; it does not unlink skills already applied to targets.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          setId: {
+            type: "string",
+            description: "Skill set id to delete.",
+          },
+          name: {
+            type: "string",
+            description: "Exact skill set name to delete when setId is not known.",
+          },
+          projectPath: {
+            type: "string",
+            description: "Project path used to resolve project-local sets. Defaults to the active project.",
+          },
+        },
+        anyOf: [
+          { required: ["setId"] },
+          { required: ["name"] },
+        ],
+      },
+    },
+    {
       name: "add_project",
       description: "Register a project with Skillworks so it can hold skills. Returns the created project record and current state.",
       inputSchema: {
@@ -255,6 +316,44 @@ async function callTool(params) {
       perTargetResult: result.perTargetResult,
       warnings: result.warnings,
     });
+  }
+
+  if (name === "create_skill_set") {
+    const projectPath = normalizeProjectArg(args.projectPath);
+    const setName = typeof args.name === "string" ? args.name.trim() : "";
+    if (!setName) {
+      throw new Error("create_skill_set requires a name");
+    }
+    const scope = args.scope === "project" ? "project" : "global";
+    const skillIds = normalizeSkillIds(args.skills);
+    let entries = [];
+    if (skillIds.length > 0) {
+      const targetId = resolveProjectTargetId(args.harness);
+      const state = await manager.getState(projectPath);
+      const skillsById = new Map(state.skills.map((skill) => [skill.id, skill]));
+      entries = skillIds.map((skillId) => {
+        const skill = skillsById.get(skillId);
+        if (!skill) {
+          throw new Error(`Unknown skill: ${skillId}`);
+        }
+        return { targetKey: targetId, skillName: skill.name };
+      });
+    }
+    const result = await manager.createSet({
+      name: setName,
+      description: typeof args.description === "string" ? args.description : "",
+      scope,
+      projectPath: scope === "project" ? projectPath : undefined,
+      entries,
+    });
+    return toolResult({ set: result.set });
+  }
+
+  if (name === "delete_skill_set") {
+    const projectPath = normalizeProjectArg(args.projectPath);
+    const setId = await resolveSetId(args, projectPath);
+    const result = await manager.deleteSet(setId, { projectPath });
+    return toolResult({ deletedId: result.deletedId });
   }
 
   if (name === "add_project") {
@@ -386,7 +485,7 @@ async function resolveSetId(args, projectPath) {
 
   const requestedName = typeof args.name === "string" ? args.name.trim() : "";
   if (!requestedName) {
-    throw new Error("activate_skill_set requires setId or name");
+    throw new Error("This tool requires setId or name");
   }
 
   const sets = await manager.listSets({ projectPath });

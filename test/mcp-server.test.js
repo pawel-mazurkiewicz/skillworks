@@ -109,6 +109,8 @@ test("lists the new project + skill tools", async () => {
       "search_skills",
       "add_skills_to_project",
       "remove_skills_from_project",
+      "create_skill_set",
+      "delete_skill_set",
     ]) {
       assert.ok(names.includes(expected), `missing tool ${expected}`);
     }
@@ -137,6 +139,47 @@ test("search_skills matches by name, description, and tags", async () => {
     const async = await client.call("search_skills", { query: "async rust" });
     assert.equal(async.total, 1);
     assert.equal(async.skills[0].id, "rust/tokio");
+  } finally {
+    client.close();
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("create, list, activate, and delete a skill set", async () => {
+  const fixture = await setupFixture();
+  const client = createClient({
+    appHome: fixture.appHome,
+    home: fixture.home,
+    project: fixture.project,
+    harness: "claude",
+  });
+  try {
+    const created = await client.call("create_skill_set", {
+      name: "Frontend",
+      description: "UI work",
+      scope: "global",
+      skills: ["ios/swiftui"],
+    });
+    assert.equal(created.set.name, "Frontend");
+    assert.equal(created.set.scope, "global");
+    assert.equal(created.set.entries.length, 1);
+    assert.equal(created.set.entries[0].targetKey, "claude-project");
+    assert.equal(created.set.entries[0].skillName, "SwiftUI Patterns");
+    const setId = created.set.id;
+
+    const listed = await client.call("list_skill_sets", {});
+    assert.ok(listed.global.some((set) => set.id === setId), "set appears in list");
+
+    // Activating the set links its skills into the project target.
+    await client.call("activate_skill_set", { setId });
+    const linked = (await fs.readdir(path.join(fixture.project, ".claude", "skills")))
+      .filter((entry) => entry !== ".agent-skill-manager.json");
+    assert.ok(linked.length >= 1, "set activation linked the skill");
+
+    // Deleting by name also works and removes the definition.
+    await client.call("delete_skill_set", { name: "Frontend" });
+    const after = await client.call("list_skill_sets", {});
+    assert.ok(!after.global.some((set) => set.id === setId), "set removed from list");
   } finally {
     client.close();
     await fs.rm(fixture.root, { recursive: true, force: true });
