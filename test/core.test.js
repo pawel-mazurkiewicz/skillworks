@@ -1196,20 +1196,21 @@ function sendMcpRequest(child, message) {
 }
 
 function encodeMcpMessage(message) {
-  const body = JSON.stringify(message);
-  return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+  // MCP stdio transport uses newline-delimited JSON.
+  return `${JSON.stringify(message)}\n`;
 }
 
 function readMcpResponse(child) {
-  let buffer = Buffer.alloc(0);
+  let buffer = "";
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error("Timed out waiting for MCP response"));
     }, 5000);
 
+    child.stdout.setEncoding("utf8");
     const onData = (chunk) => {
-      buffer = Buffer.concat([buffer, chunk]);
+      buffer += chunk;
       const message = parseMcpFrame(buffer);
       if (!message) return;
       cleanup();
@@ -1237,14 +1238,9 @@ function readMcpResponse(child) {
 }
 
 function parseMcpFrame(buffer) {
-  const headerEnd = buffer.indexOf("\r\n\r\n");
-  if (headerEnd === -1) return null;
-  const header = buffer.slice(0, headerEnd).toString("utf8");
-  const match = header.match(/content-length:\s*(\d+)/i);
-  if (!match) return null;
-  const length = Number(match[1]);
-  const bodyStart = headerEnd + 4;
-  const bodyEnd = bodyStart + length;
-  if (buffer.length < bodyEnd) return null;
-  return { parsed: JSON.parse(buffer.slice(bodyStart, bodyEnd).toString("utf8")) };
+  const newlineIndex = buffer.indexOf("\n");
+  if (newlineIndex === -1) return null;
+  const line = buffer.slice(0, newlineIndex).trim();
+  if (!line) return null;
+  return { parsed: JSON.parse(line) };
 }
