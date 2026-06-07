@@ -199,7 +199,9 @@ test("activate_project sets the session default project", async () => {
   try {
     const result = await client.call("activate_project", { path: otherProject });
     assert.equal(result.activeProject, otherProject);
-    assert.equal(result.state.project.path, otherProject);
+    assert.equal(result.project.path, otherProject);
+    assert.ok(result.summary, "returns a compact summary, not a full state dump");
+    assert.equal(result.state, undefined, "no full state dump");
 
     // add without projectPath should now act on the activated project
     await client.call("add_skills_to_project", { skills: ["ios/swiftui"] });
@@ -223,6 +225,8 @@ test("add/remove skills default to the registered harness and honor override", a
     // default harness = claude -> .claude/skills
     const added = await client.call("add_skills_to_project", { skills: ["ios/swiftui"] });
     assert.equal(added.targetId, "claude-project");
+    assert.equal(added.state, undefined, "no full state dump in result");
+    assert.equal(added.enabledInTarget, 1, "reports compact enabled count");
     const claudeDir = path.join(fixture.project, ".claude", "skills");
     assert.ok((await fs.readdir(claudeDir)).length >= 1);
 
