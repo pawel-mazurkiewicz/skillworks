@@ -368,7 +368,11 @@ async function callTool(params) {
     const projectPath = requireProjectPath(args.path);
     const result = await manager.addProject(projectPath, {});
     activeProject = projectPath;
-    return toolResult({ activeProject, project: result.project, state: result.state });
+    return toolResult({
+      activeProject,
+      project: compactProject(result.project),
+      summary: result.state && result.state.summary,
+    });
   }
 
   if (name === "search_skills") {
@@ -401,15 +405,25 @@ async function callTool(params) {
     for (const skillId of skillIds) {
       state = await manager.toggleSkill({ projectPath, targetId, skillId, enabled });
     }
+    const target = state && state.targets && state.targets.find((t) => t.id === targetId);
     return toolResult({
       targetId,
       projectPath,
       [enabled ? "added" : "removed"]: skillIds,
-      state,
+      enabledInTarget: target ? target.enabledSkillIds.length : undefined,
     });
   }
 
   throw new Error(`Unknown tool: ${name}`);
+}
+
+function compactProject(project) {
+  if (!project || typeof project !== "object") return project;
+  return {
+    path: project.path,
+    name: project.name,
+    source: project.source,
+  };
 }
 
 function searchSkills(skills, query) {
