@@ -4,3 +4,4 @@
 //! docs/superpowers/specs/2026-07-20-mcp-management-phase-a-design.md).
 
 pub mod spec;
+pub mod adapters;
