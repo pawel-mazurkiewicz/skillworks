@@ -14,6 +14,7 @@ use tokio::fs;
 
 use super::config::Config;
 use super::fs_helpers::{copy_directory, move_directory, unique_skill_destination};
+use super::mcp::spec::{load_library, save_library, validate_spec, McpServerSpec};
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
     normalize_project_records, path_exists,
@@ -26,9 +27,9 @@ use super::targets::{
     build_targets, inspect_target, normalize_custom_targets, safe_read_custom_targets,
 };
 use super::types::{
-    DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry, PickDirectoryResponse,
-    ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse, ScanReport,
-    SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
+    DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry, McpLibraryResponse,
+    PickDirectoryResponse, ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse,
+    ScanReport, SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
 };
 
 const APP_CONFIG_DIR: &str = ".skillworks";
@@ -2326,6 +2327,105 @@ pub async fn mcp_manual_snippet(app: tauri::AppHandle) -> BackendResult<McpManua
     })
 }
 
+// ---------------------------------------------------------------------------
+// MCP server library.
+// ---------------------------------------------------------------------------
+
+fn resolve_home_dir(home_dir_override: Option<PathBuf>) -> BackendResult<PathBuf> {
+    match home_dir_override {
+        Some(p) => Ok(p),
+        None => dirs::home_dir()
+            .ok_or_else(|| BackendError::Validation("home directory unavailable".to_string())),
+    }
+}
+
+async fn resolve_mcp_app_home(app_home_override: Option<PathBuf>) -> BackendResult<PathBuf> {
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| BackendError::Validation("home directory unavailable".to_string()))?;
+    let app_home = resolve_app_home(&home_dir, app_home_override);
+    fs::create_dir_all(&app_home).await?;
+    Ok(app_home)
+}
+
+/// List every server in the canonical library.
+#[tauri::command]
+pub async fn mcp_list_library() -> BackendResult<McpLibraryResponse> {
+    mcp_list_library_impl(None).await
+}
+
+pub async fn mcp_list_library_impl(
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<McpLibraryResponse> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    Ok(McpLibraryResponse {
+        servers: load_library(&app_home).await?,
+        warnings: Vec::new(),
+    })
+}
+
+/// Add a hand-authored server spec to the library.
+#[tauri::command]
+pub async fn mcp_add_manual(spec: McpServerSpec) -> BackendResult<McpLibraryResponse> {
+    mcp_add_manual_impl(spec, None).await
+}
+
+pub async fn mcp_add_manual_impl(
+    spec: McpServerSpec,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<McpLibraryResponse> {
+    validate_spec(&spec)?;
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let mut servers = load_library(&app_home).await?;
+    if servers.iter().any(|s| s.id == spec.id) {
+        return Err(BackendError::Validation(format!(
+            "A server with id {:?} already exists in the library",
+            spec.id
+        )));
+    }
+    servers.push(spec);
+    save_library(&app_home, &servers).await?;
+    Ok(McpLibraryResponse { servers, warnings: Vec::new() })
+}
+
+/// Remove a server from the library. Warns (but does not deactivate) if the
+/// entry is still present in any harness's global config.
+#[tauri::command]
+pub async fn mcp_remove_server(id: String) -> BackendResult<McpLibraryResponse> {
+    mcp_remove_server_impl(id, None, None).await
+}
+
+pub async fn mcp_remove_server_impl(
+    id: String,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<McpLibraryResponse> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let mut servers = load_library(&app_home).await?;
+    let before = servers.len();
+    servers.retain(|s| s.id != id);
+    if servers.len() == before {
+        return Err(BackendError::NotFound(format!("No library server with id {id:?}")));
+    }
+
+    // Warn (do not deactivate) where the entry is still present in configs.
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let mut warnings = Vec::new();
+    for adapter in super::mcp::adapters::adapters() {
+        let path = super::mcp::adapters::config_path_for(adapter, "global", &home_dir, None)?;
+        let entries = super::mcp::engine::read_entries(&path, adapter).await?;
+        if entries.iter().any(|(k, _)| k == &id) {
+            warnings.push(format!(
+                "{id} is still active in {} global ({})",
+                adapter.harness_id,
+                path.display()
+            ));
+        }
+    }
+
+    save_library(&app_home, &servers).await?;
+    Ok(McpLibraryResponse { servers, warnings })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3692,5 +3792,61 @@ mod tests {
         assert_eq!(listed.pinned.resolved.len(), 1);
         assert_eq!(listed.pinned.resolved[0].id, g.set.id);
         assert_eq!(listed.pinned.missing, vec!["set_phantom".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn mcp_library_add_list_remove() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+
+        let spec = crate::backend::mcp::spec::McpServerSpec {
+            id: "context7".into(),
+            name: "Context7".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource { kind: "manual".into(), url: None },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "@upstash/context7-mcp".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![],
+        };
+
+        let resp = mcp_add_manual_impl(spec.clone(), Some(app_home.clone()))
+            .await
+            .unwrap();
+        assert_eq!(resp.servers.len(), 1);
+
+        // Duplicate id rejected.
+        assert!(mcp_add_manual_impl(spec.clone(), Some(app_home.clone()))
+            .await
+            .is_err());
+
+        // Invalid spec rejected.
+        let mut bad = spec.clone();
+        bad.id = "Bad Id".into();
+        assert!(mcp_add_manual_impl(bad, Some(app_home.clone())).await.is_err());
+
+        let resp = mcp_list_library_impl(Some(app_home.clone())).await.unwrap();
+        assert_eq!(resp.servers[0].id, "context7");
+
+        let resp = mcp_remove_server_impl(
+            "context7".into(),
+            Some(app_home.clone()),
+            Some(dir.path().join("home")),
+        )
+        .await
+        .unwrap();
+        assert!(resp.servers.is_empty());
+
+        // Removing a non-existent id errors.
+        assert!(mcp_remove_server_impl(
+            "context7".into(),
+            Some(app_home),
+            Some(dir.path().join("home"))
+        )
+        .await
+        .is_err());
     }
 }
