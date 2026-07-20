@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use super::super::state::{BackendError, BackendResult};
-use super::spec::McpTransport;
+use super::spec::{validate_spec, McpServerSpec, McpSource, McpTransport, McpVariant};
+use crate::backend::types::McpServerDraft;
 
 #[derive(Debug)]
 pub struct FetchPlan {
@@ -103,18 +104,14 @@ pub fn source_for_url(url: &str) -> BackendResult<FetchPlan> {
     Err(fallback_err())
 }
 
-// Fence scanning, JSONC tolerance, and H1 candidate extraction (Phase B
-// Task 2). Callers land in a later Phase B task (H2/H3 heuristics + the
-// public draft-spec entry point); kept `#[allow(dead_code)]` until then so
-// a plain `cargo build` stays warning-free in the interim.
-#[allow(dead_code)]
+// Fence scanning, JSONC tolerance, and H1/H2/H3 candidate extraction (Phase B
+// Tasks 2-3), wired together by `extract_drafts` below (Phase B Task 4).
 struct Fence {
     info: String,
     start_line: usize,
     body: String,
 }
 
-#[allow(dead_code)]
 fn scan_fences(markdown: &str) -> Vec<Fence> {
     let mut fences = Vec::new();
     let mut open: Option<(String, usize, String)> = None;
@@ -133,7 +130,6 @@ fn scan_fences(markdown: &str) -> Vec<Fence> {
     fences
 }
 
-#[allow(dead_code)]
 fn strip_jsonc(text: &str) -> String {
     // 1. drop whole-line // comments (never touches // inside values)
     let no_comments: String = text
@@ -167,7 +163,6 @@ fn strip_jsonc(text: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub(crate) struct Candidate {
     pub name: Option<String>,
     pub priority: u8, // 1=H1, 2=H2, 3=H3
@@ -181,15 +176,12 @@ pub(crate) struct Candidate {
     pub ignored_keys: Vec<String>,
 }
 
-#[allow(dead_code)]
 const SERVER_MAP_KEYS: &[&str] = &["mcpServers", "mcp_servers", "servers", "mcp"];
-#[allow(dead_code)]
 const KNOWN_ENTRY_KEYS: &[&str] = &[
     "type", "transport", "command", "args", "env", "environment",
     "url", "httpUrl", "serverUrl", "headers", "http_headers",
 ];
 
-#[allow(dead_code)]
 fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize) -> Option<Candidate> {
     let obj = v.as_object()?;
     let mut command = None;
@@ -254,7 +246,6 @@ fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize) -> Option
     })
 }
 
-#[allow(dead_code)]
 fn find_server_maps<'a>(
     v: &'a serde_json::Value,
     out: &mut Vec<&'a serde_json::Map<String, serde_json::Value>>,
@@ -270,7 +261,6 @@ fn find_server_maps<'a>(
     }
 }
 
-#[allow(dead_code)]
 fn extract_h2(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
     let mut candidates = Vec::new();
     let mut warnings = Vec::new();
@@ -321,7 +311,6 @@ fn extract_h2(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
     (candidates, warnings)
 }
 
-#[allow(dead_code)]
 fn shell_tokens(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -341,7 +330,6 @@ fn shell_tokens(line: &str) -> Vec<String> {
     out
 }
 
-#[allow(dead_code)]
 fn package_basename(pkg: &str) -> String {
     let last = pkg.rsplit('/').next().unwrap_or(pkg);
     let no_tag = last.split(':').next().unwrap_or(last);
@@ -354,14 +342,12 @@ fn package_basename(pkg: &str) -> String {
 
 const SHELL_INFOS: &[&str] = &["bash", "sh", "shell", "zsh", "console", "text", ""];
 
-#[allow(dead_code)]
 fn strip_prompt(line: &str) -> String {
     let t = line.trim_start();
     let t = t.strip_prefix('$').or_else(|| t.strip_prefix('>')).unwrap_or(t);
     t.trim_start().to_string()
 }
 
-#[allow(dead_code)]
 fn extract_h3(markdown: &str, fences: &[Fence]) -> Vec<Candidate> {
     let mut lines: Vec<String> = Vec::new();
     for f in fences {
@@ -392,7 +378,6 @@ fn extract_h3(markdown: &str, fences: &[Fence]) -> Vec<Candidate> {
     candidates
 }
 
-#[allow(dead_code)]
 fn parse_command_line(line: &str) -> Option<Candidate> {
     let toks = shell_tokens(line);
     // claude mcp add / add-json
@@ -522,7 +507,6 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
     None
 }
 
-#[allow(dead_code)]
 fn extract_h1(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
     let mut candidates = Vec::new();
     let mut warnings = Vec::new();
@@ -548,6 +532,233 @@ fn extract_h1(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
         }
     }
     (candidates, warnings)
+}
+
+/// Phase B Task 4: draft assembly — groups candidates by slugified name,
+/// picks the highest-priority (lowest `priority`) candidate as canonical,
+/// folds the rest into variants (or drops them as exact-invocation dupes),
+/// validates, and collects placeholder warnings.
+pub struct ExtractionResult {
+    pub drafts: Vec<McpServerDraft>,
+    pub warnings: Vec<String>,
+}
+
+fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = true; // suppress leading dashes
+    for c in name.chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            out.push(c);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    while out.ends_with('-') { out.pop(); }
+    out
+}
+
+fn variant_label(c: &Candidate) -> String {
+    match (&c.transport, c.command.as_deref()) {
+        (McpTransport::Http, _) => "remote-http".to_string(),
+        (McpTransport::Sse, _) => "remote-sse".to_string(),
+        (_, Some("docker")) => "docker".to_string(),
+        (_, Some("npx")) => "npx".to_string(),
+        (_, Some("uvx")) => "uvx".to_string(),
+        (_, Some(cmd)) => slugify(cmd),
+        _ => "alt".to_string(),
+    }
+}
+
+const PLACEHOLDER_MARKERS: &[&str] = &["your_", "${", "replace", "changeme"];
+
+fn is_placeholder(value: &str) -> bool {
+    let v = value.to_ascii_lowercase();
+    (value.starts_with('<') && value.ends_with('>'))
+        || v.contains("xxx")
+        || v.ends_with("_here")
+        || PLACEHOLDER_MARKERS.iter().any(|m| v.contains(m))
+}
+
+/// True if `value` looks like a shell variable expansion or a home-relative
+/// path rather than a literal, resolved command — e.g. `$HOME/.local/bin/uvx`
+/// or `~/bin/mcp`. These are valid, verbatim-preserved commands (see
+/// `h3_prompt_strip_preserves_dollar_vars`), but should be flagged for
+/// review before activation since they depend on the *activating* shell's
+/// environment, not the one documented in the source markdown.
+fn looks_like_shell_reference(value: &str) -> bool {
+    value.starts_with('$') || value.starts_with('~') || value.contains("${")
+}
+
+fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut check = |field: &str, value: &str| {
+        if is_placeholder(value) {
+            out.push(format!(
+                "{}: {field} contains placeholder {value:?} — fill in a real value before activating",
+                spec.id
+            ));
+        }
+    };
+    for (k, v) in &spec.env { check(&format!("env.{k}"), v); }
+    for (k, v) in &spec.headers { check(&format!("headers.{k}"), v); }
+    for a in &spec.args { check("args", a); }
+    if let Some(u) = &spec.url { check("url", u); }
+    if let Some(cmd) = &spec.command {
+        if looks_like_shell_reference(cmd) {
+            out.push(format!(
+                "{}: command references a shell variable or home path ({cmd}) — verify the path before activating",
+                spec.id
+            ));
+        }
+    }
+    out
+}
+
+fn same_invocation(a: &Candidate, b: &Candidate) -> bool {
+    a.transport == b.transport && a.command == b.command && a.args == b.args && a.url == b.url
+}
+
+fn find_root(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]]; // path halving
+        x = parent[x];
+    }
+    x
+}
+
+/// Union two group indices, keeping the smaller (first-seen) index as root
+/// so output ordering stays first-seen-first after merges.
+fn union_roots(parent: &mut [usize], a: usize, b: usize) {
+    let (ra, rb) = (find_root(parent, a), find_root(parent, b));
+    if ra == rb {
+        return;
+    }
+    if ra < rb {
+        parent[rb] = ra;
+    } else {
+        parent[ra] = rb;
+    }
+}
+
+pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> ExtractionResult {
+    let fences = scan_fences(markdown);
+    let mut warnings = Vec::new();
+    let (mut candidates, w1) = extract_h1(&fences);
+    warnings.extend(w1);
+    let (h2, w2) = extract_h2(&fences);
+    candidates.extend(h2);
+    warnings.extend(w2);
+    candidates.extend(extract_h3(markdown, &fences));
+
+    // group by slug, preserving first-seen order
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::BTreeMap<String, Vec<Candidate>> = Default::default();
+    for c in candidates {
+        let raw = c.name.clone().unwrap_or_else(|| fallback_name.to_string());
+        let mut slug = slugify(&raw);
+        if slug.is_empty() { slug = slugify(fallback_name); }
+        if slug.is_empty() { slug = "server".to_string(); }
+        if !groups.contains_key(&slug) { order.push(slug.clone()); }
+        groups.entry(slug).or_default().push(c);
+    }
+
+    // Bridge name-groups whose candidates are the exact same invocation.
+    // A README can describe one server twice under different inferred
+    // names — e.g. an explicit `mcpServers` key "x" and an unrelated-looking
+    // bare `npx -y pkg` line that happens to invoke the identical command —
+    // and those must collapse to one draft, not two, even though naive
+    // name-slug grouping alone would keep them apart.
+    let mut parent: Vec<usize> = (0..order.len()).collect();
+    for i in 0..order.len() {
+        for j in (i + 1)..order.len() {
+            let bridged = groups[&order[i]]
+                .iter()
+                .any(|a| groups[&order[j]].iter().any(|b| same_invocation(a, b)));
+            if bridged {
+                union_roots(&mut parent, i, j);
+            }
+        }
+    }
+    let mut merged: Vec<Vec<Candidate>> = (0..order.len()).map(|_| Vec::new()).collect();
+    for (idx, slug) in order.iter().enumerate() {
+        let root = find_root(&mut parent, idx);
+        merged[root].extend(groups.remove(slug).unwrap());
+    }
+
+    let mut drafts = Vec::new();
+    for mut group in merged {
+        if group.is_empty() {
+            continue; // non-root bucket, folded into another via bridging
+        }
+        group.sort_by_key(|c| c.priority);
+        let canonical = group[0].clone();
+        // The merged group's id/name follows the highest-priority candidate
+        // (config key > `claude mcp add` name > package/image basename),
+        // not necessarily the name-slug it was first bucketed under.
+        let raw = canonical.name.clone().unwrap_or_else(|| fallback_name.to_string());
+        let mut slug = slugify(&raw);
+        if slug.is_empty() { slug = slugify(fallback_name); }
+        if slug.is_empty() { slug = "server".to_string(); }
+        let mut evidence = vec![canonical.evidence.clone()];
+        if !canonical.ignored_keys.is_empty() {
+            evidence.push(format!("ignored: {}", canonical.ignored_keys.join(", ")));
+        }
+        let mut variants: Vec<McpVariant> = Vec::new();
+        let mut used_labels: Vec<String> = Vec::new();
+        for alt in &group[1..] {
+            if same_invocation(&canonical, alt) || variants.iter().any(|v| {
+                // compare against already-added variants via their fields
+                v.transport == Some(alt.transport)
+                    && v.command == alt.command
+                    && v.args.as_deref() == Some(alt.args.as_slice())
+                    && v.url == alt.url
+            }) {
+                continue;
+            }
+            let mut label = variant_label(alt);
+            let mut n = 2;
+            while used_labels.contains(&label) {
+                label = format!("{}-{n}", variant_label(alt));
+                n += 1;
+            }
+            used_labels.push(label.clone());
+            evidence.push(format!("variant {label:?}: {}", alt.evidence));
+            variants.push(McpVariant {
+                label,
+                applies_to: None,
+                transport: Some(alt.transport),
+                command: alt.command.clone(),
+                args: Some(alt.args.clone()),
+                env: if alt.env.is_empty() { None } else { Some(alt.env.clone()) },
+                url: alt.url.clone(),
+                headers: if alt.headers.is_empty() { None } else { Some(alt.headers.clone()) },
+            });
+        }
+        let spec = McpServerSpec {
+            id: slug.clone(),
+            name: canonical.name.clone().unwrap_or_else(|| slug.clone()),
+            description: None,
+            source: McpSource { kind: "url".to_string(), url: Some(source_url.to_string()) },
+            transport: canonical.transport,
+            command: canonical.command.clone(),
+            args: canonical.args.clone(),
+            env: canonical.env.clone(),
+            url: canonical.url.clone(),
+            headers: canonical.headers.clone(),
+            variants,
+        };
+        match validate_spec(&spec) {
+            Ok(()) => {
+                warnings.extend(placeholder_warnings(&spec));
+                drafts.push(McpServerDraft { spec, evidence });
+            }
+            Err(e) => warnings.push(format!("Dropped candidate {slug:?}: {e}")),
+        }
+    }
+    ExtractionResult { drafts, warnings }
 }
 
 #[cfg(test)]
@@ -807,5 +1018,95 @@ mod tests {
         let (cands, warns) = extract_h2(&scan_fences(md));
         assert_eq!(cands.len(), 1);
         assert_eq!(warns.len(), 1);
+    }
+
+    fn drafts_of(md: &str) -> ExtractionResult {
+        extract_drafts(md, "fallback-repo", "https://github.com/o/r")
+    }
+
+    #[test]
+    fn assembles_single_server_with_style_variants() {
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"context7\":{\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp\"]}}}\n```\n",
+            "Or docker:\n```bash\ndocker run --rm -i ghcr.io/upstash/context7:latest\n```\n",
+            "Or remote:\n```json\n{\"mcpServers\":{\"context7\":{\"type\":\"http\",\"url\":\"https://mcp.context7.com/mcp\"}}}\n```\n",
+        );
+        let r = drafts_of(md);
+        // Per the Phase B design doc §8: "multi-style README (npx + docker +
+        // remote -> 1 draft + 2 variants)". All three fences share the name
+        // "context7" (the docker image basename collides with the explicit
+        // json key), so they collapse into one draft with two variants.
+        assert_eq!(r.drafts.len(), 1, "one server, described three ways");
+        let c7 = r.drafts.iter().find(|d| d.spec.id == "context7").unwrap();
+        assert_eq!(c7.spec.command.as_deref(), Some("npx"), "H1 canonical");
+        assert_eq!(c7.spec.variants.len(), 2, "docker + http styles both become variants");
+        assert_eq!(c7.spec.variants[0].label, "remote-http");
+        assert_eq!(c7.spec.variants[1].label, "docker");
+        assert_eq!(c7.spec.source.kind, "url");
+        assert_eq!(c7.spec.source.url.as_deref(), Some("https://github.com/o/r"));
+        assert!(c7.evidence.iter().any(|e| e.contains("H1")), "evidence carried");
+    }
+
+    #[test]
+    fn monorepo_yields_one_draft_per_server() {
+        let md = "```json\n{\"mcpServers\":{\"alpha\":{\"command\":\"npx\",\"args\":[\"a\"]},\"beta\":{\"command\":\"npx\",\"args\":[\"b\"]},\"gamma\":{\"type\":\"http\",\"url\":\"https://g/mcp\"}}}\n```";
+        let r = drafts_of(md);
+        let mut ids: Vec<&str> = r.drafts.iter().map(|d| d.spec.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn identical_invocations_dedup_no_variant() {
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"x\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"]}}}\n```\n",
+            "```bash\nnpx -y pkg\n```\n",
+        );
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1);
+        assert!(r.drafts[0].spec.variants.is_empty(), "same invocation → dedup, not variant");
+    }
+
+    #[test]
+    fn placeholder_values_warn_but_stay() {
+        let md = "```json\n{\"mcpServers\":{\"s\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"],\"env\":{\"API_KEY\":\"YOUR_API_KEY\",\"T\":\"<token>\"}}}}\n```";
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1);
+        assert_eq!(r.drafts[0].spec.env.get("API_KEY").map(String::as_str), Some("YOUR_API_KEY"));
+        assert!(r.warnings.iter().any(|w| w.contains("YOUR_API_KEY")));
+        assert!(r.warnings.iter().any(|w| w.contains("<token>")));
+    }
+
+    #[test]
+    fn invalid_group_becomes_warning_not_draft() {
+        // remote entry with empty url → validate_spec fails → warning
+        let md = "```json\n{\"mcpServers\":{\"broken\":{\"type\":\"http\",\"url\":\"\"}}}\n```";
+        let r = drafts_of(md);
+        assert!(r.drafts.is_empty());
+        assert!(r.warnings.iter().any(|w| w.contains("broken")));
+    }
+
+    #[test]
+    fn nothing_found_is_empty_success() {
+        let r = drafts_of("# Just a readme\nNo config here.\n");
+        assert!(r.drafts.is_empty());
+        assert!(r.warnings.is_empty(), "the 'nothing found' warning is added by the command, not the parser");
+    }
+
+    #[test]
+    fn slugify_and_name_fallback() {
+        let md = "```bash\nnpx -y @Upstash/Context7_MCP\n```";
+        let r = drafts_of(md);
+        assert_eq!(r.drafts[0].spec.id, "context7-mcp");
+        assert!(slugify("").is_empty());
+        assert_eq!(slugify("Hello World! 2"), "hello-world-2");
+    }
+
+    #[test]
+    fn dollar_command_gets_warning() {
+        let md = "```sh\n$ $HOME/.local/bin/uvx some-mcp\n```";
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1);
+        assert!(r.warnings.iter().any(|w| w.contains("shell variable")));
     }
 }
