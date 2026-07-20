@@ -112,6 +112,10 @@ backwards, applied per entry:
   invocation shape) and no `applies_to`.
 - Two candidates are "the same invocation" (deduped, no variant) when
   transport, command, args, url all match.
+- A group whose name was only inferred from a package/image basename folds
+  into an explicitly-named group when exactly one such group has an
+  env/headers-compatible identical invocation; ambiguous or env-incompatible
+  folds are left as separate drafts.
 - `source` = `{ kind: "url", url: <original input url> }`, `transport` = the
   canonical candidate's transport.
 - Each draft passes Phase A's `validate_spec` before being returned; a

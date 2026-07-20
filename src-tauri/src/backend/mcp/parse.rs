@@ -174,6 +174,13 @@ pub(crate) struct Candidate {
     pub headers: BTreeMap<String, String>,
     pub evidence: String,
     pub ignored_keys: Vec<String>,
+    /// True only when `name` was derived from a package/image basename
+    /// (bare `npx`/`uvx` and `docker run` lines in `parse_command_line`).
+    /// Everywhere else (H1/H2 config keys, `claude mcp add`/`add-json`
+    /// names) the name is explicit and this is `false`. Drives the guarded
+    /// fold pass in `extract_drafts`: only inferred-name groups may ever
+    /// fold into an explicitly-named group.
+    pub name_inferred: bool,
 }
 
 const SERVER_MAP_KEYS: &[&str] = &["mcpServers", "mcp_servers", "servers", "mcp"];
@@ -243,6 +250,7 @@ fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize) -> Option
         transport, command, args, env, url, headers,
         evidence: format!("H1 json block (line {line}): key {name:?}"),
         ignored_keys,
+        name_inferred: false,
     })
 }
 
@@ -305,6 +313,7 @@ fn extract_h2(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
                 transport, command, args, env, url, headers,
                 evidence: format!("H2 toml block (line {}): [mcp_servers.{name}]", f.start_line),
                 ignored_keys: Vec::new(),
+                name_inferred: false,
             });
         }
     }
@@ -418,6 +427,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                         url: Some(url), headers: BTreeMap::new(),
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
+                        name_inferred: false,
                     });
                 }
                 _ => {
@@ -428,6 +438,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                         url: None, headers: BTreeMap::new(),
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
+                        name_inferred: false,
                     });
                 }
             }
@@ -470,6 +481,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                 env: BTreeMap::new(), url: None, headers: BTreeMap::new(),
                 evidence: format!("H3 command line: {}", line.trim()),
                 ignored_keys: Vec::new(),
+                name_inferred: true,
             });
         }
     }
@@ -501,6 +513,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                 url: None, headers: BTreeMap::new(),
                 evidence: format!("H3 command line: {}", line.trim()),
                 ignored_keys: Vec::new(),
+                name_inferred: true,
             });
         }
     }
@@ -621,26 +634,13 @@ fn same_invocation(a: &Candidate, b: &Candidate) -> bool {
     a.transport == b.transport && a.command == b.command && a.args == b.args && a.url == b.url
 }
 
-fn find_root(parent: &mut [usize], mut x: usize) -> usize {
-    while parent[x] != x {
-        parent[x] = parent[parent[x]]; // path halving
-        x = parent[x];
-    }
-    x
-}
-
-/// Union two group indices, keeping the smaller (first-seen) index as root
-/// so output ordering stays first-seen-first after merges.
-fn union_roots(parent: &mut [usize], a: usize, b: usize) {
-    let (ra, rb) = (find_root(parent, a), find_root(parent, b));
-    if ra == rb {
-        return;
-    }
-    if ra < rb {
-        parent[rb] = ra;
-    } else {
-        parent[ra] = rb;
-    }
+/// A map is "compatible" with a fold target's map when every value in the
+/// group is either empty (so it simply adopts the target's value) or
+/// exactly equal to the target's value. This is deliberately one-sided:
+/// it never asks whether the target's map is empty, only the folding
+/// (inferred-name) side's.
+fn maps_compatible(group_map: &BTreeMap<String, String>, target_map: &BTreeMap<String, String>) -> bool {
+    group_map.is_empty() || group_map == target_map
 }
 
 pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> ExtractionResult {
@@ -665,33 +665,64 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
         groups.entry(slug).or_default().push(c);
     }
 
-    // Bridge name-groups whose candidates are the exact same invocation.
-    // A README can describe one server twice under different inferred
-    // names — e.g. an explicit `mcpServers` key "x" and an unrelated-looking
-    // bare `npx -y pkg` line that happens to invoke the identical command —
-    // and those must collapse to one draft, not two, even though naive
-    // name-slug grouping alone would keep them apart.
-    let mut parent: Vec<usize> = (0..order.len()).collect();
+    // Guarded one-way fold: a name-group is only ever a *fold source* when
+    // every candidate in it got its name inferred from a package/image
+    // basename (bare `npx`/`uvx`, `docker run`) — never when any candidate
+    // has an explicit name (H1/H2 config key, `claude mcp add`/`add-json`).
+    // This prevents the old union-find bridge's data loss: two explicitly
+    // named servers that happen to share a launcher (e.g. two `npx -y
+    // multi-mcp` entries with different `env`) must never merge, since
+    // in-group dedup would silently drop the second server's name + env.
+    //
+    // A foldable group folds into exactly one explicitly-named group when
+    // that group has a candidate with the identical invocation AND every
+    // candidate in the foldable group has env/headers that are empty or
+    // equal to that target candidate's env/headers. Zero or multiple
+    // matching targets means the fold is ambiguous or incompatible, so the
+    // group is left standing on its own (never guess).
+    let mut fold_target: Vec<Option<usize>> = vec![None; order.len()];
     for i in 0..order.len() {
-        for j in (i + 1)..order.len() {
-            let bridged = groups[&order[i]]
-                .iter()
-                .any(|a| groups[&order[j]].iter().any(|b| same_invocation(a, b)));
-            if bridged {
-                union_roots(&mut parent, i, j);
+        let g_candidates = &groups[&order[i]];
+        let foldable = g_candidates.iter().all(|c| c.name_inferred);
+        if !foldable {
+            continue;
+        }
+        let mut targets: Vec<usize> = Vec::new();
+        for (j, other_slug) in order.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let h_candidates = &groups[other_slug];
+            let is_explicit = h_candidates.iter().any(|c| !c.name_inferred);
+            if !is_explicit {
+                continue;
+            }
+            let matches = h_candidates.iter().any(|c_h| {
+                g_candidates.iter().any(|g| same_invocation(g, c_h))
+                    && g_candidates
+                        .iter()
+                        .all(|g| maps_compatible(&g.env, &c_h.env) && maps_compatible(&g.headers, &c_h.headers))
+            });
+            if matches {
+                targets.push(j);
             }
         }
+        if targets.len() == 1 {
+            fold_target[i] = Some(targets[0]);
+        }
     }
-    let mut merged: Vec<Vec<Candidate>> = (0..order.len()).map(|_| Vec::new()).collect();
-    for (idx, slug) in order.iter().enumerate() {
-        let root = find_root(&mut parent, idx);
-        merged[root].extend(groups.remove(slug).unwrap());
+    let mut group_vecs: Vec<Vec<Candidate>> = order.iter().map(|s| groups.remove(s).unwrap()).collect();
+    for i in 0..order.len() {
+        if let Some(target) = fold_target[i] {
+            let moved = std::mem::take(&mut group_vecs[i]);
+            group_vecs[target].extend(moved);
+        }
     }
 
     let mut drafts = Vec::new();
-    for mut group in merged {
+    for mut group in group_vecs {
         if group.is_empty() {
-            continue; // non-root bucket, folded into another via bridging
+            continue; // folded into another group above
         }
         group.sort_by_key(|c| c.priority);
         let canonical = group[0].clone();
@@ -1108,5 +1139,39 @@ mod tests {
         let r = drafts_of(md);
         assert_eq!(r.drafts.len(), 1);
         assert!(r.warnings.iter().any(|w| w.contains("shell variable")));
+    }
+
+    #[test]
+    fn explicit_names_with_shared_launcher_never_merge() {
+        let md = "```json\n{\"mcpServers\":{\"github\":{\"command\":\"npx\",\"args\":[\"-y\",\"multi-mcp\"],\"env\":{\"GITHUB_TOKEN\":\"a\"}},\"gitlab\":{\"command\":\"npx\",\"args\":[\"-y\",\"multi-mcp\"],\"env\":{\"GITLAB_TOKEN\":\"b\"}}}}\n```";
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 2, "distinct explicit servers must both survive");
+        let ids: Vec<&str> = r.drafts.iter().map(|d| d.spec.id.as_str()).collect();
+        assert!(ids.contains(&"github") && ids.contains(&"gitlab"));
+        let gl = r.drafts.iter().find(|d| d.spec.id == "gitlab").unwrap();
+        assert_eq!(gl.spec.env.get("GITLAB_TOKEN").map(String::as_str), Some("b"), "env preserved");
+    }
+
+    #[test]
+    fn inferred_fold_is_blocked_on_env_mismatch() {
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"x\":{\"command\":\"docker\",\"args\":[\"run\",\"-e\",\"T=real\",\"img\"],\"env\":{\"T\":\"real\"}}}}\n```\n",
+            "```sh\ndocker run -e T=other img\n```\n",
+        );
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 2, "env-incompatible inferred group stays separate");
+    }
+
+    #[test]
+    fn ambiguous_fold_targets_stay_separate() {
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"a\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"]},\"b\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"],\"env\":{\"E\":\"1\"}}}}\n```\n",
+            "```sh\nnpx -y pkg\n```\n",
+        );
+        let r = drafts_of(md);
+        // "a" and "b" are both explicit (never merge with each other); the bare npx line
+        // matches both invocations env-compatibly for "a" (empty env) — but "b" also matches
+        // same_invocation. Two candidate targets -> ambiguity -> the inferred group must NOT fold.
+        assert_eq!(r.drafts.len(), 3);
     }
 }
