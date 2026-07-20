@@ -30,7 +30,7 @@ pub fn source_for_url(url: &str) -> BackendResult<FetchPlan> {
     };
     if !url.starts_with("https://") {
         return Err(BackendError::Validation(format!(
-            "Only https URLs are supported: {url}"
+            "Only https URLs are supported: {url}. For other pages, ask your coding agent to import it or use manual entry."
         )));
     }
     let no_query = url.split(['?', '#']).next().unwrap_or(url);
@@ -1173,5 +1173,23 @@ mod tests {
         // matches both invocations env-compatibly for "a" (empty env) — but "b" also matches
         // same_invocation. Two candidate targets -> ambiguity -> the inferred group must NOT fold.
         assert_eq!(r.drafts.len(), 3);
+    }
+
+    #[test]
+    fn rejects_blob_without_md_and_empty_tree_path() {
+        assert!(source_for_url("https://github.com/org/repo/blob/main/src/lib.rs").is_err());
+        assert!(source_for_url("https://github.com/org/repo/tree/main").is_err());
+    }
+
+    #[test]
+    fn rejects_gist_revision_and_bare_org_urls() {
+        assert!(source_for_url("https://gist.github.com/user/abc123/deadbeef").is_err());
+        assert!(source_for_url("https://github.com/orgonly").is_err());
+    }
+
+    #[test]
+    fn https_rejection_message_carries_guidance() {
+        let err = source_for_url("http://github.com/org/repo").unwrap_err();
+        assert!(format!("{err}").contains("manual"));
     }
 }

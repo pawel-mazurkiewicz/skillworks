@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "managedLinks": {
+    "adapt": {
+      "linkName": "adapt",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/adapt",
+      "enabledAt": "2026-05-15T09:38:29.770Z"
+    },
+    "audit": {
+      "linkName": "audit",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/audit",
+      "enabledAt": "2026-05-15T09:38:29.771Z"
+    },
+    "bolder": {
+      "linkName": "bolder",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/bolder",
+      "enabledAt": "2026-05-15T09:38:29.772Z"
+    },
+    "critique": {
+      "linkName": "critique",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/critique",
+      "enabledAt": "2026-05-15T09:38:29.773Z"
+    },
+    "database-management-patterns": {
+      "linkName": "database-management-patterns",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/database-management-patterns",
+      "enabledAt": "2026-05-15T09:38:29.773Z"
+    },
+    "database-optimizer": {
+      "linkName": "database-optimizer",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/database-optimizer",
+      "enabledAt": "2026-05-15T09:38:29.774Z"
+    },
+    "distill": {
+      "linkName": "distill",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/distill",
+      "enabledAt": "2026-05-15T09:38:29.775Z"
+    },
+    "enterprise-architecture-patterns": {
+      "linkName": "enterprise-architecture-patterns",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/enterprise-architecture-patterns",
+      "enabledAt": "2026-05-15T09:38:29.776Z"
+    },
+    "extract": {
+      "linkName": "extract",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/extract",
+      "enabledAt": "2026-05-15T09:38:29.778Z"
+    },
+    "figma-design": {
+      "linkName": "figma-design",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/figma-design",
+      "enabledAt": "2026-05-15T09:38:29.779Z"
+    },
+    "frontend-architecture": {
+      "linkName": "frontend-architecture",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/frontend-architecture",
+      "enabledAt": "2026-05-15T09:38:29.780Z"
+    },
+    "frontend-design": {
+      "linkName": "frontend-design",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/frontend-design",
+      "enabledAt": "2026-05-15T09:38:29.781Z"
+    },
+    "fullstack-dev": {
+      "linkName": "fullstack-dev",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/fullstack-dev",
+      "enabledAt": "2026-05-15T09:38:29.782Z"
+    },
+    "graphql-api-development": {
+      "linkName": "graphql-api-development",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/graphql-api-development",
+      "enabledAt": "2026-05-15T09:38:29.784Z"
+    },
+    "mobile-design": {
+      "linkName": "mobile-design",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/mobile-design",
+      "enabledAt": "2026-05-15T09:38:29.785Z"
+    },
+    "normalize": {
+      "linkName": "normalize",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/normalize",
+      "enabledAt": "2026-05-15T09:38:29.786Z"
+    },
+    "onboard": {
+      "linkName": "onboard",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/onboard",
+      "enabledAt": "2026-05-15T09:38:29.787Z"
+    },
+    "performance-benchmark-specialist": {
+      "linkName": "performance-benchmark-specialist",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/performance-benchmark-specialist",
+      "enabledAt": "2026-05-15T09:38:29.789Z"
+    },
+    "postgresql-database-administration": {
+      "linkName": "postgresql-database-administration",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/postgresql-database-administration",
+      "enabledAt": "2026-05-15T09:38:29.790Z"
+    },
+    "quieter": {
+      "linkName": "quieter",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/quieter",
+      "enabledAt": "2026-05-15T09:38:29.792Z"
+    },
+    "responsive-design": {
+      "linkName": "responsive-design",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/responsive-design",
+      "enabledAt": "2026-05-15T09:38:29.793Z"
+    },
+    "rest-api-design-patterns": {
+      "linkName": "rest-api-design-patterns",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/rest-api-design-patterns",
+      "enabledAt": "2026-05-15T09:38:29.795Z"
+    },
+    "supabase-postgres-best-practices": {
+      "linkName": "supabase-postgres-best-practices",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/supabase-postgres-best-practices",
+      "enabledAt": "2026-05-15T09:38:29.796Z"
+    },
+    "tailwind-css": {
+      "linkName": "tailwind-css",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/tailwind-css",
+      "enabledAt": "2026-05-15T09:38:29.798Z"
+    },
+    "teach-impeccable": {
+      "linkName": "teach-impeccable",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/teach-impeccable",
+      "enabledAt": "2026-05-15T09:38:29.799Z"
+    },
+    "ui-design-patterns": {
+      "linkName": "ui-design-patterns",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/ui-design-patterns",
+      "enabledAt": "2026-05-15T09:38:29.801Z"
+    },
+    "ux-principles": {
+      "linkName": "ux-principles",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/ux-principles",
+      "enabledAt": "2026-05-15T09:38:29.802Z"
+    },
+    "wireframing": {
+      "linkName": "wireframing",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/wireframing",
+      "enabledAt": "2026-05-15T09:38:29.804Z"
+    },
+    "delight": {
+      "linkName": "delight",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/delight",
+      "enabledAt": "2026-05-15T09:38:29.805Z"
+    },
+    "animate": {
+      "linkName": "animate",
+      "source": "/Users/pawelma/.agent-skill-manager/vault/animate",
+      "enabledAt": "2026-05-15T09:38:29.807Z"
+    }
+  }
+}
