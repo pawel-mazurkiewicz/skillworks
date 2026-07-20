@@ -751,6 +751,10 @@ pub struct McpTargetStatus {
     pub active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_note: Option<String>,
+    /// Set when the target's config file could not be read/parsed; `active`
+    /// is unreliable for such a row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

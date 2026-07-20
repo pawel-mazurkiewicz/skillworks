@@ -2553,18 +2553,39 @@ pub async fn mcp_status_impl(
             targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
         }
         for (scope, path) in targets {
-            let entries = read_entries(&path, adapter).await?;
-            let active_ids: Vec<&String> = entries.iter().map(|(k, _)| k).collect();
-            for spec in &servers {
-                out.push(McpTargetStatus {
-                    server_id: spec.id.clone(),
-                    harness: adapter.harness_id.to_string(),
-                    scope: scope.to_string(),
-                    config_path: path.to_string_lossy().into_owned(),
-                    active: active_ids.iter().any(|k| *k == &spec.id),
-                    trust_note: (adapter.project_trust_note && scope == "project")
-                        .then(|| PROJECT_TRUST_NOTE.to_string()),
-                });
+            match read_entries(&path, adapter).await {
+                Ok(entries) => {
+                    let active_ids: Vec<&String> = entries.iter().map(|(k, _)| k).collect();
+                    for spec in &servers {
+                        out.push(McpTargetStatus {
+                            server_id: spec.id.clone(),
+                            harness: adapter.harness_id.to_string(),
+                            scope: scope.to_string(),
+                            config_path: path.to_string_lossy().into_owned(),
+                            active: active_ids.iter().any(|k| *k == &spec.id),
+                            trust_note: (adapter.project_trust_note && scope == "project")
+                                .then(|| PROJECT_TRUST_NOTE.to_string()),
+                            error: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    // A malformed config for one target must not fail the whole
+                    // survey; surface the error per-row instead.
+                    let message = e.to_string();
+                    for spec in &servers {
+                        out.push(McpTargetStatus {
+                            server_id: spec.id.clone(),
+                            harness: adapter.harness_id.to_string(),
+                            scope: scope.to_string(),
+                            config_path: path.to_string_lossy().into_owned(),
+                            active: false,
+                            trust_note: (adapter.project_trust_note && scope == "project")
+                                .then(|| PROJECT_TRUST_NOTE.to_string()),
+                            error: Some(message.clone()),
+                        });
+                    }
+                }
             }
         }
     }
@@ -2601,7 +2622,13 @@ pub async fn mcp_discover_impl(
             targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
         }
         for (scope, path) in targets {
-            for (key, entry) in read_entries(&path, adapter).await? {
+            let entries = match read_entries(&path, adapter).await {
+                Ok(entries) => entries,
+                // Unreadable/malformed configs can't be enumerated; skip this
+                // target rather than failing the whole discovery pass.
+                Err(_) => continue,
+            };
+            for (key, entry) in entries {
                 if !library_ids.contains(&key) {
                     out.push(DiscoveredMcpEntry {
                         harness: adapter.harness_id.to_string(),
@@ -4187,5 +4214,77 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "handmade");
         assert_eq!(found[0].harness, "cursor");
+    }
+
+    #[tokio::test]
+    async fn mcp_status_tolerates_malformed_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::write(home.join(".cursor/mcp.json"), "{ not json")
+            .await
+            .unwrap();
+
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        assert_eq!(statuses.len(), 7);
+
+        let cursor_g = statuses
+            .iter()
+            .find(|s| s.harness == "cursor" && s.scope == "global")
+            .unwrap();
+        assert!(cursor_g.error.is_some());
+        assert!(!cursor_g.active);
+
+        for s in statuses.iter().filter(|s| s.harness != "cursor") {
+            assert!(s.error.is_none(), "{} unexpectedly errored: {:?}", s.harness, s.error);
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_discover_skips_malformed_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::write(home.join(".cursor/mcp.json"), "{ not json")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            home.join(".claude.json"),
+            r#"{"mcpServers":{"handmade":{"command":"x"}}}"#,
+        )
+        .await
+        .unwrap();
+
+        let found = mcp_discover_impl(None, Some(app_home), Some(home)).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "handmade");
+        assert_eq!(found[0].harness, "claude");
+    }
+
+    #[tokio::test]
+    async fn mcp_status_reports_jsonc_opencode_as_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".config/opencode")).await.unwrap();
+        tokio::fs::write(
+            home.join(".config/opencode/opencode.json"),
+            "// comment\n{\"mcp\":{}}",
+        )
+        .await
+        .unwrap();
+
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let opencode_g = statuses
+            .iter()
+            .find(|s| s.harness == "opencode" && s.scope == "global")
+            .unwrap();
+        assert!(opencode_g.error.is_some());
     }
 }
