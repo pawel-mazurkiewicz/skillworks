@@ -10,9 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tokio::fs;
 
-use super::fs_atomic::{backup_existing, write_bytes_atomic, write_json_atomic};
 use super::state::{BackendError, BackendResult};
 
 /// Key under which the server is registered in every harness config.
@@ -128,29 +126,14 @@ pub async fn status(
     })
 }
 
-async fn is_registered(path: &Path, harness_id: &str) -> BackendResult<bool> {
-    match harness_id {
-        "claude" => {
-            let doc = read_json_object(path).await?;
-            Ok(doc
-                .get("mcpServers")
-                .and_then(|v| v.get(MCP_SERVER_KEY))
-                .is_some())
-        }
-        "opencode" => {
-            let doc = read_json_object(path).await?;
-            Ok(doc.get("mcp").and_then(|v| v.get(MCP_SERVER_KEY)).is_some())
-        }
-        "codex" => {
-            let doc = read_toml_doc(path).await?;
-            Ok(doc
-                .get("mcp_servers")
-                .and_then(|i| i.get(MCP_SERVER_KEY))
-                .is_some())
-        }
-        other => Err(BackendError::Validation(format!(
-            "Unsupported harness: {other}"
-        ))),
+fn to_effective(invocation: &McpInvocation) -> super::mcp::spec::EffectiveInvocation {
+    super::mcp::spec::EffectiveInvocation {
+        transport: super::mcp::spec::McpTransport::Stdio,
+        command: Some(invocation.command.clone()),
+        args: invocation.args.clone(),
+        env: invocation.env.clone(),
+        url: None,
+        headers: std::collections::BTreeMap::new(),
     }
 }
 
@@ -160,186 +143,57 @@ pub async fn register(
     harness_id: &str,
     invocation: &McpInvocation,
 ) -> BackendResult<()> {
+    let adapter = super::mcp::adapters::adapter_for(harness_id)?;
     let path = config_path(home_dir, harness_id)?;
-    match harness_id {
-        "claude" => register_claude(&path, invocation).await,
-        "opencode" => register_opencode(&path, invocation).await,
-        "codex" => register_codex(&path, invocation).await,
-        other => Err(BackendError::Validation(format!(
-            "Unsupported harness: {other}"
-        ))),
-    }
+    super::mcp::engine::write_entry(&path, adapter, MCP_SERVER_KEY, &to_effective(invocation)).await
 }
 
 /// Remove the server entry for a harness, leaving other servers intact.
 pub async fn unregister(home_dir: &Path, harness_id: &str) -> BackendResult<()> {
+    let adapter = super::mcp::adapters::adapter_for(harness_id)?;
     let path = config_path(home_dir, harness_id)?;
-    match harness_id {
-        "claude" => unregister_json(&path, "mcpServers").await,
-        "opencode" => unregister_json(&path, "mcp").await,
-        "codex" => unregister_codex(&path).await,
-        other => Err(BackendError::Validation(format!(
-            "Unsupported harness: {other}"
-        ))),
-    }
-}
-
-// --- JSON harnesses (Claude Code, OpenCode) ---
-
-async fn read_json_object(path: &Path) -> BackendResult<serde_json::Map<String, serde_json::Value>> {
-    match fs::read(path).await {
-        Ok(bytes) => {
-            if bytes.iter().all(|b| b.is_ascii_whitespace()) {
-                return Ok(serde_json::Map::new());
-            }
-            let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-            match value {
-                serde_json::Value::Object(map) => Ok(map),
-                _ => Err(BackendError::Validation(format!(
-                    "Config is not a JSON object: {}",
-                    path.display()
-                ))),
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
-        Err(err) => Err(BackendError::Io(err)),
-    }
-}
-
-async fn register_claude(path: &Path, invocation: &McpInvocation) -> BackendResult<()> {
-    let mut doc = read_json_object(path).await?;
-    let servers = doc
-        .entry("mcpServers".to_string())
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    let servers = servers.as_object_mut().ok_or_else(|| {
-        BackendError::Validation("mcpServers is not an object".to_string())
-    })?;
-    servers.insert(
-        MCP_SERVER_KEY.to_string(),
-        serde_json::json!({
-            "type": "stdio",
-            "command": invocation.command,
-            "args": invocation.args,
-            "env": invocation.env,
-        }),
-    );
-    backup_existing(path).await?;
-    write_json_atomic(path, &serde_json::Value::Object(doc)).await
-}
-
-async fn register_opencode(path: &Path, invocation: &McpInvocation) -> BackendResult<()> {
-    let mut doc = read_json_object(path).await?;
-    let mcp = doc
-        .entry("mcp".to_string())
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    let mcp = mcp
-        .as_object_mut()
-        .ok_or_else(|| BackendError::Validation("mcp is not an object".to_string()))?;
-
-    let mut command = Vec::with_capacity(invocation.args.len() + 1);
-    command.push(invocation.command.clone());
-    command.extend(invocation.args.iter().cloned());
-
-    let mut entry = serde_json::json!({
-        "type": "local",
-        "command": command,
-        "enabled": true,
-    });
-    if !invocation.env.is_empty() {
-        entry["environment"] = serde_json::to_value(&invocation.env)?;
-    }
-    mcp.insert(MCP_SERVER_KEY.to_string(), entry);
-    backup_existing(path).await?;
-    write_json_atomic(path, &serde_json::Value::Object(doc)).await
-}
-
-async fn unregister_json(path: &Path, parent_key: &str) -> BackendResult<()> {
-    let mut doc = match fs::try_exists(path).await {
-        Ok(true) => read_json_object(path).await?,
-        _ => return Ok(()),
-    };
-    let mut changed = false;
-    if let Some(parent) = doc.get_mut(parent_key).and_then(|v| v.as_object_mut()) {
-        changed = parent.remove(MCP_SERVER_KEY).is_some();
-    }
-    if changed {
-        backup_existing(path).await?;
-        write_json_atomic(path, &serde_json::Value::Object(doc)).await?;
-    }
+    super::mcp::engine::remove_entry(&path, adapter, MCP_SERVER_KEY).await?;
     Ok(())
 }
 
-// --- TOML harness (Codex) ---
-
-async fn read_toml_doc(path: &Path) -> BackendResult<toml_edit::DocumentMut> {
-    match fs::read_to_string(path).await {
-        Ok(text) => text
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| BackendError::Validation(format!("Invalid TOML in {}: {e}", path.display()))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            Ok(toml_edit::DocumentMut::new())
-        }
-        Err(err) => Err(BackendError::Io(err)),
-    }
-}
-
-async fn register_codex(path: &Path, invocation: &McpInvocation) -> BackendResult<()> {
-    let mut doc = read_toml_doc(path).await?;
-
-    if !doc.contains_key("mcp_servers") {
-        doc["mcp_servers"] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    let servers = doc["mcp_servers"]
-        .as_table_mut()
-        .ok_or_else(|| BackendError::Validation("mcp_servers is not a table".to_string()))?;
-
-    // Build a fresh, canonical `[mcp_servers.skillworks]` subtable and replace
-    // any existing entry wholesale. Inserting an explicit Table (rather than
-    // assigning through the index operator) guarantees the standard header form
-    // and avoids accumulating duplicate dotted keys on re-registration.
-    let mut entry = toml_edit::Table::new();
-    entry["command"] = toml_edit::value(invocation.command.clone());
-
-    let mut args = toml_edit::Array::new();
-    for arg in &invocation.args {
-        args.push(arg.clone());
-    }
-    entry["args"] = toml_edit::value(args);
-
-    if !invocation.env.is_empty() {
-        let mut env_table = toml_edit::InlineTable::new();
-        for (key, val) in &invocation.env {
-            env_table.insert(key, val.clone().into());
-        }
-        entry["env"] = toml_edit::value(env_table);
-    }
-
-    servers.insert(MCP_SERVER_KEY, toml_edit::Item::Table(entry));
-
-    backup_existing(path).await?;
-    write_bytes_atomic(path, doc.to_string().as_bytes()).await
-}
-
-async fn unregister_codex(path: &Path) -> BackendResult<()> {
-    if !fs::try_exists(path).await.unwrap_or(false) {
-        return Ok(());
-    }
-    let mut doc = read_toml_doc(path).await?;
-    let mut changed = false;
-    if let Some(servers) = doc.get_mut("mcp_servers").and_then(|i| i.as_table_mut()) {
-        changed = servers.remove(MCP_SERVER_KEY).is_some();
-    }
-    if changed {
-        backup_existing(path).await?;
-        write_bytes_atomic(path, doc.to_string().as_bytes()).await?;
-    }
-    Ok(())
+async fn is_registered(path: &Path, harness_id: &str) -> BackendResult<bool> {
+    let adapter = super::mcp::adapters::adapter_for(harness_id)?;
+    let entries = super::mcp::engine::read_entries(path, adapter).await?;
+    Ok(entries.iter().any(|(k, _)| k == MCP_SERVER_KEY))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use tokio::fs;
+
+    /// Test-only helper: read a JSON config file as a bare object map. The
+    /// production read path now goes through `mcp::engine::read_entries`;
+    /// this stays test-local because several tests assert on the full
+    /// document shape (unrelated top-level keys, sibling servers), not just
+    /// the `skillworks` entry.
+    async fn read_json_object(
+        path: &Path,
+    ) -> BackendResult<serde_json::Map<String, serde_json::Value>> {
+        match fs::read(path).await {
+            Ok(bytes) => {
+                if bytes.iter().all(|b| b.is_ascii_whitespace()) {
+                    return Ok(serde_json::Map::new());
+                }
+                let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+                match value {
+                    serde_json::Value::Object(map) => Ok(map),
+                    _ => Err(BackendError::Validation(format!(
+                        "Config is not a JSON object: {}",
+                        path.display()
+                    ))),
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+            Err(err) => Err(BackendError::Io(err)),
+        }
+    }
 
     fn invocation() -> McpInvocation {
         McpInvocation {
