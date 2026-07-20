@@ -1479,11 +1479,6 @@ function applySidebarState(collapsed) {
   }
 }
 
-function relocateManageControls() {
-  // Layout is now static: header is permanent, sidebar/main/detail are wired in markup.
-  // Kept as a no-op so older call sites continue to compile.
-}
-
 async function scanDuplicates() {
   await runAction(async () => {
     const result = await api("/api/duplicates");
@@ -2116,13 +2111,6 @@ function deleteSelectedSkill() {
   });
 }
 
-function cssEscape(value) {
-  if (window.CSS && typeof window.CSS.escape === "function") {
-    return window.CSS.escape(value);
-  }
-  return String(value).replace(/["\\]/g, "\\$&");
-}
-
 function filteredSkills() {
   const query = state.search.trim().toLowerCase();
   const filtered = state.data.skills.filter((skill) => {
@@ -2337,12 +2325,6 @@ async function bulkDelete() {
     render();
     showToast(`Deleted ${result.deleted.length}, errors ${result.errors.length}`);
   });
-}
-
-function isTauriDesktop() {
-  return Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__) ||
-    window.location.protocol === "tauri:" ||
-    window.location.hostname === "tauri.localhost";
 }
 
 async function pickDirectoryInto(input) {
