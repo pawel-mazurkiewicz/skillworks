@@ -106,6 +106,23 @@ These were researched but cut from v1. Verify on a real machine before enabling.
   key **`servers`** (not `mcpServers`) and explicit `type` — a distinct target
   if VS Code support is ever wanted.
 
+## Phase D pre-work (from Phase B whole-phase review, 2026-07-21)
+
+Before the URL-ingestion flow is exposed as a one-click UI action:
+- SSRF host guard (deny loopback/link-local/private ranges) + redirect cap on
+  `mcp_add_from_url`'s fetch; the `.md` catch-all row fetches arbitrary https
+  hosts today.
+- Turn the 1 MiB size cap into a real fetch guard (Content-Length check or
+  bounded read) — currently enforced only after full download.
+- Split `parse.rs` (~1.2k lines) along its natural seams: url / fences /
+  heuristics / assembly.
+- Add 1-2 verbatim real-world README fixtures (multi-fence, CRLF, unicode
+  names) — current tests are synthetic minimal fences.
+- Placeholder/shell-ref warnings scan only the canonical spec, not variants.
+- Note for UI copy: the "1 draft + 2 variants" multi-style outcome only occurs
+  when the docker image basename matches the config key; separate drafts are
+  the common real-world result.
+
 ## Open questions (carried forward)
 - JSONC comment preservation for OpenCode configs (dropped in A).
 - Copilot project path: `.mcp.json` chosen; `.github/mcp.json` also exists.
