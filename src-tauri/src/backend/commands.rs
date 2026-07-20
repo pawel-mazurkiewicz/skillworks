@@ -30,9 +30,9 @@ use super::targets::{
 };
 use super::types::{
     DiscoveredMcpEntry, DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry,
-    McpActivationResult, McpLibraryResponse, McpTargetStatus, PickDirectoryResponse,
-    ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse, ScanReport,
-    SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
+    McpActivationResult, McpLibraryResponse, McpTargetStatus, McpUrlParseResponse,
+    PickDirectoryResponse, ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse,
+    ScanReport, SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
 };
 
 const APP_CONFIG_DIR: &str = ".skillworks";
@@ -2644,6 +2644,72 @@ pub async fn mcp_discover_impl(
     Ok(out)
 }
 
+use super::marketplace::{HttpClient, ReqwestHttpClient};
+use super::mcp::parse::{extract_drafts, source_for_url};
+
+const URL_FETCH_MAX_BYTES: usize = 1024 * 1024;
+
+/// Fetch and parse MCP server configuration from a URL (typically a GitHub
+/// README or other markdown document).
+#[tauri::command]
+pub async fn mcp_add_from_url(url: String) -> BackendResult<McpUrlParseResponse> {
+    let client = ReqwestHttpClient::new()?;
+    mcp_add_from_url_impl(url, &client).await
+}
+
+pub async fn mcp_add_from_url_impl(
+    url: String,
+    client: &dyn HttpClient,
+) -> BackendResult<McpUrlParseResponse> {
+    let plan = source_for_url(&url)?;
+    let mut warnings = plan.warnings.clone();
+    let accept = [("Accept", "text/plain, text/markdown")];
+
+    let mut fetched_url = plan.fetch_url.clone();
+    let mut resp = client.get(&plan.fetch_url, &accept).await?;
+    if !resp.is_ok() {
+        if let Some(alt) = &plan.retry_url {
+            let retry = client.get(alt, &accept).await?;
+            if retry.is_ok() {
+                fetched_url = alt.clone();
+                resp = retry;
+            } else {
+                return Err(BackendError::Validation(format!(
+                    "Fetch failed for {} (status {}) and {} (status {})",
+                    fetched_url, resp.status, alt, retry.status
+                )));
+            }
+        } else {
+            return Err(BackendError::Validation(format!(
+                "Fetch failed for {} (status {})",
+                fetched_url, resp.status
+            )));
+        }
+    }
+    if resp.body.len() > URL_FETCH_MAX_BYTES {
+        return Err(BackendError::Validation(format!(
+            "Fetched document is too large ({} bytes; limit {URL_FETCH_MAX_BYTES})",
+            resp.body.len()
+        )));
+    }
+
+    let extraction = extract_drafts(&resp.body, &plan.fallback_name, &url);
+    warnings.extend(extraction.warnings);
+    if extraction.drafts.is_empty() {
+        warnings.push(
+            "Nothing machine-readable found on this page — use manual entry, or ask your \
+             coding agent to import it."
+                .to_string(),
+        );
+    }
+    Ok(McpUrlParseResponse {
+        source_url: url,
+        fetched_url,
+        drafts: extraction.drafts,
+        warnings,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4286,5 +4352,80 @@ mod tests {
             .find(|s| s.harness == "opencode" && s.scope == "global")
             .unwrap();
         assert!(opencode_g.error.is_some());
+    }
+
+    struct FakeHttp {
+        responses: std::collections::HashMap<String, (u16, String)>,
+    }
+    #[async_trait::async_trait]
+    impl crate::backend::marketplace::HttpClient for FakeHttp {
+        async fn get(
+            &self,
+            url: &str,
+            _headers: &[(&str, &str)],
+        ) -> BackendResult<crate::backend::marketplace::HttpResponse> {
+            let (status, body) = self.responses.get(url).cloned().unwrap_or((404, String::new()));
+            Ok(crate::backend::marketplace::HttpResponse { status, body })
+        }
+    }
+
+    const FIXTURE: &str = "# ctx\n```json\n{\"mcpServers\":{\"ctx\":{\"command\":\"npx\",\"args\":[\"-y\",\"ctx-mcp\"]}}}\n```\n";
+
+    #[tokio::test]
+    async fn add_from_url_fetches_readme_and_parses() {
+        let client = FakeHttp {
+            responses: [(
+                "https://raw.githubusercontent.com/o/r/HEAD/README.md".to_string(),
+                (200, FIXTURE.to_string()),
+            )]
+            .into(),
+        };
+        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap();
+        assert_eq!(resp.drafts.len(), 1);
+        assert_eq!(resp.drafts[0].spec.id, "ctx");
+        assert_eq!(resp.fetched_url, "https://raw.githubusercontent.com/o/r/HEAD/README.md");
+        assert_eq!(resp.source_url, "https://github.com/o/r");
+    }
+
+    #[tokio::test]
+    async fn add_from_url_retries_master_on_404() {
+        let client = FakeHttp {
+            responses: [(
+                "https://raw.githubusercontent.com/o/r/master/README.md".to_string(),
+                (200, FIXTURE.to_string()),
+            )]
+            .into(),
+        };
+        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap();
+        assert_eq!(resp.drafts.len(), 1);
+        assert!(resp.fetched_url.contains("/master/"));
+    }
+
+    #[tokio::test]
+    async fn add_from_url_error_and_empty_cases() {
+        let client = FakeHttp { responses: Default::default() };
+        // both HEAD and master 404 → error mentioning status
+        let err = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap_err();
+        assert!(format!("{err}").contains("404"));
+        // page with no config → success, empty drafts, guidance warning
+        let client = FakeHttp {
+            responses: [(
+                "https://example.com/x.md".to_string(),
+                (200, "# nothing here\n".to_string()),
+            )]
+            .into(),
+        };
+        let resp = mcp_add_from_url_impl("https://example.com/x.md".into(), &client).await.unwrap();
+        assert!(resp.drafts.is_empty());
+        assert!(resp.warnings.iter().any(|w| w.contains("manual")));
+        // oversized body → error
+        let client = FakeHttp {
+            responses: [(
+                "https://example.com/big.md".to_string(),
+                (200, "x".repeat(1024 * 1024 + 1)),
+            )]
+            .into(),
+        };
+        assert!(mcp_add_from_url_impl("https://example.com/big.md".into(), &client).await.is_err());
     }
 }
