@@ -355,25 +355,36 @@ fn package_basename(pkg: &str) -> String {
 const SHELL_INFOS: &[&str] = &["bash", "sh", "shell", "zsh", "console", "text", ""];
 
 #[allow(dead_code)]
+fn strip_prompt(line: &str) -> String {
+    let t = line.trim_start();
+    let t = t.strip_prefix('$').or_else(|| t.strip_prefix('>')).unwrap_or(t);
+    t.trim_start().to_string()
+}
+
+#[allow(dead_code)]
 fn extract_h3(markdown: &str, fences: &[Fence]) -> Vec<Candidate> {
     let mut lines: Vec<String> = Vec::new();
     for f in fences {
         if SHELL_INFOS.contains(&f.info.as_str()) {
-            lines.extend(f.body.lines().map(|l| l.trim_start_matches(['$', '>', ' ']).to_string()));
+            lines.extend(f.body.lines().map(strip_prompt));
         }
     }
-    // inline code spans + prose lines, backticks stripped
+    // inline code spans only; prose without backtick spans contributes nothing
     let mut in_fence = false;
     for line in markdown.lines() {
         if line.trim_start().starts_with("```") { in_fence = !in_fence; continue; }
-        if !in_fence { lines.push(line.replace('`', "")); }
+        if in_fence { continue; }
+        let parts: Vec<&str> = line.split('`').collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i % 2 == 1 { lines.push(part.to_string()); }
+        }
     }
 
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut seen: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    let mut seen: Vec<(Option<String>, Option<String>, Vec<String>, Option<String>)> = Vec::new();
     for line in &lines {
         let Some(c) = parse_command_line(line) else { continue };
-        let key = (c.command.clone(), c.args.clone());
+        let key = (c.name.clone(), c.command.clone(), c.args.clone(), c.url.clone());
         if seen.contains(&key) { continue; }
         seen.push(key);
         candidates.push(c);
@@ -448,7 +459,11 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
     }
     // bare npx / uvx
     for (tool, skip_flags) in [("npx", true), ("uvx", false)] {
-        if let Some(pos) = toks.iter().position(|t| t == tool) {
+        if let Some(pos) = toks
+            .iter()
+            .position(|t| t.rsplit('/').next().unwrap_or(t) == tool)
+        {
+            let matched = toks[pos].clone();
             let rest = &toks[pos + 1..];
             let mut it = rest.iter();
             let mut args: Vec<String> = Vec::new();
@@ -466,7 +481,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
             return Some(Candidate {
                 name: Some(package_basename(&pkg)),
                 priority: 3, transport: McpTransport::Stdio,
-                command: Some(tool.to_string()), args,
+                command: Some(matched), args,
                 env: BTreeMap::new(), url: None, headers: BTreeMap::new(),
                 evidence: format!("H3 command line: {}", line.trim()),
                 ignored_keys: Vec::new(),
@@ -752,5 +767,45 @@ mod tests {
         assert_eq!(package_basename("@upstash/context7-mcp"), "context7-mcp");
         assert_eq!(package_basename("some-pkg@1.2.3"), "some-pkg");
         assert_eq!(package_basename("ghcr.io/org/mcp-img:latest"), "mcp-img");
+    }
+
+    #[test]
+    fn h3_prompt_strip_preserves_dollar_vars() {
+        let md = "```sh\n$ $HOME/.local/bin/uvx some-mcp\n```";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].command.as_deref(), Some("$HOME/.local/bin/uvx"));
+    }
+
+    #[test]
+    fn h3_distinct_remote_adds_both_survive() {
+        let md = "```bash\nclaude mcp add --transport http one https://a/mcp\nclaude mcp add --transport http two https://b/mcp\n```";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 2);
+    }
+
+    #[test]
+    fn h3_prose_scans_only_inline_code_spans() {
+        let md = "Run `npx -y pkg` to start. Plain npx -y other prose is ignored.";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].args, vec!["-y", "pkg"], "no trailing prose tokens");
+    }
+
+    #[test]
+    fn h3_add_json_parses_inline_entry() {
+        let md = "```bash\nclaude mcp add-json ctx '{\"command\":\"npx\",\"args\":[\"-y\",\"ctx-mcp\"]}'\n```";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name.as_deref(), Some("ctx"));
+        assert_eq!(cands[0].command.as_deref(), Some("npx"));
+    }
+
+    #[test]
+    fn h2_malformed_toml_warns_and_continues() {
+        let md = "```toml\n[mcp_servers.broken\ncommand = \"x\"\n```\n```toml\n[mcp_servers.ok]\ncommand = \"y\"\n```";
+        let (cands, warns) = extract_h2(&scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(warns.len(), 1);
     }
 }
