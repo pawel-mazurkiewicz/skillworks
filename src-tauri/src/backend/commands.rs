@@ -14,7 +14,9 @@ use tokio::fs;
 
 use super::config::Config;
 use super::fs_helpers::{copy_directory, move_directory, unique_skill_destination};
-use super::mcp::spec::{load_library, save_library, validate_spec, McpServerSpec};
+use super::mcp::adapters::{adapter_for, adapters, config_path_for};
+use super::mcp::engine::{read_entries, remove_entry, write_entry};
+use super::mcp::spec::{load_library, resolve_effective, save_library, validate_spec, McpServerSpec};
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
     normalize_project_records, path_exists,
@@ -27,9 +29,10 @@ use super::targets::{
     build_targets, inspect_target, normalize_custom_targets, safe_read_custom_targets,
 };
 use super::types::{
-    DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry, McpLibraryResponse,
-    PickDirectoryResponse, ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse,
-    ScanReport, SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
+    DiscoveredMcpEntry, DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry,
+    McpActivationResult, McpLibraryResponse, McpTargetStatus, PickDirectoryResponse,
+    ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse, ScanReport,
+    SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
 };
 
 const APP_CONFIG_DIR: &str = ".skillworks";
@@ -2426,6 +2429,194 @@ pub async fn mcp_remove_server_impl(
     Ok(McpLibraryResponse { servers, warnings })
 }
 
+// ---------------------------------------------------------------------------
+// MCP server activation.
+// ---------------------------------------------------------------------------
+
+const PROJECT_TRUST_NOTE: &str =
+    "This harness requires first-run approval of project-scope MCP servers inside the tool.";
+
+fn resolve_project_root(project_path: Option<String>) -> BackendResult<Option<PathBuf>> {
+    Ok(match project_path {
+        Some(p) if !p.trim().is_empty() => Some(expand_home(Path::new(p.trim()))),
+        _ => None,
+    })
+}
+
+/// Activate a library server for a given harness + scope, writing it into
+/// that harness's config file.
+#[tauri::command]
+pub async fn mcp_activate(
+    id: String,
+    harness: String,
+    scope: String,
+    variant_label: Option<String>,
+    project_path: Option<String>,
+) -> BackendResult<McpActivationResult> {
+    mcp_activate_impl(id, harness, scope, variant_label, project_path, None, None).await
+}
+
+pub async fn mcp_activate_impl(
+    id: String,
+    harness: String,
+    scope: String,
+    variant_label: Option<String>,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<McpActivationResult> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let servers = load_library(&app_home).await?;
+    let spec = servers
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| BackendError::NotFound(format!("No library server with id {id:?}")))?;
+
+    let adapter = adapter_for(&harness)?;
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+    let path = config_path_for(adapter, &scope, &home_dir, project_root.as_deref())?;
+
+    let inv = resolve_effective(spec, &harness, &scope, variant_label.as_deref())?;
+    write_entry(&path, adapter, &id, &inv).await?;
+
+    Ok(McpActivationResult {
+        server_id: id,
+        harness,
+        scope: scope.clone(),
+        config_path: path.to_string_lossy().into_owned(),
+        active: true,
+        trust_note: (adapter.project_trust_note && scope == "project")
+            .then(|| PROJECT_TRUST_NOTE.to_string()),
+    })
+}
+
+/// Deactivate a server for a given harness + scope, removing it from that
+/// harness's config file.
+#[tauri::command]
+pub async fn mcp_deactivate(
+    id: String,
+    harness: String,
+    scope: String,
+    project_path: Option<String>,
+) -> BackendResult<McpActivationResult> {
+    mcp_deactivate_impl(id, harness, scope, project_path, None, None).await
+}
+
+pub async fn mcp_deactivate_impl(
+    id: String,
+    harness: String,
+    scope: String,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<McpActivationResult> {
+    // Deliberately does NOT require the id to be in the library: you can
+    // deactivate an entry whose spec was removed.
+    let _ = resolve_mcp_app_home(app_home_override).await?;
+    let adapter = adapter_for(&harness)?;
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+    let path = config_path_for(adapter, &scope, &home_dir, project_root.as_deref())?;
+    remove_entry(&path, adapter, &id).await?;
+    Ok(McpActivationResult {
+        server_id: id,
+        harness,
+        scope,
+        config_path: path.to_string_lossy().into_owned(),
+        active: false,
+        trust_note: None,
+    })
+}
+
+/// Report activation status of every library server across every harness's
+/// global scope (and project scope, when a project path is given).
+#[tauri::command]
+pub async fn mcp_status(project_path: Option<String>) -> BackendResult<Vec<McpTargetStatus>> {
+    mcp_status_impl(project_path, None, None).await
+}
+
+pub async fn mcp_status_impl(
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<Vec<McpTargetStatus>> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let servers = load_library(&app_home).await?;
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+
+    let mut out = Vec::new();
+    for adapter in adapters() {
+        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        if let Some(root) = project_root.as_deref() {
+            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+        }
+        for (scope, path) in targets {
+            let entries = read_entries(&path, adapter).await?;
+            let active_ids: Vec<&String> = entries.iter().map(|(k, _)| k).collect();
+            for spec in &servers {
+                out.push(McpTargetStatus {
+                    server_id: spec.id.clone(),
+                    harness: adapter.harness_id.to_string(),
+                    scope: scope.to_string(),
+                    config_path: path.to_string_lossy().into_owned(),
+                    active: active_ids.iter().any(|k| *k == &spec.id),
+                    trust_note: (adapter.project_trust_note && scope == "project")
+                        .then(|| PROJECT_TRUST_NOTE.to_string()),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Find MCP entries present in harness configs that are not tracked in the
+/// library (hand-added or migrated from a previous tool).
+#[tauri::command]
+pub async fn mcp_discover(
+    project_path: Option<String>,
+) -> BackendResult<Vec<DiscoveredMcpEntry>> {
+    mcp_discover_impl(project_path, None, None).await
+}
+
+pub async fn mcp_discover_impl(
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<Vec<DiscoveredMcpEntry>> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let library_ids: Vec<String> = load_library(&app_home)
+        .await?
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+
+    let mut out = Vec::new();
+    for adapter in adapters() {
+        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        if let Some(root) = project_root.as_deref() {
+            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+        }
+        for (scope, path) in targets {
+            for (key, entry) in read_entries(&path, adapter).await? {
+                if !library_ids.contains(&key) {
+                    out.push(DiscoveredMcpEntry {
+                        harness: adapter.harness_id.to_string(),
+                        scope: scope.to_string(),
+                        config_path: path.to_string_lossy().into_owned(),
+                        key,
+                        entry,
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3848,5 +4039,153 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    fn test_spec(id: &str) -> crate::backend::mcp::spec::McpServerSpec {
+        crate::backend::mcp::spec::McpServerSpec {
+            id: id.into(),
+            name: id.into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource { kind: "manual".into(), url: None },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "pkg".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_remove_warns_when_still_active() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+
+        // Put the server in the library AND activate it for cursor global.
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_activate_impl(
+            "context7".into(), "cursor".into(), "global".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let resp = mcp_remove_server_impl("context7".into(), Some(app_home), Some(home))
+            .await
+            .unwrap();
+        assert!(resp.warnings.iter().any(|w| w.contains("cursor")), "{:?}", resp.warnings);
+    }
+
+    #[tokio::test]
+    async fn mcp_activate_deactivate_status_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        let project = dir.path().join("repo");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+        tokio::fs::create_dir_all(&project).await.unwrap();
+
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+
+        // Global activate for claude writes ~/.claude.json.
+        let res = mcp_activate_impl(
+            "context7".into(), "claude".into(), "global".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        ).await.unwrap();
+        assert!(res.active);
+        let doc: serde_json::Value = serde_json::from_slice(
+            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
+        ).unwrap();
+        assert_eq!(doc["mcpServers"]["context7"]["command"], "npx");
+
+        // Project activate for claude writes <repo>/.mcp.json + returns trust note.
+        let res = mcp_activate_impl(
+            "context7".into(), "claude".into(), "project".into(),
+            None, Some(project.to_string_lossy().into_owned()),
+            Some(app_home.clone()), Some(home.clone()),
+        ).await.unwrap();
+        assert!(res.trust_note.is_some());
+        assert!(project.join(".mcp.json").exists());
+
+        // Status reflects both, and covers all 7 global + 7 project rows.
+        let statuses = mcp_status_impl(
+            Some(project.to_string_lossy().into_owned()),
+            Some(app_home.clone()), Some(home.clone()),
+        ).await.unwrap();
+        assert_eq!(statuses.len(), 14);
+        let claude_g = statuses.iter()
+            .find(|s| s.harness == "claude" && s.scope == "global").unwrap();
+        assert!(claude_g.active);
+        let cursor_g = statuses.iter()
+            .find(|s| s.harness == "cursor" && s.scope == "global").unwrap();
+        assert!(!cursor_g.active);
+
+        // Without a project only 7 global rows come back.
+        let statuses = mcp_status_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await.unwrap();
+        assert_eq!(statuses.len(), 7);
+
+        // Deactivate global.
+        let res = mcp_deactivate_impl(
+            "context7".into(), "claude".into(), "global".into(),
+            None, Some(app_home.clone()), Some(home.clone()),
+        ).await.unwrap();
+        assert!(!res.active);
+        let doc: serde_json::Value = serde_json::from_slice(
+            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
+        ).unwrap();
+        assert!(doc["mcpServers"].get("context7").is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_activate_validates_inputs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
+
+        // Unknown server id.
+        assert!(mcp_activate_impl(
+            "nope".into(), "claude".into(), "global".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        ).await.is_err());
+        // Unknown harness.
+        assert!(mcp_activate_impl(
+            "s1".into(), "emacs".into(), "global".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        ).await.is_err());
+        // Project scope without project path.
+        assert!(mcp_activate_impl(
+            "s1".into(), "claude".into(), "project".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        ).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn mcp_discover_finds_unmanaged_entries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::write(
+            home.join(".cursor/mcp.json"),
+            r#"{"mcpServers":{"handmade":{"command":"x"}}}"#,
+        ).await.unwrap();
+
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_activate_impl(
+            "context7".into(), "cursor".into(), "global".into(),
+            None, None, Some(app_home.clone()), Some(home.clone()),
+        ).await.unwrap();
+
+        let found = mcp_discover_impl(None, Some(app_home), Some(home)).await.unwrap();
+        // Managed entry excluded; handmade one reported.
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "handmade");
+        assert_eq!(found[0].harness, "cursor");
     }
 }
