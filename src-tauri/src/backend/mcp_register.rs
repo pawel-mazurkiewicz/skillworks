@@ -9,33 +9,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
 use serde::Serialize;
 use tokio::fs;
 
-use super::fs_atomic::{write_bytes_atomic, write_json_atomic};
+use super::fs_atomic::{backup_existing, write_bytes_atomic, write_json_atomic};
 use super::state::{BackendError, BackendResult};
 
 /// Key under which the server is registered in every harness config.
 pub const MCP_SERVER_KEY: &str = "skillworks";
-
-/// Copy an existing config file to a timestamped sibling before we modify it,
-/// so a user can recover their previous harness config. No-op when the file
-/// does not yet exist (a fresh registration creating the file). Returns the
-/// backup path when one was written.
-async fn backup_existing(path: &Path) -> BackendResult<Option<PathBuf>> {
-    if !fs::try_exists(path).await.unwrap_or(false) {
-        return Ok(None);
-    }
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "config".to_string());
-    let backup_path = path.with_file_name(format!("{file_name}.skillworks-backup-{timestamp}"));
-    fs::copy(path, &backup_path).await?;
-    Ok(Some(backup_path))
-}
 
 /// How a harness should spawn the MCP server.
 #[derive(Debug, Clone)]

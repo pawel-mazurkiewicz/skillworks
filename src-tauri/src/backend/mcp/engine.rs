@@ -1,9 +1,14 @@
 //! Generic MCP config engine: canonical invocation → harness dialect, plus
 //! (Task 4/5) file-level read/insert/remove for JSON and TOML configs.
 
-use serde_json::{json, Value};
+use std::path::Path;
 
-use super::adapters::{CommandStyle, Discriminator, McpAdapter, RemoteUrlField};
+use serde_json::{json, Value};
+use tokio::fs;
+
+use super::super::fs_atomic::{backup_existing, write_bytes_atomic, write_json_atomic};
+use super::super::state::{BackendError, BackendResult};
+use super::adapters::{CommandStyle, ConfigFormat, Discriminator, McpAdapter, RemoteUrlField};
 use super::spec::{EffectiveInvocation, McpTransport};
 
 fn discriminator_value(d: Discriminator, transport: McpTransport) -> Option<&'static str> {
@@ -92,6 +97,194 @@ pub fn render_entry_toml(inv: &EffectiveInvocation) -> toml_edit::Table {
         }
     }
     entry
+}
+
+async fn read_json_doc(path: &Path) -> BackendResult<serde_json::Map<String, Value>> {
+    match fs::read(path).await {
+        Ok(bytes) => {
+            if bytes.iter().all(|b| b.is_ascii_whitespace()) {
+                return Ok(serde_json::Map::new());
+            }
+            let value: Value = serde_json::from_slice(&bytes).map_err(|e| {
+                BackendError::Validation(format!("Invalid JSON in {}: {e}", path.display()))
+            })?;
+            match value {
+                Value::Object(map) => Ok(map),
+                _ => Err(BackendError::Validation(format!(
+                    "Config is not a JSON object: {}",
+                    path.display()
+                ))),
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Err(err) => Err(BackendError::Io(err)),
+    }
+}
+
+async fn read_toml_doc(path: &Path) -> BackendResult<toml_edit::DocumentMut> {
+    match fs::read_to_string(path).await {
+        Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|e| {
+            BackendError::Validation(format!("Invalid TOML in {}: {e}", path.display()))
+        }),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(toml_edit::DocumentMut::new())
+        }
+        Err(err) => Err(BackendError::Io(err)),
+    }
+}
+
+/// Walk `adapter.key_path` in a JSON doc, creating objects as needed, and
+/// return the servers map.
+fn json_servers_mut<'a>(
+    doc: &'a mut serde_json::Map<String, Value>,
+    key_path: &[&str],
+) -> BackendResult<&'a mut serde_json::Map<String, Value>> {
+    let mut current = doc;
+    for key in key_path {
+        let entry = current
+            .entry(key.to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        current = entry.as_object_mut().ok_or_else(|| {
+            BackendError::Validation(format!("Config key {key:?} is not an object"))
+        })?;
+    }
+    Ok(current)
+}
+
+fn toml_item_to_json(item: &toml_edit::Item) -> Value {
+    if let Some(v) = item.as_str() {
+        return json!(v);
+    }
+    if let Some(v) = item.as_bool() {
+        return json!(v);
+    }
+    if let Some(v) = item.as_integer() {
+        return json!(v);
+    }
+    if let Some(arr) = item.as_array() {
+        return Value::Array(
+            arr.iter()
+                .map(|v| match v.as_str() {
+                    Some(s) => json!(s),
+                    None => json!(v.to_string()),
+                })
+                .collect(),
+        );
+    }
+    if let Some(t) = item.as_table_like() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in t.iter() {
+            map.insert(k.to_string(), toml_item_to_json(v));
+        }
+        return Value::Object(map);
+    }
+    json!(item.to_string())
+}
+
+/// Insert/replace only `id` in the config at `path`, creating file/dirs as
+/// needed. Backs up an existing file before writing atomically.
+pub async fn write_entry(
+    path: &Path,
+    adapter: &McpAdapter,
+    id: &str,
+    inv: &EffectiveInvocation,
+) -> BackendResult<()> {
+    match adapter.format {
+        ConfigFormat::Json => {
+            let mut doc = read_json_doc(path).await?;
+            let servers = json_servers_mut(&mut doc, adapter.key_path)?;
+            servers.insert(id.to_string(), render_entry_json(adapter, inv));
+            backup_existing(path).await?;
+            write_json_atomic(path, &Value::Object(doc)).await
+        }
+        ConfigFormat::Toml => {
+            let mut doc = read_toml_doc(path).await?;
+            let root_key = adapter.key_path[0];
+            if !doc.contains_key(root_key) {
+                doc[root_key] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+            let servers = doc[root_key].as_table_mut().ok_or_else(|| {
+                BackendError::Validation(format!("{root_key} is not a table"))
+            })?;
+            servers.insert(id, toml_edit::Item::Table(render_entry_toml(inv)));
+            backup_existing(path).await?;
+            write_bytes_atomic(path, doc.to_string().as_bytes()).await
+        }
+    }
+}
+
+/// Remove only `id`. Returns true when an entry was actually removed.
+pub async fn remove_entry(
+    path: &Path,
+    adapter: &McpAdapter,
+    id: &str,
+) -> BackendResult<bool> {
+    if !fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(false);
+    }
+    match adapter.format {
+        ConfigFormat::Json => {
+            let mut doc = read_json_doc(path).await?;
+            let mut current: Option<&mut serde_json::Map<String, Value>> = Some(&mut doc);
+            for key in adapter.key_path {
+                current = current
+                    .and_then(|m| m.get_mut(*key))
+                    .and_then(|v| v.as_object_mut());
+            }
+            let removed = current.map(|m| m.remove(id).is_some()).unwrap_or(false);
+            if removed {
+                backup_existing(path).await?;
+                write_json_atomic(path, &Value::Object(doc)).await?;
+            }
+            Ok(removed)
+        }
+        ConfigFormat::Toml => {
+            let mut doc = read_toml_doc(path).await?;
+            let removed = doc
+                .get_mut(adapter.key_path[0])
+                .and_then(|i| i.as_table_mut())
+                .map(|t| t.remove(id).is_some())
+                .unwrap_or(false);
+            if removed {
+                backup_existing(path).await?;
+                write_bytes_atomic(path, doc.to_string().as_bytes()).await?;
+            }
+            Ok(removed)
+        }
+    }
+}
+
+/// List (id, entry-as-json) pairs in a config. Missing file → empty.
+pub async fn read_entries(
+    path: &Path,
+    adapter: &McpAdapter,
+) -> BackendResult<Vec<(String, Value)>> {
+    match adapter.format {
+        ConfigFormat::Json => {
+            let doc = read_json_doc(path).await?;
+            let mut current: Option<&serde_json::Map<String, Value>> = Some(&doc);
+            for key in adapter.key_path {
+                current = current
+                    .and_then(|m| m.get(*key))
+                    .and_then(|v| v.as_object());
+            }
+            Ok(current
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default())
+        }
+        ConfigFormat::Toml => {
+            let doc = read_toml_doc(path).await?;
+            Ok(doc
+                .get(adapter.key_path[0])
+                .and_then(|i| i.as_table())
+                .map(|t| {
+                    t.iter()
+                        .map(|(k, v)| (k.to_string(), toml_item_to_json(v)))
+                        .collect()
+                })
+                .unwrap_or_default())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +404,110 @@ mod tests {
         let t = render_entry_toml(&http_inv());
         assert_eq!(t["url"].as_str(), Some("https://x.example/mcp"));
         assert_eq!(t["http_headers"]["Authorization"].as_str(), Some("Bearer t"));
+    }
+
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    #[tokio::test]
+    async fn json_write_read_remove_preserves_siblings() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("cursor").unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(&path, r#"{"mcpServers":{"other":{"command":"x"}},"custom":1}"#)
+            .await
+            .unwrap();
+
+        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
+        // Idempotent re-write.
+        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
+
+        let entries = read_entries(&path, a).await.unwrap();
+        let ids: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(ids.contains(&"other") && ids.contains(&"context7"));
+        assert_eq!(entries.len(), 2);
+
+        // Unknown top-level keys survive.
+        let doc: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(doc["custom"], 1);
+
+        assert!(remove_entry(&path, a, "context7").await.unwrap());
+        assert!(!remove_entry(&path, a, "context7").await.unwrap()); // second time: nothing to do
+        let entries = read_entries(&path, a).await.unwrap();
+        assert_eq!(entries.len(), 1, "sibling kept after remove");
+    }
+
+    #[tokio::test]
+    async fn json_write_creates_missing_file_and_dirs() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("kiro").unwrap();
+        let path = dir.path().join(".kiro/settings/mcp.json");
+        write_entry(&path, a, "s1", &stdio_inv()).await.unwrap();
+        let entries = read_entries(&path, a).await.unwrap();
+        assert_eq!(entries[0].0, "s1");
+    }
+
+    #[tokio::test]
+    async fn json_malformed_config_is_error_not_clobber() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("cursor").unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(&path, "{ not json").await.unwrap();
+        assert!(write_entry(&path, a, "s1", &stdio_inv()).await.is_err());
+        assert_eq!(fs::read_to_string(&path).await.unwrap(), "{ not json");
+    }
+
+    #[tokio::test]
+    async fn json_mutation_writes_backup() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("cursor").unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(&path, r#"{"mcpServers":{}}"#).await.unwrap();
+        write_entry(&path, a, "s1", &stdio_inv()).await.unwrap();
+        let mut found_backup = false;
+        let mut rd = fs::read_dir(dir.path()).await.unwrap();
+        while let Some(e) = rd.next_entry().await.unwrap() {
+            if e.file_name().to_string_lossy().contains(".skillworks-backup-") {
+                found_backup = true;
+            }
+        }
+        assert!(found_backup);
+    }
+
+    #[tokio::test]
+    async fn toml_write_read_remove_preserves_comments() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("codex").unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "# keep me\nmodel = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"x\"\n")
+            .await
+            .unwrap();
+
+        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
+        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap(); // idempotent
+
+        let text = fs::read_to_string(&path).await.unwrap();
+        assert!(text.contains("# keep me"));
+        assert!(text.contains("[mcp_servers.other]"));
+        assert!(text.contains("[mcp_servers.context7]"));
+
+        let entries = read_entries(&path, a).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        let ctx = &entries.iter().find(|(k, _)| k == "context7").unwrap().1;
+        assert_eq!(ctx["command"], "npx");
+
+        assert!(remove_entry(&path, a, "context7").await.unwrap());
+        let text = fs::read_to_string(&path).await.unwrap();
+        assert!(text.contains("[mcp_servers.other]"));
+        assert!(!text.contains("context7"));
+    }
+
+    #[tokio::test]
+    async fn read_entries_missing_file_is_empty() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("claude").unwrap();
+        let entries = read_entries(&dir.path().join("nope.json"), a).await.unwrap();
+        assert!(entries.is_empty());
     }
 }

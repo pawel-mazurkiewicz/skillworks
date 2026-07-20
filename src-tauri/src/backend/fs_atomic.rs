@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use chrono::Utc;
 use serde::Serialize;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -80,4 +81,22 @@ pub async fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> BackendResult<()> 
     }
 
     Ok(())
+}
+
+/// Copy an existing config file to a timestamped sibling before we modify it,
+/// so a user can recover their previous harness config. No-op when the file
+/// does not yet exist (a fresh registration creating the file). Returns the
+/// backup path when one was written.
+pub async fn backup_existing(path: &Path) -> BackendResult<Option<PathBuf>> {
+    if !fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(None);
+    }
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+    let backup_path = path.with_file_name(format!("{file_name}.skillworks-backup-{timestamp}"));
+    fs::copy(path, &backup_path).await?;
+    Ok(Some(backup_path))
 }
