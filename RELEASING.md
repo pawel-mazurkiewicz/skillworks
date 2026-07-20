@@ -38,15 +38,18 @@ Open `.env.release` and fill in every value. See the comments in the file for wh
 npx tauri signer generate -w ~/.tauri/skillworks.key
 ```
 
-The command prints a **public key**. Open `src-tauri/tauri.conf.json` and replace the placeholder in `plugins.updater.pubkey` with it.
+You will be prompted for a passphrase (you can leave it empty). The command prints a **public key**. Open `src-tauri/tauri.conf.json` and replace the placeholder in `plugins.updater.pubkey` with it.
 
-Then open `.env.release` and set:
+Then open `.env.release` and set **both** of these:
 
 ```
 TAURI_SIGNING_PRIVATE_KEY=<full contents of ~/.tauri/skillworks.key>
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<the passphrase you just chose, or empty>
 ```
 
-Commit the updated `tauri.conf.json` (public key only — the private key stays in `.env.release`).
+Double-check the variable names: writing `TAURI_SIGNING_PRIVATE_KEY` for both lines silently overwrites the key with the passphrase, and the build then fails with `wrong password for that key` or `.app.tar.gz.sig not found`.
+
+Commit the updated `tauri.conf.json` (public key only — the private key and passphrase stay in `.env.release`).
 
 ### 4. Set up the GitHub token
 
@@ -126,7 +129,10 @@ Go to [github.com/pawel-mazurkiewicz/skillworks/releases](https://github.com/paw
 Run `./scripts/release/release-macos.sh` with `set -x` temporarily at the top to see the exact `tauri build` output. Common causes: wrong `APPLE_SIGNING_IDENTITY` string (must match Keychain exactly, including the Team ID in parentheses), expired app-specific password, or 2FA session issues.
 
 **`.app.tar.gz.sig` not found after build**
-The updater signing key was not picked up. Confirm `TAURI_SIGNING_PRIVATE_KEY` in `.env.release` contains the full raw content of `~/.tauri/skillworks.key` (including the `dW50cnVzdGVkIGNvbW1lbnQ6...` header line if present).
+First make sure updater artifacts are enabled: `bundle.createUpdaterArtifacts` must be `true` in `src-tauri/tauri.conf.json` (otherwise the `.tar.gz`/`.sig` are never produced). Then confirm the signing key is picked up:
+- `TAURI_SIGNING_PRIVATE_KEY` in `.env.release` holds the full raw contents of `~/.tauri/skillworks.key` (both lines, including the leading `untrusted comment:` header).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is set to the passphrase you chose when generating the key (leave empty only if the key has no passphrase). Watch the variable name — it is easy to accidentally write `TAURI_SIGNING_PRIVATE_KEY` twice, which silently overwrites the key with the password.
+- The `pubkey` in `tauri.conf.json` must be the public key matching that private key (not the `REPLACE_WITH_...` placeholder).
 
 **`gh: release not found` when uploading**
 The draft release wasn't created yet, or the version tag doesn't match. Run `create-release.sh` first and use the exact same version string in all subsequent scripts.

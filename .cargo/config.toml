@@ -1,0 +1,32 @@
+# Workaround for the Xcode 27 beta linker (ld-1328 / Command Line Tools beta).
+#
+# When a deployment target is set (Tauri exports MACOSX_DEPLOYMENT_TARGET from
+# `bundle.macOS.minimumSystemVersion`), the new linker emits proc-macro dylibs
+# with chained fixups whose LINKEDIT string pool is mis-aligned; dlopen then
+# rejects them at build time:
+#
+#   error: ...libserde_derive-*.dylib: dlopen(...) (mis-aligned LINKEDIT string pool)
+#   error[E0463]: can't find crate for `ctor_proc_macro` / `tauri_macros` / ...
+#
+# `-ld_classic` no longer works (Apple removed the classic linker: "-ld_classic
+# is no longer supported and will be ignored"). Disabling chained fixups with
+# `-no_fixup_chains` forces the classic rebase/bind format, which the new linker
+# generates correctly and which loads fine on every supported macOS version.
+#
+# Remove this once a non-beta Command Line Tools / Xcode with a fixed linker is
+# in use. `[build]` covers host proc-macros & build scripts; `[target.*]` cover
+# the target artifacts. This is sufficient for native (no `--target`) builds
+# such as `npm run desktop:build`.
+#
+# NOTE: when an explicit `--target` is passed (the universal-apple-darwin release
+# build), cargo does NOT apply these rustflags to *host* proc-macros, so they
+# still fail. The release scripts work around that with a RUSTC_WRAPPER — see
+# scripts/release/rustc-wrapper.sh and scripts/release/common.sh.
+[build]
+rustflags = ["-C", "link-arg=-Wl,-no_fixup_chains"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-no_fixup_chains"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-no_fixup_chains"]
