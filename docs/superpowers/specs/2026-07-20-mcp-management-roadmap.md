@@ -1,6 +1,6 @@
 # MCP Server Management — Roadmap
 
-**Status:** Living document. Phase A specced + planned; B–E pending.
+**Status:** Living document. Phases A + B implemented on `feature/mcp-management-phase-a` (reviewed, all tests green); C–F pending.
 **Date:** 2026-07-20
 
 ## Ultimate goal
@@ -30,8 +30,8 @@ once (with per-harness/per-scope invocation variants), then toggled anywhere.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **A — Library + engine** | `McpServerSpec`/variants, `<appHome>/mcp/servers.json`, adapter table (7 harnesses), generic JSON/TOML engine, activate/deactivate/status/discover-read commands, `mcp_register.rs` refactored onto engine | Spec: `2026-07-20-mcp-management-phase-a-design.md` · Plan: `../plans/2026-07-20-mcp-management-phase-a.md` |
-| **B — URL ingestion** | `parse.rs` heuristics: fetch GitHub/README/instruction URL; extract fenced ```json `mcpServers` blocks, `npx`/`uvx`/`docker run` command lines, `claude mcp add …` lines; produce draft spec for user review; `mcp_add_from_url` command | Not started |
+| **A — Library + engine** | `McpServerSpec`/variants, `<appHome>/mcp/servers.json`, adapter table (7 harnesses), generic JSON/TOML engine, activate/deactivate/status/discover-read commands, `mcp_register.rs` refactored onto engine | **Done** (spec + plan + implementation, final review passed) |
+| **B — URL ingestion** | `parse.rs` heuristics: fetch GitHub/README/instruction URL; extract fenced ```json `mcpServers` blocks, `npx`/`uvx`/`docker run` command lines, `claude mcp add …` lines; produce draft spec for user review; `mcp_add_from_url` command | **Done** (spec `2026-07-20-mcp-management-phase-b-design.md`, final review passed; D pre-work items below) |
 | **C — Discovery reconciliation** | Promote Phase A's read-only `mcp_discover` into full reconciliation: match unmanaged entries to library specs, "import to library" flow (source.kind = "discovered"), conflict handling when an entry diverges from its spec | Not started |
 | **D — Frontend UI** | "MCP Servers" surface mirroring the skills grid: library list, per-harness×scope activation matrix, add-from-URL form, discovered-servers panel, variant editor. Follows design tokens + workshop aesthetic | Not started |
 | **E — Agent-assisted tools** | Node MCP server (`src/mcp-server.js` + `core.js`) mirror: `add_mcp_server`, `add_mcp_server_from_url`, `activate_mcp_server`, `deactivate_mcp_server`, `list_mcp_servers` tools so the user's coding agent can parse prose pages and manage servers. Shares the library file + adapter semantics with the Rust side (keep in lockstep like `targets.rs` ↔ `core.js`) | Not started |
