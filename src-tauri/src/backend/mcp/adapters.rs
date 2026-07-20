@@ -49,6 +49,10 @@ pub struct McpAdapter {
     pub project_path_parts: &'static [&'static str],
     pub key_path: &'static [&'static str],
     pub command_style: CommandStyle,
+    /// JSON env-map key ("env" | "environment"). Unused for TOML harnesses:
+    /// the engine's TOML renderer always emits env as a nested
+    /// `[mcp_servers.<id>.env]` subtable (the spec's `TomlSubtable` dialect),
+    /// keyed off `format == Toml` rather than this field.
     pub env_field: &'static str,
     pub discriminator: Discriminator,
     pub remote_url_field: RemoteUrlField,
@@ -77,7 +81,7 @@ static ADAPTERS: &[McpAdapter] = &[
         project_path_parts: &[".codex", "config.toml"],
         key_path: &["mcp_servers"],
         command_style: CommandStyle::SeparateArgs,
-        env_field: "env",
+        env_field: "env", // unused; TOML env is a subtable — see field docs
         discriminator: Discriminator::None,
         remote_url_field: RemoteUrlField::Url,
         project_trust_note: true,
@@ -254,5 +258,6 @@ mod tests {
         assert_eq!(adapter_for("codex").unwrap().format, ConfigFormat::Toml);
         assert_eq!(adapter_for("opencode").unwrap().env_field, "environment");
         assert_eq!(adapter_for("opencode").unwrap().key_path, &["mcp"]);
+        assert_eq!(adapter_for("codex").unwrap().env_field, "env");
     }
 }
