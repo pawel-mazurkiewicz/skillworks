@@ -736,3 +736,51 @@ pub struct MarketplaceSkillsResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+// ---------------------------------------------------------------------------
+// MCP (Model Context Protocol) DTOs.
+// ---------------------------------------------------------------------------
+
+/// Status of one library server against one harness target.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTargetStatus {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpActivationResult {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+}
+
+/// A server entry found in a harness config that no library spec claims.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredMcpEntry {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub key: String,
+    pub entry: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpLibraryResponse {
+    pub servers: Vec<super::mcp::spec::McpServerSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
