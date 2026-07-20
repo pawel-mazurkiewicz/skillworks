@@ -788,3 +788,23 @@ pub struct McpLibraryResponse {
     pub warnings: Vec<String>,
 }
 
+/// One parsed-from-URL draft: a full spec plus the evidence trail that
+/// produced it. Never persisted by the parser — the caller reviews and
+/// saves via `mcp_add_manual`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDraft {
+    pub spec: super::mcp::spec::McpServerSpec,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpUrlParseResponse {
+    pub source_url: String,
+    pub fetched_url: String,
+    pub drafts: Vec<McpServerDraft>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
