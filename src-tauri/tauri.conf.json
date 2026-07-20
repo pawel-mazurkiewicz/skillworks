@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Skillworks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "dev.skillworks.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,7 +26,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_PUBLIC_KEY_FROM: npx tauri signer generate -w ~/.tauri/skillworks.key",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyNURCOTk2RTU4MEI4OUEKUldTYXVJRGxscmxkMHRnQWwwQ3V3VllMSGE1WThIWTRlcWRzM1A2ZDRvdFYwYm9sSS8yTGpCTEwK",
       "endpoints": [
         "https://github.com/pawel-mazurkiewicz/skillworks/releases/latest/download/latest.json"
       ]
@@ -35,6 +35,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "resources": {
       "../src/mcp-server.js": "mcp/mcp-server.js",
       "../src/core.js": "mcp/core.js",

@@ -5,6 +5,19 @@
 # Usage: ./scripts/release/create-release.sh v0.2.0
 set -euo pipefail
 
+# Ensure Rust toolchain is in PATH (handles Homebrew + rustup installs)
+if [[ "$(uname)" == "Darwin" ]]; then
+  if ! command -v cargo &>/dev/null; then
+    for dir in /opt/homebrew/bin /usr/local/bin "$HOME/.cargo/bin"; do
+      if [[ -d "$dir" && -x "$dir/cargo" ]]; then
+        export PATH="$dir:$PATH"
+        break
+      fi
+    done
+  fi
+fi
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
