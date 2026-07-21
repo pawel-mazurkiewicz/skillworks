@@ -300,6 +300,28 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
     }
 }
 
+/// Run `fut` under a single wall-clock deadline. `fetch_hops`'s per-request
+/// `TOTAL_TIMEOUT` only bounds one HTTP request/response cycle — it does
+/// not cover DNS resolution, and `fetch_markdown_guarded` can call
+/// `fetch_hops` up to `2 * (1 + MAX_REDIRECTS)` times (initial + redirects,
+/// doubled for the retry URL). Without an outer deadline the advertised
+/// "~30s" cap is not a real ceiling: a slow-but-not-timing-out DNS
+/// resolver, or enough redirect hops, could stack well past it. Wrapping
+/// the whole guarded fetch in one `tokio::time::timeout` makes the
+/// documented deadline true end-to-end.
+async fn with_deadline<F, T>(fut: F) -> BackendResult<T>
+where
+    F: std::future::Future<Output = BackendResult<T>>,
+{
+    match tokio::time::timeout(TOTAL_TIMEOUT, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(BackendError::Validation(format!(
+            "Fetch timed out after {}s (deadline covers DNS lookups and all redirect hops)",
+            TOTAL_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
 /// SSRF-safe, size- and time-bounded fetch of a markdown document, following
 /// redirects manually (so every hop's resolved addresses can be validated
 /// before connecting). If the first URL's hop chain terminates on a
@@ -307,8 +329,17 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
 /// fresh redirect budget — mirroring the plain-HTTP-client retry semantics
 /// used for the mocked/test fetch path. Any hard failure (bad scheme, SSRF
 /// rejection, timeout, transport error, oversize body, redirect overflow)
-/// is returned immediately without retry.
+/// is returned immediately without retry. The whole call (both attempts,
+/// including DNS) is bounded by a single `TOTAL_TIMEOUT` deadline — see
+/// `with_deadline`.
 pub async fn fetch_markdown_guarded(
+    url: &str,
+    retry_url: Option<&str>,
+) -> BackendResult<(String, String)> {
+    with_deadline(fetch_markdown_guarded_inner(url, retry_url)).await
+}
+
+async fn fetch_markdown_guarded_inner(
     url: &str,
     retry_url: Option<&str>,
 ) -> BackendResult<(String, String)> {
@@ -450,5 +481,35 @@ mod tests {
     fn push_capped_rejects_over_cap() {
         let mut buf = Vec::new();
         assert!(push_capped(&mut buf, &[0u8; 11], 10).is_err());
+    }
+
+    /// Proves the deadline covers the *whole* wrapped future, not just one
+    /// HTTP request/response cycle — this is what closes the gap Codex
+    /// flagged (DNS + all redirect hops previously escaped the ~30s cap).
+    /// Uses paused tokio time so the test doesn't actually wait 30s: a fake
+    /// future that "does work" for longer than `TOTAL_TIMEOUT` (standing in
+    /// for slow DNS + many redirect hops) must still be cut off at the
+    /// deadline.
+    #[tokio::test(start_paused = true)]
+    async fn with_deadline_bounds_the_whole_future_not_just_one_hop() {
+        let slow = async {
+            tokio::time::sleep(TOTAL_TIMEOUT + Duration::from_secs(1)).await;
+            Ok::<_, BackendError>(("done".to_string(), "body".to_string()))
+        };
+        let handle = tokio::spawn(with_deadline(slow));
+        tokio::time::advance(TOTAL_TIMEOUT + Duration::from_secs(2)).await;
+        let result = handle.await.unwrap();
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("timed out"),
+            "expected a timeout error, got: {err}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn with_deadline_passes_through_fast_results() {
+        let fast = async { Ok::<_, BackendError>(42) };
+        let result = with_deadline(fast).await;
+        assert_eq!(result.unwrap(), 42);
     }
 }
