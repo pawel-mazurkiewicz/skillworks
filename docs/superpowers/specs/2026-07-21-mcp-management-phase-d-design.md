@@ -1,12 +1,11 @@
 # MCP Server Management — Phase D: Frontend UI + Ingestion Hardening
 
-**Status:** Design approved (brainstorm), pending external review (Codex) + user spec gate
-**Date:** 2026-07-21
+**Status:** Design approved (brainstorm + Codex external review folded in), pending user spec gate
+**Date:** 2026-07-21 (rev 2 after Codex review)
 **Scope:** Phase D of the MCP-management feature (roadmap:
 `2026-07-20-mcp-management-roadmap.md`). The user-facing "MCP Servers" surface
-over the Phase A/B backend, plus the hardening pre-work recorded in the
-roadmap. No discovered-entry import (Phase C), no Node agent tools (Phase E),
-no MCP sets.
+over the Phase A/B backend, plus hardening pre-work. No discovered-entry
+import (Phase C), no Node agent tools (Phase E), no MCP sets.
 
 ---
 
@@ -14,193 +13,238 @@ no MCP sets.
 
 Phases A/B shipped a complete MCP backend (library, per-harness engine, URL
 ingestion) reachable only over IPC. Phase D makes it a first-class surface in
-the desktop app, mirroring how skills are managed, and hardens the URL-fetch
-path before it becomes a one-click action.
+the desktop app and hardens the URL-fetch path before it becomes a one-click
+action.
 
 ## 2. Goals / Non-goals
 
 **Goals:**
-- Fifth top-tab **"MCP Servers"** (hint: "Connect servers to agents").
-  All copy refers to *the user's* servers — never conflatable with Configure's
-  "register Skillworks' own MCP server" feature.
+- **Seventh top-tab "MCP Servers"** (hint: "Connect servers to agents"); the
+  **existing** self-registration tab (`data-top-tab="mcp"`, currently
+  "MCP server") is **renamed to "Connector"** (hint: "Let agents drive
+  Skillworks") and otherwise untouched. New frontend namespace:
+  `state.mcpServers` + `mcp-servers` DOM ids/classes (`state.mcp` stays with
+  the Connector surface).
 - Library list + editable detail pane + activation matrix + full variant
-  editor + add-from-URL flow + manual form + read-only discovered panel.
-- New backend command `mcp_update_server(spec)`.
-- Ingestion hardening: SSRF host guard, redirect cap, bounded fetch,
-  `parse.rs` split, variant-aware placeholder warnings, real-README fixtures.
+  editor (tri-state overrides) + add-from-URL flow + manual form + read-only
+  discovered panel.
+- Backend: `mcp_update_server`, variant-aware centralized validation,
+  reapply-after-edit workflow, serialized library mutations, project-aware
+  tolerant removal warnings.
+- Ingestion hardening: SSRF-safe manual-redirect fetch with pinned DNS,
+  timeouts, bounded body reads; `parse.rs` split; variant-aware placeholder
+  warnings; real-README fixtures.
 
 **Non-goals:** import/reconcile discovered entries (C); agent tools (E); MCP
-sets; dark theme (app-wide stance); editing `source`/evidence.
+sets; dark theme; persisting draft evidence past save (evidence is a pre-save
+review aid only — deliberate decision, not an oversight).
 
 ## 3. Information architecture & layout
 
-New top-tab beside Manage/Install/Sets/Configure:
-
 ```
-[Manage] [Install] [Sets] [Configure] [MCP Servers]
+[Manage] [Install] [Sets] [Configure] [Cleanup] [Connector] [MCP Servers]
 ┌─ sidebar ────────┬─ detail pane ──────────────────────────┐
-│ server rows:     │ ┌ fields form (editable) ┐             │
-│  name            │ │ name, description,     │             │
-│  transport chip  │ │ transport, command,    │             │
-│  active-count    │ │ args, env kv, url,     │             │
-│  badge           │ │ headers kv             │             │
-│                  │ └────────────────────────┘             │
-│ (+ Add server)   │ activation matrix (7 × global/project) │
-│                  │ variants (list + full editor)          │
-│                  │ evidence (url-sourced only)            │
-│                  │ danger: Remove from library            │
+│ server rows:     │ fields form (editable)                 │
+│  name, transport │ activation matrix (7 × global/project) │
+│  chip, active-   │  + staleness banner + Reapply button   │
+│  count badge     │ variants (list + tri-state editor)     │
+│ (+ Add server)   │ danger: Remove from library            │
 ├──────────────────┴────────────────────────────────────────┤
 │ Add server:  [ URL ............ ] [Parse] | Enter manually│
+│   → per-draft review cards (fields + evidence + warnings) │
 │ Found in configs (read-only, grouped by harness)          │
 └───────────────────────────────────────────────────────────┘
 ```
 
-Design language: existing tokens only (`var(--surface)`, `var(--ink)`,
-`var(--green)`, radii 4/8/14/18); BEM-ish class names (`mcp-*` prefix); the
-skill detail pane / bulk action panel are the rhythm models (per CLAUDE.md).
-Density with breathing room; plain-language labels.
+Design language: existing tokens only; BEM-ish `mcp-servers-*` classes; the
+skill detail pane / bulk action panel are the rhythm models. Plain-language
+labels; AA floor.
 
 ## 4. Components & behaviors
 
 ### 4.1 Library sidebar
-- Row: server name, transport chip (`stdio`/`http`/`sse`), badge with active
-  target count (derived from `mcp_status` rows where `active`).
-- Selection drives the detail pane. Empty state: short plain-English intro +
-  "Add your first server" pointing at the add panel.
+As rev 1: row = name, transport chip, active-count badge (from `mcp_status`);
+selection drives detail; plain-English empty state.
 
 ### 4.2 Detail pane — fields form
-- Editable: `name`, `description`, `transport` (select), `command`, `args`
-  (ordered token list), `env` (key/value rows, add/remove), `url`, `headers`
-  (key/value rows). `id` shown read-only (it keys harness config entries).
-- Transport select toggles stdio vs remote field groups (mirrors
-  `validate_spec` rules); Save calls `mcp_update_server`, disabled until dirty
-  + client-side-valid; server-side `Validation` errors surface as the field
-  form's error line + toast (existing toast pattern).
-- Placeholder-looking values (same patterns as the backend: `YOUR_*`, `<...>`,
-  `${...}`, `xxx`, `REPLACE`, `changeme`, `*_HERE`; plus `$`/`~` commands) get
-  an amber inline flag: "looks like a placeholder — fill in before activating".
+- Editable: `name`, `description`, `transport` (select), `command`, `args`,
+  `env` kv rows, `url`, `headers` kv rows. `id` read-only.
+- **Secret masking:** env/header values render masked with a reveal toggle.
+- Save → `mcp_update_server`; disabled until dirty + client-valid; backend
+  `Validation` → inline field error + toast.
+- Placeholder-looking values (backend patterns + `$`/`~` commands) flagged
+  amber inline.
+- **Staleness rule:** after a successful save, any currently-active target
+  still runs the previously-activated snapshot. The matrix header shows a
+  banner: "Saved changes aren't live yet on N active target(s)" with a
+  **Reapply** button (see 4.3). The UI never implies active configs
+  auto-sync.
 
 ### 4.3 Activation matrix
-- 7 harness rows × 2 columns (Global / Project). Each cell: checkbox bound to
-  `mcp_status`; toggling calls `mcp_activate`/`mcp_deactivate` then refreshes
-  status (no optimistic state).
-- Project column disabled with hint when no project is selected (reuses the
-  app's existing project-selection state).
-- Claude/Codex project cells render the backend's trust note as small print.
-- A status row carrying `error` (unreadable config) renders the cell as an
-  ⚠ marker with the error text in a tooltip + the row's config path; the
-  checkbox is disabled for that cell.
-- When a server has variants, an "Activate as…" select beside the matrix
-  chooses the variant label passed to `mcp_activate` (default: automatic —
-  omit the label, letting `resolve_effective` pick).
+- 7 harness rows × Global/Project checkbox cells from `mcp_status`; toggle →
+  `mcp_activate`/`mcp_deactivate` → refresh. After any failure the checkbox
+  is refreshed to the **backend-authoritative state**.
+- Project column disabled with hint when no project selected.
+- Claude/Codex project cells show the trust note as small print.
+- Status rows carrying `error`: ⚠ marker replaces the checkbox (disabled),
+  error text + config path exposed via a **focusable** disclosure control
+  wired with `aria-describedby` (no hover-only tooltip).
+- Variant picker ("Activate as…": automatic | explicit label) passed to
+  `mcp_activate`.
+- **Reapply:** re-runs `mcp_activate` (current variant selection) for every
+  target where the server is active; reports per-target results (mirrors
+  `applySet`'s partial-result pattern).
 
-### 4.4 Variants — full editor
-- List: label, applies_to summary ("codex · project", "any"), overridden-field
-  chips; actions: edit, delete.
-- Edit/new opens the same field form as 4.2 scoped to the variant (all fields
-  optional-override semantics: empty = inherit canonical) plus `label` (text,
-  required, unique per server) and `applies_to` (harness select incl. "any",
-  scope select incl. "any").
-- All variant mutations go through `mcp_update_server` with the full modified
-  spec (no per-variant backend endpoints).
+### 4.4 Variants — tri-state editor
+- List: label, applies_to summary, overridden-field chips; edit/delete/new.
+- **Per-field Override toggles:** each field row has an "Override" switch —
+  OFF = inherit canonical (`None`), ON = override with the entered value,
+  **including an explicitly empty value** (`Some(vec![])`/`Some({})` clears).
+  The form thus represents all three states the data model supports.
+- `label` required + unique per server; `applies_to` harness/scope selects
+  incl. "any".
+- All mutations go through `mcp_update_server` with the full spec.
 
 ### 4.5 Add server
-- URL path: input + Parse button → `mcp_add_from_url` → per-draft review
-  cards: prefilled 4.2-style form + evidence list + warnings (placeholders
-  highlighted on their fields) → "Add to library" per card →
-  `mcp_add_manual`. Duplicate-id `Validation` from the backend surfaces on the
-  card with an inline id-edit affordance.
-- Empty drafts: render the guidance warning + "Enter manually" shortcut.
-- Manual path: same form, blank, with id auto-slugged from name (editable
-  until saved).
+- URL path: input + Parse → `mcp_add_from_url` → per-draft review cards
+  (prefilled form + **evidence** + warnings; placeholders highlighted) →
+  "Add to library" → `mcp_add_manual`. Duplicate-id error surfaces inline
+  with an id-edit affordance. Evidence is displayed here ONLY — it is not
+  persisted with the saved spec.
+- Empty drafts → guidance warning + manual shortcut. Manual path: blank form,
+  id auto-slugged from name (editable until saved).
+- Fetch errors render in the add panel (silent shim call — no toast).
 
 ### 4.6 Found in configs (read-only)
-- `mcp_discover` results grouped by harness; row = entry key, scope,
-  config path (monospace, Berkeley Mono), one-line summary (command or url).
-- Footer note: "Importing these into your library arrives in a future
-  update." No actions in Phase D.
+As rev 1; entry summaries rendered via the escaping rule (§6), monospace
+paths.
 
 ### 4.7 Refresh model
-- Tab activation triggers `mcp_list_library` + `mcp_status` + `mcp_discover`
-  in parallel; any mutation refreshes the affected slices. No polling.
+- Tab activation → `mcp_list_library` + `mcp_status` + `mcp_discover` in
+  parallel; mutations refresh affected slices.
+- **Project-change and the global Refresh button notify the MCP controller**
+  (hook into the existing `loadState()` flow).
+- **Request generations:** every fetch cycle carries a generation counter;
+  stale responses (older generation) are dropped so they can never overwrite
+  newer state.
 
 ## 5. Backend changes
 
-### 5.1 `mcp_update_server`
-`mcp_update_server(spec: McpServerSpec) -> McpLibraryResponse` +
-testable `_impl`: `validate_spec`, require existing id (`NotFound`
-otherwise), replace in place, save, return library. Variant labels checked
-unique (new `Validation`). Registered in `lib.rs`.
+### 5.1 Library commands
+- **`mcp_update_server(spec) -> McpLibraryResponse`** (+ `_impl`):
+  centralized validation (below), require existing id (`NotFound`), replace,
+  save, return library.
+- **Centralized variant-aware validation** in `spec.rs::validate_spec`
+  (called by BOTH `mcp_add_manual` and `mcp_update_server`): existing rules
+  + variant labels non-empty and unique; `applies_to` harness must be a
+  known adapter id (or absent), scope ∈ {global, project} (or absent); every
+  variant's **effective invocation** (canonical ⊕ variant overlay) must
+  satisfy the transport/field rules — a variant may not produce an
+  unusable spec that only fails at activation.
+- **Serialized mutations:** all library load-modify-save sequences
+  (add/update/remove) go through a process-wide `tokio::sync::Mutex` so
+  overlapping IPC calls cannot lose updates. Frontend always adopts the
+  returned authoritative library.
+- **`mcp_remove_server`**: gains `project_path: Option<String>`; warning scan
+  covers global + (when given) project targets; per-target read failures
+  become warnings ("couldn't check X") instead of aborting; removal still
+  never deactivates.
 
-### 5.2 Ingestion hardening (roadmap pre-work)
-- **SSRF guard:** before fetching, resolve the URL host; reject loopback,
-  link-local, RFC1918/ULA ranges, and literal non-global IPs with a
-  `Validation` error. Applies to both fetch_url and retry_url. Redirect cap:
-  a dedicated reqwest client for this path with `redirect::Policy::limited(3)`
-  and the same host check re-applied on redirects via the policy's attempt
-  hook (or by disabling redirects and following manually up to 3).
-- **Bounded fetch:** honor `Content-Length` when present (reject > 1 MiB
-  early); always cap the read at 1 MiB + 1 via a streamed/`take`d body read in
-  a new `HttpClient::get_capped` (default impl on the trait delegating to
-  `get` for the mock; real client streams). Post-cap behavior unchanged
-  (`Validation` error).
-- **parse.rs split:** `backend/mcp/parse/` directory module: `mod.rs`
-  (public API re-exports: `source_for_url`, `extract_drafts`, types),
-  `url.rs`, `fences.rs` (scan + jsonc), `heuristics.rs` (H1/H2/H3 +
-  Candidate), `assembly.rs` (fold + drafts + placeholders). Pure move — no
-  behavior change; all existing tests keep passing (paths updated).
-- **Variant-aware placeholder warnings:** `placeholder_warnings` also walks
-  each variant's env/headers/args/url/command with the variant label in the
-  warning text.
-- **Fixtures:** two verbatim real-world README excerpts (a Context7-style
-  single-server page; a modelcontextprotocol/servers-style monorepo page) as
-  `const` fixtures with assertions on draft counts/ids; include CRLF line
-  endings in one and a unicode server name in one.
+### 5.2 Ingestion hardening (revised per external review)
+- **SSRF-safe fetch (manual redirects, pinned DNS):** no reliance on
+  reqwest's redirect policy. A dedicated fetch routine: for each hop
+  (initial + up to 3 redirects): require `https`; resolve the host
+  explicitly (`tokio::net::lookup_host`); reject unless ALL resolved
+  addresses are global (reject loopback, unspecified, link-local, RFC1918,
+  ULA, multicast, reserved, IPv4-mapped-IPv6 of the same); issue the request
+  on a per-fetch client built with redirects **disabled**,
+  `resolve_to_addrs(host, validated_addrs)` (pins the connection to the
+  addresses that passed the check — closes the lookup TOCTOU gap),
+  `no_proxy()`, and explicit **timeouts** (connect 10 s, total 30 s);
+  on 3xx, extract `Location`, count the hop, repeat. Redirect overflow →
+  `Validation`.
+- **Bounded body read:** reject early when `Content-Length` > 1 MiB; always
+  enforce the cap while reading via a `Response::chunk()` loop (the reqwest
+  `stream` feature is NOT enabled and is not added). New trait method
+  `HttpClient::get_capped(url, headers, max_bytes)` with a default impl
+  delegating to `get` + post-check (keeps the existing mock unchanged);
+  `ReqwestHttpClient` overrides it with the real streamed cap. The SSRF/
+  redirect logic lives above the trait (in the fetch routine), so mocks keep
+  working for command tests; the SSRF unit tests target the validation
+  functions directly (pure: host-classification table) plus one integration
+  test with redirects disabled asserting the hop loop's behavior against the
+  mock.
+- **parse.rs split:** `backend/mcp/parse/` = `mod.rs` (public re-exports
+  only), `url.rs` (pure, network-free), `fences.rs`, `heuristics.rs`
+  (`Candidate` + all extraction incl. `candidate_from_json`, `pub(super)`),
+  `assembly.rs`. Pure move; the 38 tests colocate with their modules.
+- **Variant-aware placeholder warnings:** walk variants' env/headers/args/
+  url/command with the variant label in the warning text.
+- **Fixtures:** two verbatim real-world README excerpts (single-server;
+  monorepo) — one with CRLF endings, one with a unicode server name.
 
 ## 6. Frontend architecture
 
-- New `public/mcp.js` (BEM-ish DOM module in the app.js style — the app is
-  DOM-driven with React only for the editor modal (`skill-editor.jsx`);
-  follow app.js's patterns: state slice, render functions, event delegation.
-  React is NOT introduced for this surface). Registered from `app.js` with a small
-  hook (tab switch + state wiring), keeping the app.js diff minimal.
-- `public/index.html`: fifth top-tab button + the tab's section markup.
-- `public/styles.css`: `mcp-*` component styles from existing tokens only.
-- `public/api-shim.js`: entries mapping the 9 MCP commands
-  (`mcp_list_library`, `mcp_add_manual`, `mcp_update_server`,
-  `mcp_remove_server`, `mcp_activate`, `mcp_deactivate`, `mcp_status`,
-  `mcp_discover`, `mcp_add_from_url`) to `invoke`.
-- Accessibility floor (CLAUDE.md): AA contrast from tokens; every control
-  keyboard-reachable with visible focus; matrix checkboxes labeled
-  "<server> on <harness> (<scope>)"; `prefers-reduced-motion` respected; no
-  icon-only actions.
+- New `public/mcp-servers.js` DOM module in the app.js style (state slice,
+  render fns, event delegation; React not introduced — it exists only for
+  the editor modal). Registered from `app.js` with a small hook (tab switch,
+  project-change, refresh wiring).
+- `public/index.html`: seventh top-tab + section markup; existing mcp tab
+  relabeled "Connector" (hint "Let agents drive Skillworks") — markup ids
+  and `state.mcp` slice untouched.
+- `public/styles.css`: `mcp-servers-*` styles from existing tokens.
+- **`public/api-shim.js` contract (explicit):** thrown errors carry
+  `{ kind, message }` (a custom `ApiError extends Error` preserving the
+  Rust envelope's `kind`); routes accept an options flag `silent: true`
+  suppressing the automatic toast (used by the add panel; default behavior
+  unchanged for existing routes). New routes, one per command, with
+  camelCase arg builders and response adapters documented in the plan:
+  `mcp_list_library`, `mcp_add_manual`, `mcp_update_server`,
+  `mcp_remove_server` (+projectPath), `mcp_activate`, `mcp_deactivate`,
+  `mcp_status` (+projectPath), `mcp_discover` (+projectPath),
+  `mcp_add_from_url`.
+- **Safe rendering rule:** all backend/URL-derived strings (names, evidence,
+  warnings, paths, entry summaries) render via `textContent` or the shared
+  escape helper (extracted so `mcp-servers.js` can import it — no
+  module-local duplication). Env/header values masked by default (4.2).
+- Accessibility floor as rev 1; the 4.3 disclosure pattern replaces
+  tooltips.
 
 ## 7. Error handling (UI)
 
-- Backend `Validation`/`NotFound` → toast (existing pattern) + inline field
-  error where a field is identifiable.
-- Activation failure leaves the checkbox in its refreshed (true) state — no
-  stuck optimistic UI.
-- `mcp_add_from_url` fetch errors render in the add panel (not a toast) with
-  the fallback guidance text from the backend.
-- Per-target status `error` handled per 4.3 (⚠ cell, disabled checkbox).
+- Backend errors carry `kind`: `Validation` → inline + toast (unless the
+  call was `silent`); `NotFound` → toast + list refresh.
+- After any activation/deactivation failure the matrix refreshes to
+  backend-authoritative state.
+- `mcp_add_from_url` errors: add panel only (silent call).
+- Per-target status `error`: §4.3 disclosure.
 
 ## 8. Testing & verification
 
-- Backend: cargo tests for `mcp_update_server` (round-trip, unknown id,
-  duplicate variant labels), SSRF guard (table of rejected hosts), bounded
-  fetch (Content-Length reject + capped stream), parse split (existing 38
-  module tests keep passing), variant-aware warnings, fixture tests.
-- Frontend: `npm test` (Node side untouched — stays 46), `npm run build`.
-- UI verification via local Playwright (per repo convention): tab renders,
-  add-URL flow against a mocked command layer where feasible, activation
-  matrix toggles, keyboard walk of the detail pane; screenshots for the
-  final review. I cannot hand-verify a browser beyond this — stated
-  explicitly per house rules.
+- **Backend (cargo):** `mcp_update_server` (round-trip, unknown id, variant
+  validation matrix: dup labels, bad harness/scope, invalid effective
+  invocation — from both add and update); mutation serialization (concurrent
+  add+update); tolerant remove warnings (incl. project scope + unreadable
+  config); SSRF host-classification table (pure) + redirect-hop integration
+  test; capped-read tests (Content-Length reject, oversize stream);
+  parse-split regression (38 tests relocated, still green); variant-aware
+  placeholder warnings; fixtures.
+- **Frontend logic under `node --test`** (existing runner): pure modules for
+  route/arg builders, response adapters, `ApiError` mapping, escape helper,
+  placeholder detection, request-generation guard — extracted precisely so
+  they are testable without a DOM.
+- **Playwright smoke** (added as a devDependency — the CLAUDE.md note about
+  local availability is stale; correcting it is in scope): app boots, both
+  MCP tabs render, add-URL flow with mocked shim, matrix toggle, keyboard
+  walk of detail pane, screenshots for review.
+- `npm test` (46 existing + new logic tests) + `npm run build`.
+- Limits stated plainly: full desktop-webview interaction beyond the
+  Playwright smoke cannot be hand-verified by the implementer.
 
 ## 9. Open questions carried forward
 
-- Cursor's ~40-active-tools ceiling: warn in the matrix when many servers are
-  active for Cursor? (Deferred; needs tool-count data we don't collect.)
-- Draft evidence byte offsets for source highlighting (deferred from B).
-- Discovered-panel import affordance design belongs to Phase C.
+- Cursor ~40-tool ceiling warning (needs tool-count data; deferred).
+- Draft evidence byte offsets (deferred; evidence itself is pre-save only by
+  decision).
+- Discovered-panel import affordance (Phase C).
+- Connector-tab deeper redesign (only relabeled here).
