@@ -19,7 +19,7 @@ use super::state::{BackendError, BackendResult};
 use super::types::{MarketplacePagination, MarketplaceSkill, MarketplaceSkillsResponse};
 
 const BASE_URL: &str = "https://skills.sh";
-const USER_AGENT: &str = "Skillworks/0.1.0";
+pub(crate) const USER_AGENT: &str = "Skillworks/0.1.0";
 
 /// HTTP response surface that the marketplace logic needs from its
 /// underlying client. Mirrors the subset of `fetch`'s behaviour the JS
@@ -43,6 +43,28 @@ impl HttpResponse {
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn get(&self, url: &str, headers: &[(&str, &str)]) -> BackendResult<HttpResponse>;
+
+    /// `get` with a post-fetch size cap. Default impl delegates to `get`
+    /// then rejects oversize bodies — keeps existing mocks/tests working
+    /// unchanged. Real streamed capping (rejecting before the whole body is
+    /// buffered) lives in `mcp::net::fetch_markdown_guarded`, which is used
+    /// by the URL-ingestion command instead of this trait for the
+    /// production fetch path.
+    async fn get_capped(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        max_bytes: usize,
+    ) -> BackendResult<HttpResponse> {
+        let resp = self.get(url, headers).await?;
+        if resp.body.len() > max_bytes {
+            return Err(BackendError::Validation(format!(
+                "Fetched document is too large ({} bytes; limit {max_bytes})",
+                resp.body.len()
+            )));
+        }
+        Ok(resp)
+    }
 }
 
 /// Production HTTP client backed by `reqwest` with rustls-tls (so we never

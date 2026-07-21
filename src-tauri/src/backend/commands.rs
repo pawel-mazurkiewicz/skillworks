@@ -2702,17 +2702,22 @@ pub async fn mcp_discover_impl(
     Ok(out)
 }
 
-use super::marketplace::{HttpClient, ReqwestHttpClient};
-use super::mcp::parse::{extract_drafts, source_for_url};
+use super::marketplace::HttpClient;
+use super::mcp::net;
+use super::mcp::parse::{extract_drafts, source_for_url, FetchPlan};
 
 const URL_FETCH_MAX_BYTES: usize = 1024 * 1024;
 
 /// Fetch and parse MCP server configuration from a URL (typically a GitHub
-/// README or other markdown document).
+/// README or other markdown document). Uses the SSRF-safe, redirect- and
+/// size-bounded fetch routine directly — no `ReqwestHttpClient` is
+/// constructed for this path.
 #[tauri::command]
 pub async fn mcp_add_from_url(url: String) -> BackendResult<McpUrlParseResponse> {
-    let client = ReqwestHttpClient::new()?;
-    mcp_add_from_url_impl(url, &client).await
+    let plan = source_for_url(&url)?;
+    let (fetched_url, body) =
+        net::fetch_markdown_guarded(&plan.fetch_url, plan.retry_url.as_deref()).await?;
+    build_url_parse_response(url, &plan, fetched_url, body)
 }
 
 pub async fn mcp_add_from_url_impl(
@@ -2720,14 +2725,15 @@ pub async fn mcp_add_from_url_impl(
     client: &dyn HttpClient,
 ) -> BackendResult<McpUrlParseResponse> {
     let plan = source_for_url(&url)?;
-    let mut warnings = plan.warnings.clone();
     let accept = [("Accept", "text/plain, text/markdown")];
 
     let mut fetched_url = plan.fetch_url.clone();
-    let mut resp = client.get(&plan.fetch_url, &accept).await?;
+    let mut resp = client
+        .get_capped(&plan.fetch_url, &accept, URL_FETCH_MAX_BYTES)
+        .await?;
     if !resp.is_ok() {
         if let Some(alt) = &plan.retry_url {
-            let retry = client.get(alt, &accept).await?;
+            let retry = client.get_capped(alt, &accept, URL_FETCH_MAX_BYTES).await?;
             if retry.is_ok() {
                 fetched_url = alt.clone();
                 resp = retry;
@@ -2744,14 +2750,21 @@ pub async fn mcp_add_from_url_impl(
             )));
         }
     }
-    if resp.body.len() > URL_FETCH_MAX_BYTES {
-        return Err(BackendError::Validation(format!(
-            "Fetched document is too large ({} bytes; limit {URL_FETCH_MAX_BYTES})",
-            resp.body.len()
-        )));
-    }
 
-    let extraction = extract_drafts(&resp.body, &plan.fallback_name, &url);
+    build_url_parse_response(url, &plan, fetched_url, resp.body)
+}
+
+/// Shared post-fetch logic for both the mock-backed (`mcp_add_from_url_impl`)
+/// and SSRF-guarded (`mcp_add_from_url`) fetch paths: run extraction, adopt
+/// the plan's pre-fetch warnings, and assemble the response.
+fn build_url_parse_response(
+    source_url: String,
+    plan: &FetchPlan,
+    fetched_url: String,
+    body: String,
+) -> BackendResult<McpUrlParseResponse> {
+    let mut warnings = plan.warnings.clone();
+    let extraction = extract_drafts(&body, &plan.fallback_name, &source_url);
     warnings.extend(extraction.warnings);
     if extraction.drafts.is_empty() {
         warnings.push(
@@ -2761,7 +2774,7 @@ pub async fn mcp_add_from_url_impl(
         );
     }
     Ok(McpUrlParseResponse {
-        source_url: url,
+        source_url,
         fetched_url,
         drafts: extraction.drafts,
         warnings,
