@@ -6,9 +6,12 @@
 // Task 7 shipped the sidebar list + refresh model. Task 8 added the detail
 // pane: an editable fields form with dirty tracking + client validation +
 // masked secrets, the 7-harness activation matrix, and the save-then-stale/
-// Reapply flow. Task 9 (this file, as of now) adds the tri-state variant
-// editor, the add-from-URL/manual review-card flow, the read-only discovered
-// panel, and the "Remove from library" danger action.
+// Reapply flow. Task 9 added the tri-state variant editor, the add-from-URL/
+// manual review-card flow, the (then read-only) discovered panel, and the
+// "Remove from library" danger action. Task 6 of the MCP Discovery
+// Reconciliation phase (this file, as of now) turns that panel into a
+// two-section Reconcile surface (unmanaged imports + drift needing
+// attention) with Import/Reapply/Adopt wired to real mutations.
 
 import { api } from "./api-shim.js";
 import {
@@ -27,7 +30,9 @@ import {
   isDuplicateVariantLabel,
   overriddenFieldsOf,
   appliesToSummary,
-  groupDiscoveredByHarness,
+  splitReconcile,
+  foundInSummary,
+  formatDiffValue,
 } from "./mcp-logic.js";
 
 const VARIANT_FIELD_LABELS = {
@@ -43,7 +48,12 @@ const state = {
   generation: 0,
   servers: [],
   statuses: [],
-  discovered: [],
+  imports: [],
+  conflicts: [],
+  reconcileWarnings: [],
+  // Keys like "reapply:0" / "adopt:0" — an in-flight reconcile mutation for
+  // that conflict index, so its buttons disable and can't double-fire.
+  reconcilePending: new Set(),
   selectedId: null,
   loading: false,
   // Editing state for the currently selected server's detail pane. Reset
@@ -143,15 +153,18 @@ async function refreshAll() {
   state.loading = true;
   render();
   try {
-    const [library, statuses, discovered] = await Promise.all([
+    const [library, statuses, reconcile] = await Promise.all([
       api("/api/mcp/servers"),
       api(withProject("/api/mcp/servers/status")),
-      api(withProject("/api/mcp/servers/discover")),
+      api(withProject("/api/mcp/servers/reconcile")),
     ]);
     if (isStale(gen, state.generation)) return;
     state.servers = Array.isArray(library && library.servers) ? library.servers : [];
     state.statuses = Array.isArray(statuses) ? statuses : [];
-    state.discovered = Array.isArray(discovered) ? discovered : [];
+    const split = splitReconcile(reconcile);
+    state.imports = split.imports;
+    state.conflicts = split.conflicts;
+    state.reconcileWarnings = split.warnings;
     if (state.selectedId && !state.servers.some((s) => s.id === state.selectedId)) {
       state.selectedId = null;
     }
@@ -195,7 +208,7 @@ function render() {
   renderList();
   renderDetail();
   renderAdd();
-  renderDiscovered();
+  renderReconcile();
 }
 
 function renderList() {
@@ -1303,52 +1316,192 @@ async function handleAddCard(card) {
   }
 }
 
-// ---------- Discovered panel (§4.6, read-only) ----------
+// ---------- Reconcile panel (§4.6/§6): unmanaged imports + drift ----------
 
-function summarizeEntry(entry) {
-  const value = entry && entry.entry;
-  if (value == null) return "";
-  if (typeof value === "string") return value;
+// Resolves a library server's display name by id, falling back to the id
+// itself when the server isn't (or is no longer) in the library — e.g. a
+// drift entry's serverId, or an import candidate's matchesLibraryId.
+function libraryServerName(id) {
+  const server = state.servers.find((s) => s.id === id);
+  return server ? server.name || server.id : id;
+}
+
+function renderImportCandidate(candidate, index) {
+  const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
+  const matchHint = candidate.matchesLibraryId
+    ? `<p class="mcp-servers-hint">Looks like <strong>${escapeHtml(libraryServerName(candidate.matchesLibraryId))}</strong>, already in your library.</p>`
+    : "";
+  return `
+    <li class="mcp-servers-reconcile-row" data-mcp-import-row="${index}">
+      <div class="mcp-servers-reconcile-row-main">
+        <span class="mcp-servers-reconcile-key">${escapeHtml(candidate.key)}</span>
+        <p class="mcp-servers-hint">Found in: ${escapeHtml(foundInSummary(candidate.foundIn))}</p>
+        ${matchHint}
+        ${warnings.length ? `<ul class="mcp-servers-add-warnings">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+      </div>
+      <div class="button-row">
+        <button type="button" class="button primary" data-mcp-import="${index}">Import</button>
+      </div>
+    </li>`;
+}
+
+function renderImportsSection() {
+  const imports = state.imports;
+  return `
+    <section class="mcp-servers-reconcile-section">
+      <div class="section-head">
+        <h4>Unmanaged servers</h4>
+      </div>
+      ${
+        imports.length
+          ? `<ul class="mcp-servers-reconcile-list">${imports.map((c, i) => renderImportCandidate(c, i)).join("")}</ul>`
+          : `<p class="empty-copy">Nothing found in your harness configs that isn't already tracked in your library.</p>`
+      }
+    </section>`;
+}
+
+function renderConflictEntry(conflict, index) {
+  const name = libraryServerName(conflict.serverId);
+  const targetSummary = foundInSummary([{ harness: conflict.harness, scope: conflict.scope }]);
+  const diff = Array.isArray(conflict.diff) ? conflict.diff : [];
+  const diffRows = diff
+    .map(
+      (d) => `
+      <tr>
+        <th scope="row">${escapeHtml(d.field)}</th>
+        <td>${escapeHtml(formatDiffValue(d.expected))}</td>
+        <td>${escapeHtml(formatDiffValue(d.observed))}</td>
+      </tr>`
+    )
+    .join("");
+  const reapplyPending = state.reconcilePending.has(`reapply:${index}`);
+  const adoptPending = state.reconcilePending.has(`adopt:${index}`);
+
+  return `
+    <li class="mcp-servers-reconcile-row" data-mcp-conflict-row="${index}">
+      <div class="mcp-servers-reconcile-row-main">
+        <span class="mcp-servers-reconcile-key">${escapeHtml(name)}</span>
+        <span class="mcp-servers-chip">${escapeHtml(targetSummary)}</span>
+      </div>
+      <div class="mcp-servers-matrix-wrap">
+        <table class="mcp-servers-matrix">
+          <thead>
+            <tr><th>Field</th><th>Expected</th><th>On disk</th></tr>
+          </thead>
+          <tbody>${diffRows}</tbody>
+        </table>
+      </div>
+      ${conflict.trustNote ? `<p class="mcp-servers-trust-note">${escapeHtml(conflict.trustNote)}</p>` : ""}
+      <div class="button-row">
+        <button type="button" class="button" data-mcp-reapply="${index}" ${reapplyPending ? "disabled" : ""}>${reapplyPending ? "Reapplying…" : "Reapply library"}</button>
+        <button type="button" class="button ghost" data-mcp-adopt="${index}" ${adoptPending ? "disabled" : ""}>${adoptPending ? "Adopting…" : "Adopt into library"}</button>
+      </div>
+    </li>`;
+}
+
+function renderConflictsSection() {
+  const conflicts = state.conflicts;
+  return `
+    <section class="mcp-servers-reconcile-section">
+      <div class="section-head">
+        <h4>Needs attention</h4>
+      </div>
+      ${
+        conflicts.length
+          ? `<ul class="mcp-servers-reconcile-list">${conflicts.map((c, i) => renderConflictEntry(c, i)).join("")}</ul>`
+          : `<p class="empty-copy">No drift between your library and your harness configs.</p>`
+      }
+    </section>`;
+}
+
+function renderReconcile() {
+  if (!els.discovered) return;
+  const { imports, conflicts, reconcileWarnings } = state;
+  if (!imports.length && !conflicts.length) {
+    els.discovered.innerHTML = `<p class="empty-copy">Everything in your harness configs matches your library.</p>`;
+    return;
+  }
+  const warningsFooter = reconcileWarnings.length
+    ? `<p class="mcp-servers-hint mcp-servers-reconcile-footer">${reconcileWarnings.map((w) => escapeHtml(w)).join(" ")}</p>`
+    : "";
+  els.discovered.innerHTML = `
+    ${renderImportsSection()}
+    ${renderConflictsSection()}
+    ${warningsFooter}
+  `;
+}
+
+// Reuses the exact same review-card entry point the add-from-URL flow uses
+// (newAddCard + push into state.add.cards + renderAdd) so an imported
+// candidate gets the identical confirm-before-adding UI, rather than a
+// second bespoke card implementation.
+function handleImportCandidate(index) {
+  const candidate = state.imports[index];
+  if (!candidate) return;
+  state.add.cards.push(newAddCard(candidate.suggestedSpec, []));
+  renderAdd();
+}
+
+async function handleReconcileReapply(index) {
+  const conflict = state.conflicts[index];
+  if (!conflict) return;
+  const name = libraryServerName(conflict.serverId);
+  if (
+    !window.confirm(
+      `Reapply your library's version of "${name}" to ${conflict.harness}/${conflict.scope}? This overwrites the on-disk configuration for that target.`
+    )
+  ) {
+    return;
+  }
+  const key = `reapply:${index}`;
+  state.reconcilePending.add(key);
+  renderReconcile();
   try {
-    const json = JSON.stringify(value);
-    return json.length > 140 ? `${json.slice(0, 140)}…` : json;
-  } catch (_) {
-    return String(value);
+    await api(`/api/mcp/servers/${encodeURIComponent(conflict.serverId)}/activate`, {
+      method: "POST",
+      body: {
+        harness: conflict.harness,
+        scope: conflict.scope,
+        projectPath: conflict.scope === "project" ? projectPath() : undefined,
+      },
+    });
+    fireToastLocal(`Reapplied ${name}.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile reapply failed", err);
+  } finally {
+    state.reconcilePending.delete(key);
+    await refreshAll();
   }
 }
 
-function renderDiscovered() {
-  if (!els.discovered) return;
-  const groups = groupDiscoveredByHarness(state.discovered);
-  if (!groups.length) {
-    els.discovered.innerHTML = `<p class="empty-copy">Nothing found in your harness configs that isn't already tracked in your library.</p>`;
+async function handleReconcileAdopt(index) {
+  const conflict = state.conflicts[index];
+  if (!conflict) return;
+  const name = libraryServerName(conflict.serverId);
+  if (
+    !window.confirm(
+      `Adopt the on-disk version of "${name}" into your library? This replaces the library's stored configuration for this server.`
+    )
+  ) {
     return;
   }
-  const harnessLabel = (id) => (MCP_HARNESSES.find((h) => h.id === id) || {}).label || id;
-  const groupsHtml = groups
-    .map((group) => {
-      const rows = group.items
-        .map(
-          (entry) => `
-        <li class="mcp-servers-discovered-row">
-          <span class="mcp-servers-discovered-key">${escapeHtml(entry.key)}</span>
-          <span class="mcp-servers-chip">${escapeHtml(entry.scope)}</span>
-          <span class="mcp-servers-mono">${escapeHtml(entry.configPath)}</span>
-          <span class="mcp-servers-mono mcp-servers-discovered-entry">${escapeHtml(summarizeEntry(entry))}</span>
-        </li>`
-        )
-        .join("");
-      return `
-        <section class="mcp-servers-discovered-group">
-          <h5>${escapeHtml(harnessLabel(group.harness))}</h5>
-          <ul class="mcp-servers-discovered-list">${rows}</ul>
-        </section>`;
-    })
-    .join("");
-  els.discovered.innerHTML = `
-    ${groupsHtml}
-    <p class="mcp-servers-hint mcp-servers-discovered-footer">Importing these into your library arrives in a future update.</p>
-  `;
+  const key = `adopt:${index}`;
+  state.reconcilePending.add(key);
+  renderReconcile();
+  try {
+    const response = await api("/api/mcp/servers", {
+      method: "PATCH",
+      body: { spec: conflict.observedSpec },
+    });
+    const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+    state.servers = servers;
+    fireToastLocal(`Adopted ${name} into your library.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile adopt failed", err);
+  } finally {
+    state.reconcilePending.delete(key);
+    await refreshAll();
+  }
 }
 
 // ---------- DOM event wiring (bound once, from initDom()) ----------
@@ -1403,6 +1556,25 @@ if (els.add) {
     if (dismissBtn) {
       state.add.cards = state.add.cards.filter((c) => c.key !== dismissBtn.dataset.mcpCardDismiss);
       renderAdd();
+    }
+  });
+}
+
+if (els.discovered) {
+  els.discovered.addEventListener("click", (event) => {
+    const importBtn = event.target.closest("[data-mcp-import]");
+    if (importBtn) {
+      handleImportCandidate(Number(importBtn.dataset.mcpImport));
+      return;
+    }
+    const reapplyBtn = event.target.closest("[data-mcp-reapply]");
+    if (reapplyBtn) {
+      handleReconcileReapply(Number(reapplyBtn.dataset.mcpReapply));
+      return;
+    }
+    const adoptBtn = event.target.closest("[data-mcp-adopt]");
+    if (adoptBtn) {
+      handleReconcileAdopt(Number(adoptBtn.dataset.mcpAdopt));
     }
   });
 }

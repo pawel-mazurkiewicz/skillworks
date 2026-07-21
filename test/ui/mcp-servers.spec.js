@@ -38,12 +38,66 @@ const SERVERS = [
   },
 ];
 
+// mcp_reconcile fixture (Task 6, spec §6): one unmanaged import candidate
+// found in a harness config, and one drift entry where the harness's
+// on-disk invocation no longer matches the library's stored spec.
+const RECONCILE_FIXTURE = {
+  imports: [
+    {
+      key: "ctx",
+      suggestedSpec: {
+        id: "ctx",
+        name: "ctx",
+        source: { kind: "discovered" },
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "pkg"],
+        env: {},
+        headers: {},
+        variants: [],
+      },
+      foundIn: [{ harness: "cursor", scope: "global", configPath: "/tmp/cursor.json" }],
+      warnings: [],
+    },
+  ],
+  conflicts: [
+    {
+      serverId: "context7",
+      harness: "cursor",
+      scope: "global",
+      configPath: "/tmp/cursor.json",
+      diff: [{ field: "args", expected: "-y a", observed: "-y a --v" }],
+      observedSpec: {
+        id: "context7",
+        name: "Context7",
+        source: { kind: "manual" },
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "a", "--v"],
+        env: {},
+        headers: {},
+        variants: [],
+      },
+    },
+  ],
+  warnings: [],
+};
+
+// Default (empty) mcp_reconcile response — no unmanaged imports, no drift.
+// Tests that want to exercise the Reconcile panel pass a `reconcile`
+// override to installApiMocks (see the "reconcile panel" spec below); per
+// Playwright's routing model the most-recently-registered page.route
+// handler for an overlapping pattern runs first, so calling
+// installApiMocks(page, { reconcile }) again inside a test body fully
+// takes over every /api/** request for that test.
+const EMPTY_RECONCILE = { imports: [], conflicts: [], warnings: [] };
+
 // Installs a single catch-all handler for every /api/** request the app can
 // issue during boot + the MCP Servers smoke flow. Returns a log the tests
 // can assert against (e.g. which activate/deactivate calls fired) and a
 // mutable `statuses` array so a toggle's effect is visible on the next
 // GET /api/mcp/servers/status refresh (mirrors real backend behavior).
-async function installApiMocks(page) {
+async function installApiMocks(page, { reconcile = EMPTY_RECONCILE } = {}) {
   const activationLog = [];
   let statuses = [];
 
@@ -76,6 +130,9 @@ async function installApiMocks(page) {
     }
     if (method === "GET" && pathname === "/api/mcp/servers/discover") {
       return fulfillJson(route, []);
+    }
+    if (method === "GET" && pathname === "/api/mcp/servers/reconcile") {
+      return fulfillJson(route, reconcile);
     }
     if (method === "POST" && pathname === "/api/mcp/servers/from-url") {
       const body = request.postDataJSON();
@@ -310,6 +367,54 @@ try {
 
     expect(reachedForm).toBe(true);
     expect(reachedMatrix).toBe(true);
+  });
+
+  test("reconcile panel renders unmanaged imports + drift, and wires import/reapply/adopt", async ({
+    page,
+  }) => {
+    // Overrides the default (empty) reconcile fixture installed by
+    // beforeEach — the most-recently-registered page.route handler wins for
+    // every subsequent /api/** request in this test.
+    await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
+
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    // Section A: unmanaged servers (import candidates).
+    await expect(page.getByText("Unmanaged servers")).toBeVisible();
+    await expect(page.locator(".mcp-servers-reconcile-key", { hasText: "ctx" })).toBeVisible();
+
+    // Section B: needs attention (drift entries) — "context7" isn't in the
+    // mocked library, so the row falls back to the raw serverId.
+    await expect(page.getByText("Needs attention")).toBeVisible();
+    await expect(page.locator(".mcp-servers-reconcile-key", { hasText: "context7" })).toBeVisible();
+
+    await page.screenshot({ path: "test-results/mcp-reconcile-panel.png" });
+
+    // Import opens the existing review card, prefilled from suggestedSpec.
+    await page.locator("[data-mcp-import]").click();
+    const card = page.locator(".mcp-servers-draft-card");
+    await expect(card).toHaveCount(1);
+    await expect(card.locator('input[data-mcp-card-field="id"]')).toHaveValue("ctx");
+    await expect(card.locator('input[data-mcp-card-field="name"]')).toHaveValue("ctx");
+
+    // Reapply library: confirm, then expect an activate POST.
+    page.once("dialog", (dialog) => dialog.accept());
+    const reapplyRequest = page.waitForRequest(
+      (req) => req.method() === "POST" && /\/activate$/.test(new URL(req.url()).pathname)
+    );
+    await page.locator("[data-mcp-reapply]").click();
+    const activateReq = await reapplyRequest;
+    expect(new URL(activateReq.url()).pathname).toBe("/api/mcp/servers/context7/activate");
+
+    // Adopt into library: confirm, then expect a PATCH to /api/mcp/servers.
+    page.once("dialog", (dialog) => dialog.accept());
+    const adoptRequest = page.waitForRequest(
+      (req) => req.method() === "PATCH" && new URL(req.url()).pathname === "/api/mcp/servers"
+    );
+    await page.locator("[data-mcp-adopt]").click();
+    const patchReq = await adoptRequest;
+    expect(patchReq.postDataJSON().spec).toMatchObject({ id: "context7", command: "npx" });
   });
 });
 } catch (err) {
