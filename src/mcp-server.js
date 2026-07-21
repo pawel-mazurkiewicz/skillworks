@@ -26,76 +26,89 @@ const HARNESS_PROJECT_TARGETS = {
   cursor: "cursor-project",
 };
 
-// MCP stdio transport: JSON-RPC messages are newline-delimited (one JSON
-// object per line), NOT LSP-style Content-Length framing.
-let buffer = "";
-let processing = Promise.resolve();
+// --- SDK bootstrap -----------------------------------------------------
+// The MCP SDK ships as ESM; src/ stays CommonJS, so the SDK is loaded via
+// dynamic import() inside this async bootstrap (no repo-wide ESM switch).
 
-process.stdin.setEncoding("utf8");
+async function main() {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { z } = await import("zod");
 
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  processing = processing.then(drainMessages).catch((error) => {
-    process.stderr.write(`MCP server error: ${error.stack || error.message || error}\n`);
-  });
-});
-
-process.stdin.on("end", () => {
-  process.exit(0);
-});
-
-async function drainMessages() {
-  let newlineIndex;
-  while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-    const line = buffer.slice(0, newlineIndex).trim();
-    buffer = buffer.slice(newlineIndex + 1);
-    if (!line) continue;
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch (error) {
-      process.stderr.write(`MCP server: skipping invalid JSON line: ${error.message}\n`);
-      continue;
-    }
-    await handleMessage(message);
-  }
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: readVersion() });
+  registerSkillTools(server, z); // Task 1 registers search_skills; Task 2 ports the rest.
+  // registerMcpTools(server, z); // added in Part 2 (Task 6)
+  await server.connect(new StdioServerTransport());
 }
 
-async function handleMessage(message) {
-  if (!message || typeof message !== "object") return;
-  if (!Object.prototype.hasOwnProperty.call(message, "id")) return;
+main().catch((err) => {
+  process.stderr.write(`MCP server fatal: ${err.stack || err}\n`);
+  process.exit(1);
+});
 
+function readVersion() {
   try {
-    if (message.method === "initialize") {
-      sendResponse(message.id, {
-        protocolVersion: message.params?.protocolVersion || "2025-06-18",
-        capabilities: {
-          tools: {},
-        },
-        serverInfo: {
-          name: MCP_SERVER_NAME,
-          version: "0.2.0",
-        },
-      });
-      return;
-    }
-
-    if (message.method === "tools/list") {
-      sendResponse(message.id, { tools: tools() });
-      return;
-    }
-
-    if (message.method === "tools/call") {
-      const result = await callTool(message.params || {});
-      sendResponse(message.id, result);
-      return;
-    }
-
-    sendError(message.id, -32601, `Unknown method: ${message.method}`);
+    const pkg = require(path.join(__dirname, "..", "package.json"));
+    return typeof pkg.version === "string" && pkg.version ? pkg.version : "0.0.0";
   } catch (error) {
-    sendError(message.id, -32000, error.message || "Tool execution failed");
+    return "0.0.0";
   }
 }
+
+function toContent(payload) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+  };
+}
+
+// Registers the SDK-based skill tools. For this task only `search_skills` is
+// wired up; the remaining 8 tools' logic is preserved below (in the legacy
+// `tools()`/`callTool()` pair) for Task 2 to port over.
+function registerSkillTools(server, z) {
+  server.registerTool(
+    "search_skills",
+    {
+      description:
+        "Search the Skillworks vault for skills by name, description, or tags. Returns matching skills with id, name, description, and tags.",
+      inputSchema: {
+        query: z
+          .string()
+          .optional()
+          .describe("Search text matched against skill name, description, and tags. Empty returns all skills."),
+        limit: z.number().optional().describe("Maximum number of results to return. Defaults to 50."),
+      },
+    },
+    async ({ query, limit }) => {
+      // Ported verbatim from the old `if (name === "search_skills")` branch
+      // in callTool() below.
+      const normalizedQuery = typeof query === "string" ? query : "";
+      const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+      const state = await manager.getState(activeProject);
+      const matches = searchSkills(state.skills, normalizedQuery).slice(0, normalizedLimit);
+      return toContent({
+        query: normalizedQuery,
+        total: matches.length,
+        skills: matches.map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          type: skill.type,
+          tags: skill.tags,
+        })),
+      });
+    },
+  );
+}
+
+// --- Legacy hand-rolled tool definitions (stashed for Task 2) ----------
+// No longer wired to a transport; kept only so Task 2 can port the
+// remaining 8 tools' handler bodies into registerSkillTools() without
+// re-deriving their logic. Safe to delete once Task 2 lands.
 
 function tools() {
   return [
@@ -522,22 +535,6 @@ function toolResult(payload) {
       },
     ],
   };
-}
-
-function sendResponse(id, result) {
-  sendMessage({ jsonrpc: "2.0", id, result });
-}
-
-function sendError(id, code, message) {
-  sendMessage({
-    jsonrpc: "2.0",
-    id,
-    error: { code, message },
-  });
-}
-
-function sendMessage(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function normalizeProjectArg(projectPath) {
