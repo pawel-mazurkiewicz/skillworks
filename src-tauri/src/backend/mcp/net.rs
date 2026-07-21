@@ -48,8 +48,15 @@ pub fn addr_is_global(ip: IpAddr) -> bool {
 }
 
 fn ipv4_is_global(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
     if ip.is_unspecified() {
         return false; // 0.0.0.0
+    }
+    // "This host on this network", RFC 791 §3.2 / RFC 1122 §3.2.1.3: the
+    // whole 0.0.0.0/8, not just the single 0.0.0.0 address covered by
+    // is_unspecified() above.
+    if octets[0] == 0 {
+        return false;
     }
     if ip.is_loopback() {
         return false; // 127.0.0.0/8
@@ -70,8 +77,22 @@ fn ipv4_is_global(ip: Ipv4Addr) -> bool {
         return false; // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
     }
     // CGNAT shared address space, RFC 6598: 100.64.0.0/10.
-    let octets = ip.octets();
     if octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000 {
+        return false;
+    }
+    // IETF Protocol Assignments, RFC 6890 §2.1: 192.0.0.0/24 (includes the
+    // DS-Lite 192.0.0.0/29 sub-block).
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+        return false;
+    }
+    // 6to4 Relay Anycast, RFC 3068 (still reserved in the IANA special-use
+    // registry despite 6to4 itself being deprecated by RFC 7526):
+    // 192.88.99.0/24.
+    if octets[0] == 192 && octets[1] == 88 && octets[2] == 99 {
+        return false;
+    }
+    // Benchmarking, RFC 2544: 198.18.0.0/15 (198.18.0.0 - 198.19.255.255).
+    if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
         return false;
     }
     // Reserved / Class E, RFC 1112: 240.0.0.0/4. Subsumes 255.255.255.255
@@ -116,6 +137,14 @@ fn ipv6_is_global(ip: Ipv6Addr) -> bool {
     }
     // NAT64 well-known prefix, RFC 6052: 64:ff9b::/96.
     if segs[0..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
+        return false;
+    }
+    // Discard-Only address block, RFC 6666: 100::/64.
+    if segs[0..4] == [0x0100, 0, 0, 0] {
+        return false;
+    }
+    // Benchmarking, RFC 5180 §8: 2001:2::/48.
+    if segs[0] == 0x2001 && segs[1] == 0x0002 && segs[2] == 0 {
         return false;
     }
     true
@@ -310,6 +339,9 @@ mod tests {
         let non_global: &[&str] = &[
             "127.0.0.1",
             "0.0.0.0",
+            // "This network", 0.0.0.0/8 — a non-loopback, non-unspecified
+            // member of the range.
+            "0.1.2.3",
             "10.1.2.3",
             "172.16.0.1",
             "192.168.1.1",
@@ -317,6 +349,13 @@ mod tests {
             "100.64.0.1",
             "255.255.255.255",
             "192.0.2.1",
+            // IETF Protocol Assignments, 192.0.0.0/24.
+            "192.0.0.8",
+            // 6to4 Relay Anycast, 192.88.99.0/24.
+            "192.88.99.1",
+            // Benchmarking, 198.18.0.0/15 (both octets of the /15).
+            "198.18.0.1",
+            "198.19.255.254",
             "::1",
             "fc00::1",
             "fe80::1",
@@ -330,6 +369,10 @@ mod tests {
             "2001:0:53aa::1",
             // NAT64 well-known prefix, 64:ff9b::/96.
             "64:ff9b::10.0.0.1",
+            // Discard-Only address block, 100::/64.
+            "100::1",
+            // Benchmarking, 2001:2::/48.
+            "2001:2::1",
             // Reserved / Class E, 240.0.0.0/4 (also subsumes broadcast,
             // asserted separately above via the dedicated broadcast check).
             "240.0.0.1",
