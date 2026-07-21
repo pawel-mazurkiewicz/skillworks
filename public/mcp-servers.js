@@ -75,6 +75,7 @@ function newAddCard(spec, evidence) {
     evidence: Array.isArray(evidence) ? evidence : [],
     saving: false,
     error: null,
+    errorKind: null,
     added: false,
   };
 }
@@ -619,7 +620,7 @@ function renderVariantList(server, detail) {
 
 function renderVariantForm(server, detail, editor) {
   const formState = editor.formState;
-  const fieldsHtml = VARIANT_FIELD_KEYS.map((key) => renderVariantFieldRow(key, formState.fields[key], server)).join("");
+  const fieldsHtml = VARIANT_FIELD_KEYS.map((key) => renderVariantFieldRow(key, formState.fields[key], server, editor.revealed)).join("");
   return `
     <form class="mcp-servers-variant-form field-stack" data-mcp-variant-form="1" novalidate>
       ${editor.error ? `<p class="mcp-servers-save-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}
@@ -661,7 +662,7 @@ function renderVariantForm(server, detail, editor) {
     </form>`;
 }
 
-function renderVariantFieldRow(key, fieldState, canonicalServer) {
+function renderVariantFieldRow(key, fieldState, canonicalServer, revealed) {
   const overrideId = `mcp-variant-override-${key}`;
   const header = `
     <div class="mcp-servers-variant-field-head">
@@ -706,7 +707,7 @@ function renderVariantFieldRow(key, fieldState, canonicalServer) {
   } else {
     // env, headers
     if (fieldState.override) {
-      body = renderVariantKvRows(key, fieldState.value);
+      body = renderVariantKvRows(key, fieldState.value, revealed);
     } else {
       const inherited = Object.entries(canonicalServer[key] || {});
       body = inherited.length
@@ -731,20 +732,28 @@ function renderVariantArgsRows(args) {
   return `<div class="mcp-servers-args-rows">${rows}</div><button type="button" class="button" data-mcpv-add-arg="1">Add argument</button>`;
 }
 
-function renderVariantKvRows(kv, rows) {
+function renderVariantKvRows(kv, rows, revealed) {
+  const revealedSet = revealed || new Set();
   const items = (rows || [])
-    .map(
-      (row, i) => `
+    .map((row, i) => {
+      const revealKey = `${kv}:${i}`;
+      const isRevealed = revealedSet.has(revealKey);
+      const rowLabel = row.key ? row.key : "this value";
+      return `
       <div class="mcp-servers-kv-row">
         <input type="text" class="mcp-servers-kv-key" value="${escapeHtml(row.key)}"
           data-mcpv-kv="${kv}" data-mcpv-index="${i}" data-mcpv-part="key"
           aria-label="Name" placeholder="Name" />
-        <input type="text" class="mcp-servers-kv-value" value="${escapeHtml(row.value)}"
-          data-mcpv-kv="${kv}" data-mcpv-index="${i}" data-mcpv-part="value"
-          aria-label="Value" placeholder="Value" autocomplete="off" />
+        <span class="mcp-servers-kv-value-wrap">
+          <input type="${isRevealed ? "text" : "password"}" class="mcp-servers-kv-value" value="${escapeHtml(row.value)}"
+            data-mcpv-kv="${kv}" data-mcpv-index="${i}" data-mcpv-part="value"
+            aria-label="Value" placeholder="Value" autocomplete="off" />
+          <button type="button" class="mcp-servers-reveal" data-mcpv-reveal-toggle="${escapeHtml(revealKey)}"
+            aria-label="${isRevealed ? "Hide" : "Show"} value for ${escapeHtml(rowLabel)}">${isRevealed ? "Hide" : "Show"}</button>
+        </span>
         <button type="button" class="button ghost" data-mcpv-kv-remove="${kv}:${i}" aria-label="Remove row ${i + 1}">Remove</button>
-      </div>`
-    )
+      </div>`;
+    })
     .join("");
   return `<div class="mcp-servers-kv-rows">${items}</div><button type="button" class="button" data-mcpv-kv-add="${kv}">Add row</button>`;
 }
@@ -757,6 +766,7 @@ function openVariantEditor(server, detail, index) {
     error: null,
     labelError: null,
     saving: false,
+    revealed: new Set(),
   };
 }
 
@@ -1106,7 +1116,14 @@ function renderDraftCard(card) {
   const spec = card.spec;
   const isStdio = spec.transport === "stdio";
   const isRemote = spec.transport === "http" || spec.transport === "sse";
-  const idFlag = card.error && /already exists/i.test(card.error);
+  // Duplicate-id detection: the backend reports this as a "validation"
+  // kind ApiError (see handleAddCard's catch, which stashes err.kind on
+  // card.errorKind). Falling back to message-sniffing only covers older
+  // errors that predate errorKind (e.g. a card left over from before this
+  // save attempt) and is intentionally narrow.
+  const idFlag = card.errorKind
+    ? card.errorKind === "validation"
+    : Boolean(card.error) && /already exists/i.test(card.error);
   return `
     <article class="mcp-servers-draft-card" data-mcp-card="${card.key}">
       ${card.added ? `<p class="mcp-servers-card-added">Added to your library.</p>` : ""}
@@ -1237,11 +1254,13 @@ async function handleAddCard(card) {
   const validation = validateSpecDraft(card.spec);
   if (!validation.valid) {
     card.error = Object.values(validation.errors)[0] || "Check the highlighted fields.";
+    card.errorKind = null;
     renderAdd();
     return;
   }
   card.saving = true;
   card.error = null;
+  card.errorKind = null;
   renderAdd();
   try {
     const response = await api("/api/mcp/servers", { method: "POST", body: { spec: card.spec } });
@@ -1256,6 +1275,7 @@ async function handleAddCard(card) {
     // the card (renderDraftCard's idFlag), per spec §4.5 — not a dead
     // toast. This route isn't silent, so api() also fired a toast; the
     // inline message is the card-adjacent detail the toast can't carry.
+    card.errorKind = err && err.kind;
     card.error = (err && err.message) || "Couldn't add this server.";
   } finally {
     card.saving = false;
@@ -1541,7 +1561,17 @@ if (els.detail) {
       const removeVkv = event.target.closest("[data-mcpv-kv-remove]");
       if (removeVkv) {
         const [kv, idxStr] = removeVkv.dataset.mcpvKvRemove.split(":");
-        detail.variantEditor.formState.fields[kv].value.splice(Number(idxStr), 1);
+        const idx = Number(idxStr);
+        detail.variantEditor.formState.fields[kv].value.splice(idx, 1);
+        detail.variantEditor.revealed.delete(`${kv}:${idx}`);
+        renderDetail();
+        return;
+      }
+      const revealV = event.target.closest("[data-mcpv-reveal-toggle]");
+      if (revealV) {
+        const key = revealV.dataset.mcpvRevealToggle;
+        if (detail.variantEditor.revealed.has(key)) detail.variantEditor.revealed.delete(key);
+        else detail.variantEditor.revealed.add(key);
         renderDetail();
         return;
       }

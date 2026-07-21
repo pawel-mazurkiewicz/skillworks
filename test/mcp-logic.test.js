@@ -397,11 +397,12 @@ test("variantFromForm + formStateFromVariant round-trip a variant exercising all
   assert.deepEqual(rebuilt, variant);
 });
 
-test("isDuplicateVariantLabel is case-insensitive, trims, and excludes the variant being edited", async () => {
+test("isDuplicateVariantLabel is case-sensitive, exact-match, and excludes the variant being edited", async () => {
   const { isDuplicateVariantLabel } = await loadLogic();
   const variants = [{ label: "Remote HTTP" }, { label: "local" }];
-  assert.equal(isDuplicateVariantLabel("remote http", variants), true);
-  assert.equal(isDuplicateVariantLabel("  LOCAL  ", variants), true);
+  assert.equal(isDuplicateVariantLabel("remote http", variants), false);
+  assert.equal(isDuplicateVariantLabel("Remote HTTP", variants), true);
+  assert.equal(isDuplicateVariantLabel("  LOCAL  ", variants), false);
   assert.equal(isDuplicateVariantLabel("new-one", variants), false);
   assert.equal(isDuplicateVariantLabel("", variants), false);
   // editing index 1 ("local") against its own unchanged label is not a dup

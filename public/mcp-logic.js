@@ -275,14 +275,16 @@ export function formStateFromVariant(variant, canonical) {
 }
 
 // Client-side pre-check mirroring the backend's variant-label uniqueness
-// rule (spec.rs::validate_variants): case-insensitive, trimmed comparison
-// against every other variant. `excludeIndex` lets the editor exclude the
-// variant currently being edited from the comparison.
+// rule (spec.rs::validate_variants): exact, case-sensitive comparison
+// against every other variant's raw label (no trim/case-fold — the backend
+// does `seen.contains(&v.label)` on the literal string). `excludeIndex`
+// lets the editor exclude the variant currently being edited from the
+// comparison.
 export function isDuplicateVariantLabel(label, variants, excludeIndex) {
-  const norm = String(label ?? "").trim().toLowerCase();
-  if (!norm) return false;
+  const raw = String(label ?? "");
+  if (!raw) return false;
   return (Array.isArray(variants) ? variants : []).some(
-    (v, i) => i !== excludeIndex && String((v && v.label) || "").trim().toLowerCase() === norm
+    (v, i) => i !== excludeIndex && String((v && v.label) || "") === raw
   );
 }
 
