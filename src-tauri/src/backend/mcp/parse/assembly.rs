@@ -234,19 +234,20 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
             // `github` config blocks that differ only by token) are
             // distinct servers, not duplicates — collapsing them here would
             // silently drop the second one's credentials.
-            let alt_env_field = if alt.env.is_empty() { None } else { Some(&alt.env) };
-            let alt_headers_field = if alt.headers.is_empty() { None } else { Some(&alt.headers) };
             let duplicate_of_canonical = same_invocation(&canonical, alt)
                 && canonical.env == alt.env
                 && canonical.headers == alt.headers;
             let duplicate_of_variant = variants.iter().any(|v| {
-                // compare against already-added variants via their fields
+                // compare against already-added variants via their fields.
+                // `v.env`/`v.headers` are always `Some(...)` now (see the
+                // variant construction below), so compare directly against
+                // `alt`'s maps rather than re-deriving an Option.
                 v.transport == Some(alt.transport)
                     && v.command == alt.command
                     && v.args.as_deref() == Some(alt.args.as_slice())
                     && v.url == alt.url
-                    && v.env.as_ref() == alt_env_field
-                    && v.headers.as_ref() == alt_headers_field
+                    && v.env.as_ref() == Some(&alt.env)
+                    && v.headers.as_ref() == Some(&alt.headers)
             });
             if duplicate_of_canonical || duplicate_of_variant {
                 continue;
@@ -265,9 +266,19 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
                 transport: Some(alt.transport),
                 command: alt.command.clone(),
                 args: Some(alt.args.clone()),
-                env: if alt.env.is_empty() { None } else { Some(alt.env.clone()) },
+                // Always `Some(...)`, even when empty: a parsed candidate's
+                // env/headers are the *complete* invocation as documented
+                // (no `-e`/`--header` flags means no env/headers, full
+                // stop), not "unspecified — inherit the canonical value".
+                // Collapsing an explicitly-empty map to `None` here used to
+                // mean `resolve_effective` fell back to the canonical
+                // candidate's env/headers, so e.g. a Docker variant with no
+                // `-e` flags would silently inherit an npx canonical's
+                // `API_KEY`. `Some(empty)` is a real override to "no
+                // env/headers for this variant".
+                env: Some(alt.env.clone()),
                 url: alt.url.clone(),
-                headers: if alt.headers.is_empty() { None } else { Some(alt.headers.clone()) },
+                headers: Some(alt.headers.clone()),
             });
         }
         let spec = McpServerSpec {
@@ -431,6 +442,37 @@ mod tests {
             v.env.as_ref().and_then(|e| e.get("GITHUB_TOKEN")).map(String::as_str),
             Some("tok-b"),
             "second block's distinct env token preserved on the variant"
+        );
+    }
+
+    #[test]
+    fn docker_variant_with_no_env_does_not_inherit_npx_canonical_env() {
+        use crate::backend::mcp::spec::resolve_effective;
+
+        // npx canonical carries a secret env var; the docker line has no
+        // `-e` flags at all, so it must resolve to *no* env, not the
+        // canonical's API_KEY.
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"acme\":{\"command\":\"npx\",\"args\":[\"-y\",\"acme-mcp\"],\"env\":{\"API_KEY\":\"secret\"}}}}\n```\n",
+            "```sh\ndocker run --rm -i ghcr.io/acme/acme:latest\n```\n",
+        );
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1, "docker image basename collides with the explicit npx name: {:?}", r.warnings);
+        let spec = &r.drafts[0].spec;
+        assert_eq!(spec.env.get("API_KEY").map(String::as_str), Some("secret"), "canonical keeps its env");
+
+        let docker_variant = spec
+            .variants
+            .iter()
+            .find(|v| v.label == "docker")
+            .expect("docker variant present");
+        assert_eq!(docker_variant.env, Some(BTreeMap::new()), "variant's env must serialize as an explicit empty override");
+
+        let effective = resolve_effective(spec, "claude", "global", Some("docker")).unwrap();
+        assert!(
+            effective.env.is_empty(),
+            "resolving the docker variant must NOT inherit the canonical's API_KEY: {:?}",
+            effective.env
         );
     }
 
