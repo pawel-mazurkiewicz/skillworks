@@ -9,6 +9,7 @@ use tokio::fs;
 
 use super::super::fs_atomic::write_json_atomic;
 use super::super::state::{BackendError, BackendResult};
+use super::adapters::adapter_for;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -123,6 +124,46 @@ fn check_transport_fields(
     }
 }
 
+fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
+    let mut seen = Vec::new();
+    for v in &spec.variants {
+        if v.label.trim().is_empty() {
+            return Err(BackendError::Validation(format!(
+                "{}: variant label must not be empty", spec.id
+            )));
+        }
+        if seen.contains(&v.label) {
+            return Err(BackendError::Validation(format!(
+                "{}: duplicate variant label {:?}", spec.id, v.label
+            )));
+        }
+        seen.push(v.label.clone());
+        if let Some(applies) = &v.applies_to {
+            if let Some(h) = &applies.harness {
+                adapter_for(h).map_err(|_| {
+                    BackendError::Validation(format!(
+                        "{}: variant {:?} targets unknown harness {h:?}", spec.id, v.label
+                    ))
+                })?;
+            }
+            if let Some(s) = &applies.scope {
+                if s != "global" && s != "project" {
+                    return Err(BackendError::Validation(format!(
+                        "{}: variant {:?} has invalid scope {s:?}", spec.id, v.label
+                    )));
+                }
+            }
+        }
+        // effective invocation must be valid
+        let inv_transport = v.transport.unwrap_or(spec.transport);
+        let inv_command = v.command.clone().or_else(|| spec.command.clone());
+        let inv_url = v.url.clone().or_else(|| spec.url.clone());
+        check_transport_fields(inv_transport, &inv_command, &inv_url,
+            &format!("{} variant {:?}", spec.id, v.label))?;
+    }
+    Ok(())
+}
+
 pub fn validate_spec(spec: &McpServerSpec) -> BackendResult<()> {
     if !valid_id(&spec.id) {
         return Err(BackendError::Validation(format!(
@@ -133,7 +174,8 @@ pub fn validate_spec(spec: &McpServerSpec) -> BackendResult<()> {
     if spec.name.trim().is_empty() {
         return Err(BackendError::Validation("Server name is required".into()));
     }
-    check_transport_fields(spec.transport, &spec.command, &spec.url, &spec.id)
+    check_transport_fields(spec.transport, &spec.command, &spec.url, &spec.id)?;
+    validate_variants(spec)
 }
 
 /// Pick the variant for a target: explicit label > best `applies_to` match
@@ -261,6 +303,12 @@ mod tests {
         }
     }
 
+    fn spec_with_variant(v: McpVariant) -> McpServerSpec {
+        let mut s = stdio_spec();
+        s.variants = vec![v];
+        s
+    }
+
     #[test]
     fn validate_accepts_good_stdio_spec() {
         validate_spec(&stdio_spec()).unwrap();
@@ -365,5 +413,45 @@ mod tests {
         let loaded = load_library(dir.path()).await.unwrap();
         assert_eq!(loaded, servers);
         assert!(library_path(dir.path()).ends_with("mcp/servers.json"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_variants() {
+        // empty label
+        assert!(validate_spec(&spec_with_variant(McpVariant {
+            label: "".into(), applies_to: None, transport: None, command: None,
+            args: None, env: None, url: None, headers: None,
+        })).is_err());
+        // duplicate labels
+        let mut s = stdio_spec();
+        let v = McpVariant { label: "x".into(), applies_to: None, transport: None,
+            command: None, args: None, env: None, url: None, headers: None };
+        s.variants = vec![v.clone(), v];
+        assert!(validate_spec(&s).is_err());
+        // unknown harness in applies_to
+        assert!(validate_spec(&spec_with_variant(McpVariant {
+            label: "a".into(),
+            applies_to: Some(McpAppliesTo { harness: Some("emacs".into()), scope: None }),
+            transport: None, command: None, args: None, env: None, url: None, headers: None,
+        })).is_err());
+        // bad scope
+        assert!(validate_spec(&spec_with_variant(McpVariant {
+            label: "a".into(),
+            applies_to: Some(McpAppliesTo { harness: None, scope: Some("universe".into()) }),
+            transport: None, command: None, args: None, env: None, url: None, headers: None,
+        })).is_err());
+        // variant flips to http without url -> unusable effective invocation
+        assert!(validate_spec(&spec_with_variant(McpVariant {
+            label: "broken-remote".into(), applies_to: None,
+            transport: Some(McpTransport::Http),
+            command: None, args: None, env: None, url: None, headers: None,
+        })).is_err());
+        // valid variant still passes
+        assert!(validate_spec(&spec_with_variant(McpVariant {
+            label: "remote".into(), applies_to: None,
+            transport: Some(McpTransport::Http),
+            command: None, args: None, env: None,
+            url: Some("https://x/mcp".into()), headers: None,
+        })).is_ok());
     }
 }
