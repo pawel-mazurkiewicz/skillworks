@@ -2706,8 +2706,6 @@ use super::marketplace::HttpClient;
 use super::mcp::net;
 use super::mcp::parse::{extract_drafts, source_for_url, FetchPlan};
 
-const URL_FETCH_MAX_BYTES: usize = 1024 * 1024;
-
 /// Fetch and parse MCP server configuration from a URL (typically a GitHub
 /// README or other markdown document). Uses the SSRF-safe, redirect- and
 /// size-bounded fetch routine directly — no `ReqwestHttpClient` is
@@ -2729,11 +2727,11 @@ pub async fn mcp_add_from_url_impl(
 
     let mut fetched_url = plan.fetch_url.clone();
     let mut resp = client
-        .get_capped(&plan.fetch_url, &accept, URL_FETCH_MAX_BYTES)
+        .get_capped(&plan.fetch_url, &accept, net::MAX_BODY_BYTES)
         .await?;
     if !resp.is_ok() {
         if let Some(alt) = &plan.retry_url {
-            let retry = client.get_capped(alt, &accept, URL_FETCH_MAX_BYTES).await?;
+            let retry = client.get_capped(alt, &accept, net::MAX_BODY_BYTES).await?;
             if retry.is_ok() {
                 fetched_url = alt.clone();
                 resp = retry;

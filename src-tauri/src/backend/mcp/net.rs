@@ -21,7 +21,11 @@ use super::super::state::{BackendError, BackendResult};
 /// Maximum number of redirect hops to follow after the initial request.
 const MAX_REDIRECTS: u8 = 3;
 /// Maximum response body size, in bytes (1 MiB).
-const MAX_BODY_BYTES: usize = 1024 * 1024;
+///
+/// This is the single source of truth for the ingestion body-size cap;
+/// `commands.rs` reuses it for the `get_capped`-based fetch path rather than
+/// defining its own copy.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -70,6 +74,11 @@ fn ipv4_is_global(ip: Ipv4Addr) -> bool {
     if octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000 {
         return false;
     }
+    // Reserved / Class E, RFC 1112: 240.0.0.0/4. Subsumes 255.255.255.255
+    // (the broadcast check above is kept anyway — harmless overlap).
+    if (octets[0] & 0xf0) == 0xf0 {
+        return false;
+    }
     true
 }
 
@@ -90,6 +99,23 @@ fn ipv6_is_global(ip: Ipv6Addr) -> bool {
     }
     // Unique local address (ULA), fc00::/7.
     if (seg0 & 0xfe00) == 0xfc00 {
+        return false;
+    }
+    let segs = ip.segments();
+    // IPv6 documentation range, RFC 3849: 2001:db8::/32.
+    if segs[0] == 0x2001 && segs[1] == 0x0db8 {
+        return false;
+    }
+    // 6to4 relay range, RFC 3056: 2002::/16.
+    if segs[0] == 0x2002 {
+        return false;
+    }
+    // Teredo tunneling, RFC 4380: 2001::/32.
+    if segs[0] == 0x2001 && segs[1] == 0x0000 {
+        return false;
+    }
+    // NAT64 well-known prefix, RFC 6052: 64:ff9b::/96.
+    if segs[0..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
         return false;
     }
     true
@@ -126,6 +152,30 @@ enum HopOutcome {
     Fetched { url: String, body: String },
     /// The chain terminated on a non-2xx, non-redirect status.
     NonSuccess { url: String, status: u16 },
+}
+
+/// Resolve a redirect `Location` header against the URL that produced it.
+/// Handles both absolute and relative locations (relative resolution is the
+/// common case for same-host redirects, e.g. GitHub's `HEAD` -> branch-SHA
+/// redirects). No network access; pure URL-joining logic pulled out of
+/// `fetch_hops` so it's independently unit-testable.
+fn resolve_redirect(current: &reqwest::Url, location: &str) -> BackendResult<reqwest::Url> {
+    current
+        .join(location)
+        .map_err(|e| BackendError::Validation(format!("Invalid redirect location {location}: {e}")))
+}
+
+/// Accumulate `chunk` into `buf`, rejecting once the total exceeds `max`.
+/// Pulled out of `fetch_hops`'s body-read loop so the cap logic is
+/// independently unit-testable without a socket.
+fn push_capped(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> BackendResult<()> {
+    buf.extend_from_slice(chunk);
+    if buf.len() > max {
+        return Err(BackendError::Validation(format!(
+            "Fetched document is too large (limit {max})"
+        )));
+    }
+    Ok(())
 }
 
 /// Follow redirects for a single starting URL under SSRF/size/time guards,
@@ -186,9 +236,7 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
                     "Too many redirects starting at {start_url} (limit {MAX_REDIRECTS})"
                 )));
             }
-            let next = parsed
-                .join(&location)
-                .map_err(|e| BackendError::Validation(format!("Invalid redirect location {location}: {e}")))?;
+            let next = resolve_redirect(&parsed, &location)?;
             redirects_used += 1;
             current = next.to_string();
             continue;
@@ -215,12 +263,7 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
             .await
             .map_err(|e| BackendError::Validation(format!("Body read failed for {current}: {e}")))?
         {
-            buf.extend_from_slice(&chunk);
-            if buf.len() > MAX_BODY_BYTES {
-                return Err(BackendError::Validation(format!(
-                    "Fetched document is too large (limit {MAX_BODY_BYTES})"
-                )));
-            }
+            push_capped(&mut buf, &chunk, MAX_BODY_BYTES)?;
         }
         let body = String::from_utf8(buf)
             .map_err(|e| BackendError::Validation(format!("Fetched document is not valid UTF-8: {e}")))?;
@@ -279,6 +322,17 @@ mod tests {
             "fe80::1",
             "ff02::1",
             "::ffff:10.0.0.1",
+            // IPv6 documentation range, 2001:db8::/32.
+            "2001:db8::1",
+            // 6to4, 2002::/16.
+            "2002:c0a8:0101::1",
+            // Teredo, 2001::/32.
+            "2001:0:53aa::1",
+            // NAT64 well-known prefix, 64:ff9b::/96.
+            "64:ff9b::10.0.0.1",
+            // Reserved / Class E, 240.0.0.0/4 (also subsumes broadcast,
+            // asserted separately above via the dedicated broadcast check).
+            "240.0.0.1",
         ];
         for ip in non_global {
             let parsed: IpAddr = ip.parse().unwrap();
@@ -288,6 +342,9 @@ mod tests {
 
     #[test]
     fn addr_is_global_accepts_public_addresses() {
+        // 2606:50c0:: must remain global: its first segment (0x2606) is not
+        // caught by the 2001:db8::/32, 2002::/16, or 2001::/32 masks added
+        // above.
         let global: &[&str] = &["140.82.112.3", "2606:50c0::1"];
         for ip in global {
             let parsed: IpAddr = ip.parse().unwrap();
@@ -307,5 +364,48 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("https"));
+    }
+
+    #[test]
+    fn resolve_redirect_handles_absolute_location() {
+        let current: reqwest::Url = "https://raw.githubusercontent.com/a/b/HEAD/README.md"
+            .parse()
+            .unwrap();
+        let next = resolve_redirect(&current, "https://example.com/other.md").unwrap();
+        assert_eq!(next.as_str(), "https://example.com/other.md");
+    }
+
+    #[test]
+    fn resolve_redirect_handles_relative_location() {
+        let current: reqwest::Url = "https://raw.githubusercontent.com/a/b/HEAD/README.md"
+            .parse()
+            .unwrap();
+        let next = resolve_redirect(&current, "/other/path").unwrap();
+        assert_eq!(next.as_str(), "https://raw.githubusercontent.com/other/path");
+    }
+
+    #[test]
+    fn resolve_redirect_rejects_garbage_location() {
+        let current: reqwest::Url = "https://raw.githubusercontent.com/a/b/HEAD/README.md"
+            .parse()
+            .unwrap();
+        assert!(resolve_redirect(&current, "https://[::1").is_err());
+    }
+
+    #[test]
+    fn push_capped_allows_under_and_at_cap() {
+        let mut buf = Vec::new();
+        push_capped(&mut buf, &[1, 2, 3], 10).unwrap();
+        assert_eq!(buf.len(), 3);
+
+        let mut buf = Vec::new();
+        push_capped(&mut buf, &[0u8; 10], 10).unwrap();
+        assert_eq!(buf.len(), 10);
+    }
+
+    #[test]
+    fn push_capped_rejects_over_cap() {
+        let mut buf = Vec::new();
+        assert!(push_capped(&mut buf, &[0u8; 11], 10).is_err());
     }
 }
