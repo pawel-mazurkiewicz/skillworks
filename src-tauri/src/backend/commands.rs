@@ -19,8 +19,10 @@ use super::mcp::engine::{
     parse_entry, read_entries, remove_entry, render_entry_value, write_entry, ObservedInvocation,
 };
 use super::mcp::parse::{placeholder_warnings, slugify};
-use super::mcp::reconcile::{diff_invocation, invocation_eq, spec_from_observed};
-use super::mcp::spec::{load_library, resolve_effective, save_library, validate_spec, McpServerSpec};
+use super::mcp::reconcile::{diff_invocation, invocation_eq, spec_from_observed, FieldDiff};
+use super::mcp::spec::{
+    load_library, resolve_effective, save_library, validate_spec, McpServerSpec, McpTransport,
+};
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
     normalize_project_records, path_exists,
@@ -2705,16 +2707,77 @@ fn expected_observed(
     parse_entry(adapter, &value)
 }
 
-/// The library spec with its canonical invocation replaced by what is on disk
-/// (id/name/description/variants preserved) — the payload for "adopt config".
-fn adopt_spec(library: &McpServerSpec, observed: &ObservedInvocation) -> McpServerSpec {
+/// Build the "adopt config" payload: the library spec with ONLY the fields that
+/// genuinely drifted (per `diff`) overwritten from disk, everything else on the
+/// library spec preserved.
+///
+/// Overwriting every invocation field wholesale corrupts the spec, because
+/// `observed` is adapter-normalized: e.g. Codex renders SSE as a bare url that
+/// `parse_entry` reads back as HTTP, so a blind adopt of an SSE server's url
+/// change would flip the canonical transport SSE→HTTP and break other
+/// harnesses. Driving the adopt off the diff avoids that — if "transport" is not
+/// in the diff we keep the library's transport untouched.
+///
+/// We also only adopt fields relevant to the (preserved) transport, so a remote
+/// spec never gains a stray `args` array that a malformed on-disk entry happened
+/// to carry (which the renderer would drop anyway, making the conflict return
+/// forever). Renderer-owned discriminant diffs (`enabled`/`tools`) are ignored
+/// here: the library models neither, and reapply re-writes the rendered default.
+fn adopt_spec(
+    library: &McpServerSpec,
+    observed: &ObservedInvocation,
+    diff: &[FieldDiff],
+) -> McpServerSpec {
     let mut s = library.clone();
-    s.transport = observed.transport;
-    s.command = observed.command.clone();
-    s.args = observed.args.clone();
-    s.env = observed.env.clone();
-    s.url = observed.url.clone();
-    s.headers = observed.headers.clone();
+    let drifted = |field: &str| diff.iter().any(|d| d.field == field);
+
+    // Keep the library's transport unless the diff says it actually changed.
+    let transport = if drifted("transport") {
+        observed.transport
+    } else {
+        library.transport
+    };
+    s.transport = transport;
+
+    match transport {
+        McpTransport::Stdio => {
+            if drifted("command") {
+                s.command = observed.command.clone();
+            }
+            if drifted("args") {
+                s.args = observed.args.clone();
+            }
+            for d in diff {
+                if let Some(key) = d.field.strip_prefix("env.") {
+                    match observed.env.get(key) {
+                        Some(v) => {
+                            s.env.insert(key.to_string(), v.clone());
+                        }
+                        None => {
+                            s.env.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+        McpTransport::Http | McpTransport::Sse => {
+            if drifted("url") {
+                s.url = observed.url.clone();
+            }
+            for d in diff {
+                if let Some(key) = d.field.strip_prefix("headers.") {
+                    match observed.headers.get(key) {
+                        Some(v) => {
+                            s.headers.insert(key.to_string(), v.clone());
+                        }
+                        None => {
+                            s.headers.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
     s
 }
 
@@ -2772,14 +2835,15 @@ pub async fn mcp_reconcile_impl(
                 if let Some(spec) = library.iter().find(|s| s.id == key) {
                     match expected_observed(adapter, spec, scope) {
                         Ok(expected) => {
-                            if !invocation_eq(&expected, &observed) {
+                            let diff = diff_invocation(&expected, &observed);
+                            if !diff.is_empty() {
                                 conflicts.push(McpDriftEntry {
                                     server_id: key.clone(),
                                     harness: adapter.harness_id.to_string(),
                                     scope: scope.to_string(),
                                     config_path,
-                                    diff: diff_invocation(&expected, &observed),
-                                    observed_spec: adopt_spec(spec, &observed),
+                                    observed_spec: adopt_spec(spec, &observed, &diff),
+                                    diff,
                                     trust_note: (adapter.project_trust_note && scope == "project")
                                         .then(|| PROJECT_TRUST_NOTE.to_string()),
                                 });
@@ -4479,12 +4543,17 @@ mod tests {
             h.await.unwrap().unwrap();
         }
 
-        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
         let active_count = statuses
             .iter()
             .filter(|s| s.harness == "cursor" && s.scope == "global" && s.active)
             .count();
-        assert_eq!(active_count, N, "every concurrent activation must land, none lost to the race");
+        assert_eq!(
+            active_count, N,
+            "every concurrent activation must land, none lost to the race"
+        );
     }
 
     /// Regression test for the unserialized target-config write race: many
@@ -4515,18 +4584,30 @@ mod tests {
             let home = home.clone();
             handles.push(tokio::spawn(async move {
                 mcp_activate_impl(
-                    format!("srv-{i}"), "claude".into(), "global".into(),
-                    None, None, Some(app_home), Some(home),
-                ).await
+                    format!("srv-{i}"),
+                    "claude".into(),
+                    "global".into(),
+                    None,
+                    None,
+                    Some(app_home),
+                    Some(home),
+                )
+                .await
             }));
         }
-        for h in handles { h.await.unwrap().unwrap(); }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
 
-        let doc: serde_json::Value = serde_json::from_slice(
-            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
-        ).unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(home.join(".claude.json")).await.unwrap())
+                .unwrap();
         let servers = doc["mcpServers"].as_object().expect("mcpServers object");
-        assert_eq!(servers.len(), N, "no lost activations under concurrency: {servers:?}");
+        assert_eq!(
+            servers.len(),
+            N,
+            "no lost activations under concurrency: {servers:?}"
+        );
         for i in 0..N {
             assert!(servers.contains_key(&format!("srv-{i}")), "missing srv-{i}");
         }
@@ -4991,6 +5072,100 @@ mod tests {
             .unwrap();
         let srv = out.imports.iter().find(|c| c.key == "srv").unwrap();
         assert!(srv.warnings.iter().any(|w| w.contains("placeholder")));
+    }
+
+    #[test]
+    fn adopt_spec_only_touches_drifted_fields_and_preserves_transport() {
+        use crate::backend::mcp::spec::{McpSource, McpTransport};
+        // An SSE library server. Codex renders SSE as a bare url that parses
+        // back as HTTP, so a url-only change never puts "transport" in the
+        // diff — a blind adopt would corrupt the canonical transport SSE→HTTP.
+        let library = McpServerSpec {
+            id: "srv".into(),
+            name: "Srv".into(),
+            description: None,
+            source: McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: McpTransport::Sse,
+            command: None,
+            args: vec![],
+            env: Default::default(),
+            url: Some("https://old.example/mcp".into()),
+            headers: Default::default(),
+            variants: vec![],
+        };
+        // Observed is normalized to HTTP with the changed url.
+        let observed = ObservedInvocation {
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: Default::default(),
+            url: Some("https://new.example/mcp".into()),
+            headers: Default::default(),
+            enabled: None,
+            tools: None,
+            unmapped: vec![],
+        };
+        // Only the url drifted (transport is equal after normalization).
+        let diff = vec![FieldDiff {
+            field: "url".into(),
+            expected: Some("https://old.example/mcp".into()),
+            observed: Some("https://new.example/mcp".into()),
+        }];
+        let adopted = adopt_spec(&library, &observed, &diff);
+        assert_eq!(
+            adopted.transport,
+            McpTransport::Sse,
+            "transport preserved when not in the diff"
+        );
+        assert_eq!(adopted.url.as_deref(), Some("https://new.example/mcp"));
+    }
+
+    #[test]
+    fn adopt_spec_ignores_fields_irrelevant_to_transport() {
+        use crate::backend::mcp::spec::{McpSource, McpTransport};
+        // A remote (HTTP) library server; a malformed on-disk entry carried a
+        // stray args array. Remote rendering omits args, so adopting them would
+        // make the conflict return forever — the remote spec must not gain args.
+        let library = McpServerSpec {
+            id: "srv".into(),
+            name: "Srv".into(),
+            description: None,
+            source: McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: Default::default(),
+            url: Some("https://x.example/mcp".into()),
+            headers: Default::default(),
+            variants: vec![],
+        };
+        let observed = ObservedInvocation {
+            transport: McpTransport::Http,
+            command: None,
+            args: vec!["--stray".into()],
+            env: Default::default(),
+            url: Some("https://x.example/mcp".into()),
+            headers: Default::default(),
+            enabled: None,
+            tools: None,
+            unmapped: vec![],
+        };
+        let diff = vec![FieldDiff {
+            field: "args".into(),
+            expected: Some(String::new()),
+            observed: Some("--stray".into()),
+        }];
+        let adopted = adopt_spec(&library, &observed, &diff);
+        assert!(
+            adopted.args.is_empty(),
+            "a remote spec never gains stray args"
+        );
     }
 
     #[tokio::test]
