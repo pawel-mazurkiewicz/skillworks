@@ -416,6 +416,24 @@ try {
     const patchReq = await adoptRequest;
     expect(patchReq.postDataJSON().spec).toMatchObject({ id: "context7", command: "npx" });
   });
+
+  test("reconcile panel surfaces warnings even with no imports or conflicts", async ({ page }) => {
+    // Every discovered entry was malformed and skipped into warnings — the
+    // panel must not claim "everything matches" and hide the parse failures.
+    const warning = 'cursor/global "srv": remote config entry has no url';
+    await installApiMocks(page, {
+      reconcile: { imports: [], conflicts: [], warnings: [warning] },
+    });
+
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    await expect(page.getByText("Couldn't read some entries")).toBeVisible();
+    await expect(page.getByText(warning)).toBeVisible();
+    await expect(
+      page.getByText("Everything in your harness configs matches your library.")
+    ).toHaveCount(0);
+  });
 });
 } catch (err) {
   if (!/did not expect test\.describe/i.test(String(err && err.message))) {

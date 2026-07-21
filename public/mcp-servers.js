@@ -1426,13 +1426,20 @@ function renderConflictsSection() {
 function renderReconcile() {
   if (!els.discovered) return;
   const { imports, conflicts, reconcileWarnings } = state;
-  if (!imports.length && !conflicts.length) {
-    els.discovered.innerHTML = `<p class="empty-copy">Everything in your harness configs matches your library.</p>`;
-    return;
-  }
   const warningsFooter = reconcileWarnings.length
     ? `<p class="mcp-servers-hint mcp-servers-reconcile-footer">${reconcileWarnings.map((w) => escapeHtml(w)).join(" ")}</p>`
     : "";
+  if (!imports.length && !conflicts.length) {
+    // Don't claim "everything matches" while hiding parse failures — if every
+    // discovered entry was skipped into warnings, surface those instead.
+    els.discovered.innerHTML = reconcileWarnings.length
+      ? `<section class="mcp-servers-reconcile-section">
+          <div class="section-head"><h4>Couldn't read some entries</h4></div>
+          ${warningsFooter}
+        </section>`
+      : `<p class="empty-copy">Everything in your harness configs matches your library.</p>`;
+    return;
+  }
   els.discovered.innerHTML = `
     ${renderImportsSection()}
     ${renderConflictsSection()}
