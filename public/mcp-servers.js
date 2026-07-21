@@ -3,11 +3,12 @@
 // window.McpServers.{onEnter,onWorkspaceChanged}; see bootstrap() in app.js
 // for the tab-switch, project-change, and Refresh-button hooks.
 //
-// Task 7 shipped the sidebar list + refresh model. Task 8 (this file, as of
-// now) adds the detail pane: an editable fields form with dirty tracking +
-// client validation + masked secrets, the 7-harness activation matrix, and
-// the save-then-stale/Reapply flow. The tri-state variant editor, add-from-
-// URL/manual flow, and discovered panel land in Task 9.
+// Task 7 shipped the sidebar list + refresh model. Task 8 added the detail
+// pane: an editable fields form with dirty tracking + client validation +
+// masked secrets, the 7-harness activation matrix, and the save-then-stale/
+// Reapply flow. Task 9 (this file, as of now) adds the tri-state variant
+// editor, the add-from-URL/manual review-card flow, the read-only discovered
+// panel, and the "Remove from library" danger action.
 
 import { api } from "./api-shim.js";
 import {
@@ -19,7 +20,24 @@ import {
   validateSpecDraft,
   activeTargetsOf,
   MCP_HARNESSES,
+  slugifyId,
+  VARIANT_FIELD_KEYS,
+  variantFromForm,
+  formStateFromVariant,
+  isDuplicateVariantLabel,
+  overriddenFieldsOf,
+  appliesToSummary,
+  groupDiscoveredByHarness,
 } from "./mcp-logic.js";
+
+const VARIANT_FIELD_LABELS = {
+  transport: "Transport",
+  command: "Command",
+  args: "Arguments",
+  env: "Environment variables",
+  url: "URL",
+  headers: "Headers",
+};
 
 const state = {
   generation: 0,
@@ -33,7 +51,49 @@ const state = {
   // refreshes (project change, matrix toggles, tab re-entry) must never
   // clobber in-progress edits.
   detail: null,
+  // Add-server flow (§4.5): URL input + parse result + review/manual cards.
+  // Survives selection changes and background refreshes (only refreshAll's
+  // own `servers` adoption touches it, on successful "Add to library").
+  add: {
+    url: "",
+    parsing: false,
+    parseError: null,
+    sourceUrl: null,
+    fetchedUrl: null,
+    warnings: [],
+    cards: [], // { key, spec, evidence, saving, error, added }
+  },
 };
+
+let addCardSeq = 0;
+
+function newAddCard(spec, evidence) {
+  addCardSeq += 1;
+  return {
+    key: `card-${addCardSeq}`,
+    spec,
+    evidence: Array.isArray(evidence) ? evidence : [],
+    saving: false,
+    error: null,
+    added: false,
+  };
+}
+
+function blankManualSpec() {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    source: { kind: "manual" },
+    transport: "stdio",
+    command: "",
+    args: [],
+    env: {},
+    url: "",
+    headers: {},
+    variants: [],
+  };
+}
 
 // True once the tab has been entered at least once — onWorkspaceChanged
 // (project-change / global Refresh) is a no-op until then so we don't fetch
@@ -113,6 +173,8 @@ function transportLabel(transport) {
 function render() {
   renderList();
   renderDetail();
+  renderAdd();
+  renderDiscovered();
 }
 
 function renderList() {
@@ -221,6 +283,10 @@ function ensureDetailState() {
     matrixPending: new Set(),
     reapplying: false,
     saving: false,
+    // Tri-state variant editor (§4.4): null = list view; an object = the
+    // add/edit form is open. `index === null` means "new variant".
+    variantEditor: null,
+    removing: false,
   };
 }
 
@@ -257,6 +323,8 @@ function renderDetail() {
     </div>
     ${renderFieldsForm(server, detail, validation)}
     ${renderMatrix(server, detail)}
+    ${renderVariantsSection(server, detail)}
+    ${renderDangerZone(server, detail)}
   `;
 }
 
@@ -486,6 +554,339 @@ function renderMatrixCell(server, detail, harness, scope, enabled) {
     </td>`;
 }
 
+// ---------- Detail pane: variants (tri-state editor, §4.4) ----------
+
+// Full spec for a variant-only mutation: everything from the currently
+// *saved* server (not the fields-form draft, which may hold unsaved edits
+// the user hasn't committed) plus a replacement variants array. Keeping
+// variant saves independent of in-progress field edits avoids silently
+// persisting an unrelated half-typed field when the user only meant to
+// touch a variant.
+function specWithVariants(server, variants) {
+  return {
+    id: server.id,
+    name: server.name,
+    description: server.description,
+    source: server.source,
+    transport: server.transport,
+    command: server.command,
+    args: Array.isArray(server.args) ? [...server.args] : [],
+    env: server.env || {},
+    url: server.url,
+    headers: server.headers || {},
+    variants,
+  };
+}
+
+function renderVariantsSection(server, detail) {
+  const editor = detail.variantEditor;
+  return `
+    <section class="mcp-servers-variants-section">
+      <div class="section-head">
+        <h4>Variants</h4>
+        ${editor ? "" : '<button type="button" class="button" data-mcp-variant-new="1">New variant</button>'}
+      </div>
+      ${editor ? renderVariantForm(server, detail, editor) : renderVariantList(server, detail)}
+    </section>`;
+}
+
+function renderVariantList(server, detail) {
+  const variants = Array.isArray(server.variants) ? server.variants : [];
+  if (!variants.length) {
+    return `<p class="empty-copy">No variants yet. Variants override specific fields for one harness or scope — for example, a different header value on just one project.</p>`;
+  }
+  const rows = variants
+    .map((variant, i) => {
+      const chips = overriddenFieldsOf(variant)
+        .map((field) => `<span class="mcp-servers-chip mcp-servers-variant-chip">${escapeHtml(VARIANT_FIELD_LABELS[field] || field)}</span>`)
+        .join("");
+      return `
+        <li class="mcp-servers-variant-row">
+          <div class="mcp-servers-variant-row-main">
+            <span class="mcp-servers-variant-label">${escapeHtml(variant.label)}</span>
+            <span class="mcp-servers-hint">${escapeHtml(appliesToSummary(variant.appliesTo))}</span>
+            <span class="mcp-servers-variant-chips">${chips || '<span class="mcp-servers-hint">No overrides</span>'}</span>
+          </div>
+          <div class="button-row">
+            <button type="button" class="button" data-mcp-variant-edit="${i}">Edit</button>
+            <button type="button" class="button ghost" data-mcp-variant-delete="${i}">Delete</button>
+          </div>
+        </li>`;
+    })
+    .join("");
+  return `<ul class="mcp-servers-variant-list">${rows}</ul>`;
+}
+
+function renderVariantForm(server, detail, editor) {
+  const formState = editor.formState;
+  const fieldsHtml = VARIANT_FIELD_KEYS.map((key) => renderVariantFieldRow(key, formState.fields[key], server)).join("");
+  return `
+    <form class="mcp-servers-variant-form field-stack" data-mcp-variant-form="1" novalidate>
+      ${editor.error ? `<p class="mcp-servers-save-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}
+
+      <label>
+        <span>Label</span>
+        <input type="text" data-mcpv-label="1" value="${escapeHtml(formState.label)}"
+          aria-invalid="${editor.labelError ? "true" : "false"}"
+          ${editor.labelError ? 'aria-describedby="mcp-variant-error-label"' : ""} />
+      </label>
+      ${editor.labelError ? `<p class="mcp-servers-field-error" id="mcp-variant-error-label">${escapeHtml(editor.labelError)}</p>` : ""}
+
+      <div class="mcp-servers-variant-applies">
+        <label>
+          <span>Applies to harness</span>
+          <select data-mcpv-applies="harness">
+            <option value="" ${formState.appliesToHarness ? "" : "selected"}>Any harness</option>
+            ${MCP_HARNESSES.map(
+              (h) => `<option value="${escapeHtml(h.id)}" ${formState.appliesToHarness === h.id ? "selected" : ""}>${escapeHtml(h.label)}</option>`
+            ).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Applies to scope</span>
+          <select data-mcpv-applies="scope">
+            <option value="" ${formState.appliesToScope ? "" : "selected"}>Any scope</option>
+            <option value="global" ${formState.appliesToScope === "global" ? "selected" : ""}>Global</option>
+            <option value="project" ${formState.appliesToScope === "project" ? "selected" : ""}>Project</option>
+          </select>
+        </label>
+      </div>
+
+      ${fieldsHtml}
+
+      <div class="button-row mcp-servers-save-row">
+        <button type="submit" class="button primary" data-mcpv-save="1" ${editor.saving ? "disabled" : ""}>${editor.saving ? "Saving…" : "Save variant"}</button>
+        <button type="button" class="button ghost" data-mcpv-cancel="1">Cancel</button>
+      </div>
+    </form>`;
+}
+
+function renderVariantFieldRow(key, fieldState, canonicalServer) {
+  const overrideId = `mcp-variant-override-${key}`;
+  const header = `
+    <div class="mcp-servers-variant-field-head">
+      <span class="mcp-servers-subhead">${escapeHtml(VARIANT_FIELD_LABELS[key])}</span>
+      <label class="mcp-servers-override-toggle" for="${overrideId}">
+        <input type="checkbox" id="${overrideId}" data-mcpv-override="${key}" ${fieldState.override ? "checked" : ""} />
+        <span>Override</span>
+      </label>
+    </div>`;
+
+  let body;
+  if (key === "transport") {
+    if (fieldState.override) {
+      body = `
+        <select data-mcpv-field="transport">
+          <option value="stdio" ${fieldState.value === "stdio" ? "selected" : ""}>Stdio</option>
+          <option value="http" ${fieldState.value === "http" ? "selected" : ""}>HTTP</option>
+          <option value="sse" ${fieldState.value === "sse" ? "selected" : ""}>SSE</option>
+        </select>`;
+    } else {
+      body = `<p class="mcp-servers-inherited-value">${escapeHtml(transportLabel(canonicalServer.transport))} <span class="mcp-servers-hint">(inherited)</span></p>`;
+    }
+  } else if (key === "command" || key === "url") {
+    const flagged = fieldState.override && (key === "command" ? commandLooksShellRef(fieldState.value) || looksLikePlaceholder(fieldState.value) : looksLikePlaceholder(fieldState.value));
+    if (fieldState.override) {
+      body = `
+        <span class="mcp-servers-input-wrap">
+          <input type="text" data-mcpv-field="${key}" value="${escapeHtml(fieldState.value)}" />
+          ${flagged ? `<span class="mcp-servers-amber-mark" role="img" aria-label="This value looks like a placeholder or an unresolved shell reference — check before saving">⚠</span>` : ""}
+        </span>`;
+    } else {
+      const inheritedValue = canonicalServer[key] || "";
+      body = `<p class="mcp-servers-inherited-value">${inheritedValue ? escapeHtml(inheritedValue) : '<span class="mcp-servers-hint">(not set)</span>'} <span class="mcp-servers-hint">(inherited)</span></p>`;
+    }
+  } else if (key === "args") {
+    if (fieldState.override) {
+      body = renderVariantArgsRows(fieldState.value);
+    } else {
+      const inherited = Array.isArray(canonicalServer.args) ? canonicalServer.args : [];
+      body = `<p class="mcp-servers-inherited-value">${inherited.length ? escapeHtml(inherited.join(" ")) : '<span class="mcp-servers-hint">(none)</span>'} <span class="mcp-servers-hint">(inherited)</span></p>`;
+    }
+  } else {
+    // env, headers
+    if (fieldState.override) {
+      body = renderVariantKvRows(key, fieldState.value);
+    } else {
+      const inherited = Object.entries(canonicalServer[key] || {});
+      body = inherited.length
+        ? `<ul class="mcp-servers-inherited-kv">${inherited.map(([k]) => `<li>${escapeHtml(k)} <span class="mcp-servers-hint">(inherited)</span></li>`).join("")}</ul>`
+        : `<p class="mcp-servers-inherited-value"><span class="mcp-servers-hint">(none, inherited)</span></p>`;
+    }
+  }
+
+  return `<div class="mcp-servers-variant-field-row">${header}${body}</div>`;
+}
+
+function renderVariantArgsRows(args) {
+  const rows = (args || [])
+    .map(
+      (value, i) => `
+      <div class="mcp-servers-args-row">
+        <input type="text" value="${escapeHtml(value)}" data-mcpv-field="arg" data-mcpv-index="${i}" aria-label="Argument ${i + 1}" />
+        <button type="button" class="button ghost" data-mcpv-remove-arg="${i}" aria-label="Remove argument ${i + 1}">Remove</button>
+      </div>`
+    )
+    .join("");
+  return `<div class="mcp-servers-args-rows">${rows}</div><button type="button" class="button" data-mcpv-add-arg="1">Add argument</button>`;
+}
+
+function renderVariantKvRows(kv, rows) {
+  const items = (rows || [])
+    .map(
+      (row, i) => `
+      <div class="mcp-servers-kv-row">
+        <input type="text" class="mcp-servers-kv-key" value="${escapeHtml(row.key)}"
+          data-mcpv-kv="${kv}" data-mcpv-index="${i}" data-mcpv-part="key"
+          aria-label="Name" placeholder="Name" />
+        <input type="text" class="mcp-servers-kv-value" value="${escapeHtml(row.value)}"
+          data-mcpv-kv="${kv}" data-mcpv-index="${i}" data-mcpv-part="value"
+          aria-label="Value" placeholder="Value" autocomplete="off" />
+        <button type="button" class="button ghost" data-mcpv-kv-remove="${kv}:${i}" aria-label="Remove row ${i + 1}">Remove</button>
+      </div>`
+    )
+    .join("");
+  return `<div class="mcp-servers-kv-rows">${items}</div><button type="button" class="button" data-mcpv-kv-add="${kv}">Add row</button>`;
+}
+
+function openVariantEditor(server, detail, index) {
+  const existing = index === null ? {} : (server.variants || [])[index] || {};
+  detail.variantEditor = {
+    index,
+    formState: formStateFromVariant(existing, server),
+    error: null,
+    labelError: null,
+    saving: false,
+  };
+}
+
+async function saveVariantsToServer(server, detail, variants) {
+  const spec = specWithVariants(server, variants);
+  const response = await api("/api/mcp/servers", { method: "PATCH", body: { spec } });
+  const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+  state.servers = servers;
+  const updated = servers.find((s) => s.id === server.id) || spec;
+  detail.draft = draftFromSpec(updated);
+  detail.staleBanner = activeTargetsOf(server.id, state.statuses).length > 0;
+  return updated;
+}
+
+async function handleVariantSave(server, detail) {
+  const editor = detail.variantEditor;
+  if (!editor) return;
+  const label = String(editor.formState.label || "").trim();
+  editor.labelError = label ? null : "Label is required.";
+  if (!editor.labelError && isDuplicateVariantLabel(label, server.variants, editor.index === null ? undefined : editor.index)) {
+    editor.labelError = "Another variant already uses this label.";
+  }
+  if (editor.labelError) {
+    renderDetail();
+    return;
+  }
+  const variant = variantFromForm(editor.formState);
+  const variants = Array.isArray(server.variants) ? [...server.variants] : [];
+  if (editor.index === null) variants.push(variant);
+  else variants[editor.index] = variant;
+
+  editor.saving = true;
+  editor.error = null;
+  renderDetail();
+  try {
+    await saveVariantsToServer(server, detail, variants);
+    detail.variantEditor = null;
+    fireToastLocal(`Saved variant ${variant.label}.`);
+  } catch (err) {
+    editor.error = (err && err.message) || "Couldn't save this variant.";
+  } finally {
+    editor.saving = false;
+    renderDetail();
+  }
+}
+
+async function handleVariantDelete(server, detail, index) {
+  const variant = (server.variants || [])[index];
+  if (!variant) return;
+  const label = variant.label || `variant ${index + 1}`;
+  if (!window.confirm(`Delete the "${label}" variant? This can't be undone.`)) return;
+  const variants = (server.variants || []).filter((_, i) => i !== index);
+  try {
+    await saveVariantsToServer(server, detail, variants);
+    fireToastLocal(`Deleted variant ${label}.`);
+  } catch (err) {
+    console.error("[mcp-servers] variant delete failed", err);
+  } finally {
+    renderDetail();
+  }
+}
+
+function handleVariantInput(detail, target) {
+  const editor = detail.variantEditor;
+  if (!editor) return false;
+  if (target.dataset.mcpvLabel !== undefined) {
+    editor.formState.label = target.value;
+    return true;
+  }
+  const field = target.dataset.mcpvField;
+  if (field === "arg") {
+    const idx = Number(target.dataset.mcpvIndex);
+    if (Number.isInteger(idx)) editor.formState.fields.args.value[idx] = target.value;
+    return true;
+  }
+  if (field && editor.formState.fields[field]) {
+    editor.formState.fields[field].value = target.value;
+    return true;
+  }
+  const kv = target.dataset.mcpvKv;
+  if (kv && (kv === "env" || kv === "headers")) {
+    const idx = Number(target.dataset.mcpvIndex);
+    const part = target.dataset.mcpvPart;
+    const rows = editor.formState.fields[kv].value;
+    if (Number.isInteger(idx) && (part === "key" || part === "value") && rows[idx]) {
+      rows[idx][part] = target.value;
+    }
+    return true;
+  }
+  return false;
+}
+
+// ---------- Detail pane: danger zone (remove from library) ----------
+
+function renderDangerZone(server, detail) {
+  return `
+    <section class="mcp-servers-danger-zone">
+      <button type="button" class="button danger" data-mcp-remove-server="1" ${detail.removing ? "disabled" : ""}>${detail.removing ? "Removing…" : "Remove from library"}</button>
+      <p class="mcp-servers-hint">This removes the server from your library. It does not deactivate it from any harness config already using it.</p>
+    </section>`;
+}
+
+async function handleRemoveServer(server, detail) {
+  const label = server.name || server.id;
+  if (!window.confirm(`Remove "${label}" from your library? This does not deactivate it from any harness or project already using it.`)) {
+    return;
+  }
+  detail.removing = true;
+  renderDetail();
+  try {
+    const path = `/api/mcp/servers/${encodeURIComponent(server.id)}`;
+    const response = await api(withProject(path), { method: "DELETE" });
+    const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+    const warnings = Array.isArray(response && response.warnings) ? response.warnings : [];
+    state.servers = servers;
+    state.selectedId = null;
+    state.detail = null;
+    fireToastLocal(
+      warnings.length
+        ? `Removed ${label}. ${warnings.join(" ")}`
+        : `Removed ${label} from your library.`
+    );
+    await refreshAll();
+  } catch (err) {
+    console.error("[mcp-servers] remove failed", err);
+    detail.removing = false;
+    renderDetail();
+  }
+}
+
 // ---------- Detail pane: focus-preserving re-render for text input ----------
 
 function cssAttrEscape(value) {
@@ -509,6 +910,17 @@ function withFocusPreserved(container, renderFn) {
     if (active.dataset.mcpKv) parts.push(`[data-mcp-kv="${cssAttrEscape(active.dataset.mcpKv)}"]`);
     if (active.dataset.mcpIndex !== undefined) parts.push(`[data-mcp-index="${cssAttrEscape(active.dataset.mcpIndex)}"]`);
     if (active.dataset.mcpPart) parts.push(`[data-mcp-part="${cssAttrEscape(active.dataset.mcpPart)}"]`);
+    if (active.dataset.mcpvLabel !== undefined) parts.push("[data-mcpv-label]");
+    if (active.dataset.mcpvField) parts.push(`[data-mcpv-field="${cssAttrEscape(active.dataset.mcpvField)}"]`);
+    if (active.dataset.mcpvKv) parts.push(`[data-mcpv-kv="${cssAttrEscape(active.dataset.mcpvKv)}"]`);
+    if (active.dataset.mcpvIndex !== undefined) parts.push(`[data-mcpv-index="${cssAttrEscape(active.dataset.mcpvIndex)}"]`);
+    if (active.dataset.mcpvPart) parts.push(`[data-mcpv-part="${cssAttrEscape(active.dataset.mcpvPart)}"]`);
+    if (active.dataset.mcpAddUrl !== undefined) parts.push("[data-mcp-add-url]");
+    if (active.dataset.mcpCardField) {
+      const cardEl = active.closest && active.closest("[data-mcp-card]");
+      if (cardEl) parts.push(`[data-mcp-card="${cssAttrEscape(cardEl.dataset.mcpCard)}"] `);
+      parts.push(`[data-mcp-card-field="${cssAttrEscape(active.dataset.mcpCardField)}"]`);
+    }
     if (parts.length) {
       selector = parts.join("");
       if (typeof active.selectionStart === "number") {
@@ -652,14 +1064,304 @@ async function handleReapply(server, detail) {
     }
   }
   detail.reapplying = false;
-  detail.staleBanner = false;
   const failed = results.filter((r) => !r.ok);
+  // D8 review fix: only clear the stale banner when every target actually
+  // succeeded — a partial failure means some active targets still run the
+  // pre-edit config, so the banner (and Reapply affordance) must stay.
+  detail.staleBanner = failed.length > 0;
   const label = server.name || server.id;
   const summary = failed.length
     ? `Reapplied ${label}: ${results.length - failed.length}/${results.length} targets succeeded; failed on ${failed.map((f) => `${f.harness}/${f.scope}`).join(", ")}.`
     : `Reapplied ${label} to ${results.length} active target${results.length === 1 ? "" : "s"}.`;
   fireToastLocal(summary);
   await refreshAll();
+}
+
+// ---------- Add server: URL parse + review cards + manual entry (§4.5) ----------
+
+function renderAdd() {
+  if (!els.add) return;
+  const add = state.add;
+  els.add.innerHTML = `
+    <form class="mcp-servers-add-url-row" data-mcp-add-url-form="1" novalidate>
+      <label class="mcp-servers-add-url-label">
+        <span>Server URL</span>
+        <input type="text" data-mcp-add-url="1" value="${escapeHtml(add.url)}"
+          placeholder="https://example.com/README.md" />
+      </label>
+      <button type="submit" class="button primary" ${add.parsing ? "disabled" : ""}>${add.parsing ? "Parsing…" : "Parse"}</button>
+      <button type="button" class="button" data-mcp-add-manual="1">Enter manually</button>
+    </form>
+    ${add.parseError ? `<p class="mcp-servers-add-error" role="alert">${escapeHtml(add.parseError)}</p>` : ""}
+    ${
+      add.warnings && add.warnings.length
+        ? `<ul class="mcp-servers-add-warnings">${add.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>`
+        : ""
+    }
+    <div class="mcp-servers-draft-cards">${add.cards.map((card) => renderDraftCard(card)).join("")}</div>
+  `;
+}
+
+function renderDraftCard(card) {
+  const spec = card.spec;
+  const isStdio = spec.transport === "stdio";
+  const isRemote = spec.transport === "http" || spec.transport === "sse";
+  const idFlag = card.error && /already exists/i.test(card.error);
+  return `
+    <article class="mcp-servers-draft-card" data-mcp-card="${card.key}">
+      ${card.added ? `<p class="mcp-servers-card-added">Added to your library.</p>` : ""}
+      ${card.error ? `<p class="mcp-servers-card-error" role="alert">${escapeHtml(card.error)}</p>` : ""}
+      <div class="field-stack">
+        <label>
+          <span>Name</span>
+          <input type="text" data-mcp-card-field="name" value="${escapeHtml(spec.name)}" ${card.added ? "disabled" : ""} />
+        </label>
+        <label>
+          <span>Id</span>
+          <input type="text" data-mcp-card-field="id" value="${escapeHtml(spec.id)}"
+            aria-invalid="${idFlag ? "true" : "false"}" ${card.added ? "disabled" : ""} />
+        </label>
+        ${idFlag ? `<p class="mcp-servers-field-error">Change the id and try again — it's already in your library.</p>` : ""}
+        <label>
+          <span>Transport</span>
+          <select data-mcp-card-field="transport" ${card.added ? "disabled" : ""}>
+            <option value="stdio" ${spec.transport === "stdio" ? "selected" : ""}>Stdio</option>
+            <option value="http" ${spec.transport === "http" ? "selected" : ""}>HTTP</option>
+            <option value="sse" ${spec.transport === "sse" ? "selected" : ""}>SSE</option>
+          </select>
+        </label>
+        ${
+          isStdio
+            ? `<label>
+                 <span>Command</span>
+                 <span class="mcp-servers-input-wrap">
+                   <input type="text" data-mcp-card-field="command" value="${escapeHtml(spec.command || "")}" ${card.added ? "disabled" : ""} />
+                   ${looksLikePlaceholder(spec.command) || commandLooksShellRef(spec.command) ? `<span class="mcp-servers-amber-mark" role="img" aria-label="This looks like a placeholder — check before adding">⚠</span>` : ""}
+                 </span>
+               </label>
+               <label>
+                 <span>Arguments (space-separated)</span>
+                 <input type="text" data-mcp-card-field="args" value="${escapeHtml((spec.args || []).join(" "))}" ${card.added ? "disabled" : ""} />
+               </label>`
+            : ""
+        }
+        ${
+          isRemote
+            ? `<label>
+                 <span>URL</span>
+                 <span class="mcp-servers-input-wrap">
+                   <input type="text" data-mcp-card-field="url" value="${escapeHtml(spec.url || "")}" ${card.added ? "disabled" : ""} />
+                   ${looksLikePlaceholder(spec.url) ? `<span class="mcp-servers-amber-mark" role="img" aria-label="This looks like a placeholder — check before adding">⚠</span>` : ""}
+                 </span>
+               </label>`
+            : ""
+        }
+        ${
+          Array.isArray(spec.variants) && spec.variants.length
+            ? `<p class="mcp-servers-hint">Includes ${spec.variants.length} variant${spec.variants.length === 1 ? "" : "s"} — editable after adding.</p>`
+            : ""
+        }
+      </div>
+      ${
+        card.evidence.length
+          ? `<div class="mcp-servers-evidence">
+               <span class="mcp-servers-subhead">Evidence</span>
+               <ul class="mcp-servers-evidence-list">${card.evidence.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>
+             </div>`
+          : ""
+      }
+      ${
+        card.added
+          ? ""
+          : `<div class="button-row">
+               <button type="button" class="button primary" data-mcp-card-add="${card.key}" ${card.saving ? "disabled" : ""}>${card.saving ? "Adding…" : "Add to library"}</button>
+               <button type="button" class="button ghost" data-mcp-card-dismiss="${card.key}">Dismiss</button>
+             </div>`
+      }
+    </article>`;
+}
+
+async function handleParseUrl() {
+  const add = state.add;
+  const url = add.url.trim();
+  if (!url) return;
+  add.parsing = true;
+  add.parseError = null;
+  renderAdd();
+  try {
+    const response = await api("/api/mcp/servers/from-url", { method: "POST", body: { url } });
+    add.sourceUrl = response && response.sourceUrl;
+    add.fetchedUrl = response && response.fetchedUrl;
+    add.warnings = Array.isArray(response && response.warnings) ? response.warnings : [];
+    const drafts = Array.isArray(response && response.drafts) ? response.drafts : [];
+    add.cards = drafts.map((d) => newAddCard(d.spec, d.evidence));
+  } catch (err) {
+    // /api/mcp/servers/from-url is a silent route — no toast fired. Render
+    // the backend's guidance text directly in the panel.
+    add.parseError = (err && err.message) || "Couldn't parse that URL.";
+    add.warnings = [];
+    add.cards = [];
+  } finally {
+    add.parsing = false;
+    renderAdd();
+  }
+}
+
+function handleAddManualCard() {
+  state.add.cards.push(newAddCard(blankManualSpec(), []));
+  renderAdd();
+}
+
+function handleCardFieldInput(card, target) {
+  const field = target.dataset.mcpCardField;
+  if (!field) return false;
+  if (field === "args") {
+    card.spec.args = target.value.split(/\s+/).filter(Boolean);
+    return true;
+  }
+  if (field === "id") {
+    // Free typing while editing (e.g. to fix a duplicate id) — no forced
+    // re-slugging here; slugifyId only auto-fills from the name below,
+    // and only until the user has touched the id field themselves.
+    card.spec.id = target.value;
+    return true;
+  }
+  card.spec[field] = target.value;
+  if (field === "name" && !card.idTouched) {
+    card.spec.id = slugifyId(target.value);
+  }
+  return true;
+}
+
+async function handleAddCard(card) {
+  const validation = validateSpecDraft(card.spec);
+  if (!validation.valid) {
+    card.error = Object.values(validation.errors)[0] || "Check the highlighted fields.";
+    renderAdd();
+    return;
+  }
+  card.saving = true;
+  card.error = null;
+  renderAdd();
+  try {
+    const response = await api("/api/mcp/servers", { method: "POST", body: { spec: card.spec } });
+    const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+    state.servers = servers;
+    card.added = true;
+    fireToastLocal(`Added ${card.spec.name || card.spec.id} to your library.`);
+    await refreshAll();
+  } catch (err) {
+    // Duplicate ids surface here (kind === "validation", e.g. "A server
+    // with id ... already exists") with an inline id-edit affordance on
+    // the card (renderDraftCard's idFlag), per spec §4.5 — not a dead
+    // toast. This route isn't silent, so api() also fired a toast; the
+    // inline message is the card-adjacent detail the toast can't carry.
+    card.error = (err && err.message) || "Couldn't add this server.";
+  } finally {
+    card.saving = false;
+    renderAdd();
+  }
+}
+
+if (els.add) {
+  els.add.addEventListener("input", (event) => {
+    const urlInput = event.target.closest("[data-mcp-add-url]");
+    if (urlInput) {
+      state.add.url = urlInput.value;
+      return;
+    }
+    const cardEl = event.target.closest("[data-mcp-card]");
+    if (!cardEl) return;
+    const card = state.add.cards.find((c) => c.key === cardEl.dataset.mcpCard);
+    if (!card) return;
+    if (event.target.dataset.mcpCardField === "id") card.idTouched = true;
+    if (handleCardFieldInput(card, event.target)) {
+      withFocusPreserved(els.add, renderAdd);
+    }
+  });
+
+  els.add.addEventListener("change", (event) => {
+    const cardEl = event.target.closest("[data-mcp-card]");
+    if (!cardEl) return;
+    const card = state.add.cards.find((c) => c.key === cardEl.dataset.mcpCard);
+    if (!card) return;
+    if (event.target.matches('[data-mcp-card-field="transport"]')) {
+      card.spec.transport = event.target.value;
+      renderAdd();
+    }
+  });
+
+  els.add.addEventListener("submit", (event) => {
+    if (!event.target.matches("[data-mcp-add-url-form]")) return;
+    event.preventDefault();
+    handleParseUrl();
+  });
+
+  els.add.addEventListener("click", (event) => {
+    if (event.target.closest("[data-mcp-add-manual]")) {
+      handleAddManualCard();
+      return;
+    }
+    const addBtn = event.target.closest("[data-mcp-card-add]");
+    if (addBtn) {
+      const card = state.add.cards.find((c) => c.key === addBtn.dataset.mcpCardAdd);
+      if (card) handleAddCard(card);
+      return;
+    }
+    const dismissBtn = event.target.closest("[data-mcp-card-dismiss]");
+    if (dismissBtn) {
+      state.add.cards = state.add.cards.filter((c) => c.key !== dismissBtn.dataset.mcpCardDismiss);
+      renderAdd();
+    }
+  });
+}
+
+// ---------- Discovered panel (§4.6, read-only) ----------
+
+function summarizeEntry(entry) {
+  const value = entry && entry.entry;
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 140 ? `${json.slice(0, 140)}…` : json;
+  } catch (_) {
+    return String(value);
+  }
+}
+
+function renderDiscovered() {
+  if (!els.discovered) return;
+  const groups = groupDiscoveredByHarness(state.discovered);
+  if (!groups.length) {
+    els.discovered.innerHTML = `<p class="empty-copy">Nothing found in your harness configs that isn't already tracked in your library.</p>`;
+    return;
+  }
+  const harnessLabel = (id) => (MCP_HARNESSES.find((h) => h.id === id) || {}).label || id;
+  const groupsHtml = groups
+    .map((group) => {
+      const rows = group.items
+        .map(
+          (entry) => `
+        <li class="mcp-servers-discovered-row">
+          <span class="mcp-servers-discovered-key">${escapeHtml(entry.key)}</span>
+          <span class="mcp-servers-chip">${escapeHtml(entry.scope)}</span>
+          <span class="mcp-servers-mono">${escapeHtml(entry.configPath)}</span>
+          <span class="mcp-servers-mono mcp-servers-discovered-entry">${escapeHtml(summarizeEntry(entry))}</span>
+        </li>`
+        )
+        .join("");
+      return `
+        <section class="mcp-servers-discovered-group">
+          <h5>${escapeHtml(harnessLabel(group.harness))}</h5>
+          <ul class="mcp-servers-discovered-list">${rows}</ul>
+        </section>`;
+    })
+    .join("");
+  els.discovered.innerHTML = `
+    ${groupsHtml}
+    <p class="mcp-servers-hint mcp-servers-discovered-footer">Importing these into your library arrives in a future update.</p>
+  `;
 }
 
 // ---------- Event wiring ----------
@@ -679,6 +1381,10 @@ if (els.detail) {
   els.detail.addEventListener("input", (event) => {
     const detail = state.detail;
     if (!detail) return;
+    if (detail.variantEditor && handleVariantInput(detail, event.target)) {
+      withFocusPreserved(els.detail, renderDetail);
+      return;
+    }
     if (!handleDraftInput(detail, event.target)) return;
     detail.dirty = true;
     withFocusPreserved(els.detail, renderDetail);
@@ -688,6 +1394,27 @@ if (els.detail) {
     const detail = state.detail;
     if (!detail) return;
     const target = event.target;
+
+    if (detail.variantEditor) {
+      if (target.matches("[data-mcpv-override]")) {
+        const field = target.dataset.mcpvOverride;
+        const fieldState = detail.variantEditor.formState.fields[field];
+        if (fieldState) fieldState.override = target.checked;
+        renderDetail();
+        return;
+      }
+      if (target.matches("[data-mcpv-applies]")) {
+        const part = target.dataset.mcpvApplies;
+        if (part === "harness") detail.variantEditor.formState.appliesToHarness = target.value;
+        else if (part === "scope") detail.variantEditor.formState.appliesToScope = target.value;
+        return;
+      }
+      if (target.matches('[data-mcpv-field="transport"]')) {
+        detail.variantEditor.formState.fields.transport.value = target.value;
+        return;
+      }
+    }
+
     if (target.matches('[data-mcp-field="transport"]')) {
       detail.draft.transport = target.value;
       detail.dirty = true;
@@ -764,16 +1491,80 @@ if (els.detail) {
 
     if (event.target.closest("[data-mcp-reapply]")) {
       handleReapply(server, detail);
+      return;
+    }
+
+    if (event.target.closest("[data-mcp-variant-new]")) {
+      openVariantEditor(server, detail, null);
+      renderDetail();
+      return;
+    }
+
+    const editBtn = event.target.closest("[data-mcp-variant-edit]");
+    if (editBtn) {
+      openVariantEditor(server, detail, Number(editBtn.dataset.mcpVariantEdit));
+      renderDetail();
+      return;
+    }
+
+    const deleteBtn = event.target.closest("[data-mcp-variant-delete]");
+    if (deleteBtn) {
+      handleVariantDelete(server, detail, Number(deleteBtn.dataset.mcpVariantDelete));
+      return;
+    }
+
+    if (detail.variantEditor) {
+      if (event.target.closest("[data-mcpv-cancel]")) {
+        detail.variantEditor = null;
+        renderDetail();
+        return;
+      }
+      if (event.target.closest("[data-mcpv-add-arg]")) {
+        detail.variantEditor.formState.fields.args.value.push("");
+        renderDetail();
+        return;
+      }
+      const removeVarg = event.target.closest("[data-mcpv-remove-arg]");
+      if (removeVarg) {
+        const idx = Number(removeVarg.dataset.mcpvRemoveArg);
+        detail.variantEditor.formState.fields.args.value.splice(idx, 1);
+        renderDetail();
+        return;
+      }
+      const addVkv = event.target.closest("[data-mcpv-kv-add]");
+      if (addVkv) {
+        const kv = addVkv.dataset.mcpvKvAdd;
+        detail.variantEditor.formState.fields[kv].value.push({ key: "", value: "" });
+        renderDetail();
+        return;
+      }
+      const removeVkv = event.target.closest("[data-mcpv-kv-remove]");
+      if (removeVkv) {
+        const [kv, idxStr] = removeVkv.dataset.mcpvKvRemove.split(":");
+        detail.variantEditor.formState.fields[kv].value.splice(Number(idxStr), 1);
+        renderDetail();
+        return;
+      }
+    }
+
+    if (event.target.closest("[data-mcp-remove-server]")) {
+      handleRemoveServer(server, detail);
     }
   });
 
   els.detail.addEventListener("submit", (event) => {
-    if (!event.target.matches("[data-mcp-form]")) return;
-    event.preventDefault();
     const server = state.servers.find((s) => s.id === state.selectedId);
     const detail = state.detail;
     if (!server || !detail) return;
-    handleSave(server, detail);
+    if (event.target.matches("[data-mcp-form]")) {
+      event.preventDefault();
+      handleSave(server, detail);
+      return;
+    }
+    if (event.target.matches("[data-mcp-variant-form]")) {
+      event.preventDefault();
+      handleVariantSave(server, detail);
+    }
   });
 }
 

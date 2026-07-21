@@ -244,6 +244,215 @@ test("validateSpecDraft: name is required and id must match the backend pattern"
   assert.ok(unknownTransport.errors.transport, "expected a transport error");
 });
 
+test("variantFromForm: inherit vs override-with-value vs override-with-empty for a list field (args)", async () => {
+  const { variantFromForm } = await loadLogic();
+
+  const inherit = variantFromForm({
+    label: "a",
+    fields: { args: { override: false, value: ["-y", "leftover"] } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(inherit, "args"), false, "inherit must omit the key entirely");
+
+  const overrideValue = variantFromForm({
+    label: "a",
+    fields: { args: { override: true, value: ["-y", "pkg@2"] } },
+  });
+  assert.deepEqual(overrideValue.args, ["-y", "pkg@2"]);
+
+  const overrideEmpty = variantFromForm({
+    label: "a",
+    fields: { args: { override: true, value: [] } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(overrideEmpty, "args"), true, "override-empty must set the key");
+  assert.deepEqual(overrideEmpty.args, []);
+
+  // The critical distinction: inherit (no key) is NOT the same as
+  // override-with-empty (key present, empty array).
+  assert.notDeepEqual(inherit, overrideEmpty);
+});
+
+test("variantFromForm: inherit vs override-with-value vs override-with-empty for a kv field (env)", async () => {
+  const { variantFromForm } = await loadLogic();
+
+  const inherit = variantFromForm({
+    label: "a",
+    fields: { env: { override: false, value: [{ key: "TOKEN", value: "canonical" }] } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(inherit, "env"), false);
+
+  const overrideValue = variantFromForm({
+    label: "a",
+    fields: { env: { override: true, value: [{ key: "TOKEN", value: "override-value" }] } },
+  });
+  assert.deepEqual(overrideValue.env, { TOKEN: "override-value" });
+
+  const overrideEmpty = variantFromForm({
+    label: "a",
+    fields: { env: { override: true, value: [] } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(overrideEmpty, "env"), true);
+  assert.deepEqual(overrideEmpty.env, {});
+  assert.notDeepEqual(inherit, overrideEmpty);
+});
+
+test("variantFromForm: inherit vs override-with-value vs override-with-empty for a string field (command)", async () => {
+  const { variantFromForm } = await loadLogic();
+
+  const inherit = variantFromForm({
+    label: "a",
+    fields: { command: { override: false, value: "npx" } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(inherit, "command"), false);
+
+  const overrideValue = variantFromForm({
+    label: "a",
+    fields: { command: { override: true, value: "uvx" } },
+  });
+  assert.equal(overrideValue.command, "uvx");
+
+  const overrideEmpty = variantFromForm({
+    label: "a",
+    fields: { command: { override: true, value: "" } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(overrideEmpty, "command"), true);
+  assert.equal(overrideEmpty.command, "");
+  assert.notDeepEqual(inherit, overrideEmpty);
+});
+
+test("variantFromForm builds appliesTo from harness/scope selects, omitting it when both are 'any'", async () => {
+  const { variantFromForm } = await loadLogic();
+
+  const any = variantFromForm({ label: "a", appliesToHarness: "", appliesToScope: "", fields: {} });
+  assert.equal(Object.prototype.hasOwnProperty.call(any, "appliesTo"), false);
+
+  const harnessOnly = variantFromForm({ label: "a", appliesToHarness: "claude", appliesToScope: "", fields: {} });
+  assert.deepEqual(harnessOnly.appliesTo, { harness: "claude" });
+
+  const both = variantFromForm({ label: "a", appliesToHarness: "codex", appliesToScope: "project", fields: {} });
+  assert.deepEqual(both.appliesTo, { harness: "codex", scope: "project" });
+});
+
+test("formStateFromVariant derives override flags from key presence, falling back to canonical for inherited fields", async () => {
+  const { formStateFromVariant } = await loadLogic();
+  const canonical = {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "pkg"],
+    env: { HOME_TOKEN: "canon" },
+    url: "",
+    headers: {},
+  };
+  const variant = {
+    label: "remote-http",
+    appliesTo: { harness: "claude" },
+    transport: "http",
+    args: [], // explicit override-with-empty
+    // command, env, url, headers all inherited (absent)
+  };
+  const formState = formStateFromVariant(variant, canonical);
+
+  assert.equal(formState.label, "remote-http");
+  assert.equal(formState.appliesToHarness, "claude");
+  assert.equal(formState.appliesToScope, "");
+
+  assert.equal(formState.fields.transport.override, true);
+  assert.equal(formState.fields.transport.value, "http");
+
+  assert.equal(formState.fields.command.override, false);
+  assert.equal(formState.fields.command.value, "npx", "inherited field previews the canonical value");
+
+  assert.equal(formState.fields.args.override, true);
+  assert.deepEqual(formState.fields.args.value, [], "override-with-empty must stay override:true, not fall back to canonical");
+
+  assert.equal(formState.fields.env.override, false);
+  assert.deepEqual(formState.fields.env.value, [{ key: "HOME_TOKEN", value: "canon" }]);
+
+  assert.equal(formState.fields.headers.override, false);
+  assert.deepEqual(formState.fields.headers.value, []);
+});
+
+test("variantFromForm + formStateFromVariant round-trip a variant exercising all three states across fields", async () => {
+  const { variantFromForm, formStateFromVariant } = await loadLogic();
+  const canonical = {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "pkg"],
+    env: { A: "1" },
+    url: "https://canonical.example/mcp",
+    headers: { X: "1" },
+  };
+  const variant = {
+    label: "custom",
+    appliesTo: { scope: "project" }, // harness inherited/any, scope overridden
+    // transport: inherited
+    command: "uvx", // override-with-value
+    args: [], // override-with-empty
+    // env: inherited
+    url: "", // override-with-empty (string)
+    // headers: inherited
+  };
+
+  const formState = formStateFromVariant(variant, canonical);
+  const rebuilt = variantFromForm(formState);
+  assert.deepEqual(rebuilt, variant);
+});
+
+test("isDuplicateVariantLabel is case-insensitive, trims, and excludes the variant being edited", async () => {
+  const { isDuplicateVariantLabel } = await loadLogic();
+  const variants = [{ label: "Remote HTTP" }, { label: "local" }];
+  assert.equal(isDuplicateVariantLabel("remote http", variants), true);
+  assert.equal(isDuplicateVariantLabel("  LOCAL  ", variants), true);
+  assert.equal(isDuplicateVariantLabel("new-one", variants), false);
+  assert.equal(isDuplicateVariantLabel("", variants), false);
+  // editing index 1 ("local") against its own unchanged label is not a dup
+  assert.equal(isDuplicateVariantLabel("local", variants, 1), false);
+  assert.equal(isDuplicateVariantLabel("local", variants, 0), true);
+});
+
+test("overriddenFieldsOf lists only the fields the variant actually overrides", async () => {
+  const { overriddenFieldsOf } = await loadLogic();
+  assert.deepEqual(overriddenFieldsOf({ label: "a" }), []);
+  assert.deepEqual(overriddenFieldsOf({ label: "a", appliesTo: { harness: "claude" } }), []);
+  assert.deepEqual(overriddenFieldsOf({ label: "a", command: "uvx", args: [] }), ["command", "args"]);
+  assert.deepEqual(
+    overriddenFieldsOf({ label: "a", transport: "http", url: "", headers: { X: "1" } }),
+    ["transport", "url", "headers"]
+  );
+});
+
+test("appliesToSummary renders plain-English harness/scope combinations", async () => {
+  const { appliesToSummary } = await loadLogic();
+  assert.equal(appliesToSummary(undefined), "any harness, any scope");
+  assert.equal(appliesToSummary({}), "any harness, any scope");
+  assert.equal(appliesToSummary({ harness: "claude" }), "Claude Code, any scope");
+  assert.equal(appliesToSummary({ scope: "project" }), "any harness, project");
+  assert.equal(appliesToSummary({ harness: "codex", scope: "global" }), "Codex, global");
+  assert.equal(appliesToSummary({ harness: "unknown-harness" }), "unknown-harness, any scope");
+});
+
+test("groupDiscoveredByHarness groups entries by harness, preserving first-seen order", async () => {
+  const { groupDiscoveredByHarness } = await loadLogic();
+  const entries = [
+    { harness: "claude", scope: "global", key: "a" },
+    { harness: "codex", scope: "global", key: "b" },
+    { harness: "claude", scope: "project", key: "c" },
+  ];
+  const grouped = groupDiscoveredByHarness(entries);
+  assert.deepEqual(
+    grouped.map((g) => g.harness),
+    ["claude", "codex"]
+  );
+  assert.equal(grouped[0].items.length, 2);
+  assert.equal(grouped[1].items.length, 1);
+  assert.deepEqual(groupDiscoveredByHarness([]), []);
+  assert.deepEqual(groupDiscoveredByHarness(undefined), []);
+});
+
+test("VARIANT_FIELD_KEYS matches the six overlayable McpVariant fields", async () => {
+  const { VARIANT_FIELD_KEYS } = await loadLogic();
+  assert.deepEqual(VARIANT_FIELD_KEYS, ["transport", "command", "args", "env", "url", "headers"]);
+});
+
 test("activeTargetsOf returns only active targets for the given server", async () => {
   const { activeTargetsOf } = await loadLogic();
   const statuses = [

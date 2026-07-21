@@ -177,3 +177,144 @@ export function activeTargetsOf(serverId, statuses) {
     .filter((s) => s && s.serverId === serverId && s.active)
     .map((s) => ({ harness: s.harness, scope: s.scope }));
 }
+
+// ---------------------------------------------------------------------------
+// Tri-state variant editor (spec §4.4)
+//
+// A McpVariant field (transport/command/args/env/url/headers) is a Rust
+// `Option<T>`: absent/None = INHERIT the canonical spec's value; present
+// (`Some`), including an explicitly empty `[]`/`{}`, = OVERRIDE. The variant
+// editor form must represent all three states, so `formState.fields[key]`
+// carries an explicit `override` boolean alongside `value` — the boolean,
+// not the emptiness of `value`, is what decides whether the built variant
+// gets the key at all.
+// ---------------------------------------------------------------------------
+
+// Order mirrors the McpVariant struct (src-tauri/src/backend/mcp/spec.rs)
+// minus `label`/`appliesTo`, which the form treats as variant metadata
+// rather than tri-state overlay fields.
+export const VARIANT_FIELD_KEYS = ["transport", "command", "args", "env", "url", "headers"];
+const VARIANT_KV_FIELDS = new Set(["env", "headers"]);
+const VARIANT_LIST_FIELDS = new Set(["args"]);
+
+function rowsToObjectLocal(rows) {
+  const out = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = String((row && row.key) || "").trim();
+    if (!key) continue;
+    out[key] = row && row.value != null ? String(row.value) : "";
+  }
+  return out;
+}
+
+function objectToRowsLocal(obj) {
+  return Object.entries(obj || {}).map(([key, value]) => ({
+    key,
+    value: value == null ? "" : String(value),
+  }));
+}
+
+// Builds a McpVariant from the tri-state form. For each field, `override:
+// false` means the key is omitted entirely (inherit); `override: true`
+// means the key is always set, even to an empty array/object/string
+// (explicit override-with-empty) — that distinction is the whole point of
+// this data model and must survive this conversion.
+export function variantFromForm(formState) {
+  const fs = formState || {};
+  const variant = { label: String(fs.label ?? "").trim() };
+
+  const harness = String(fs.appliesToHarness ?? "").trim();
+  const scope = String(fs.appliesToScope ?? "").trim();
+  if (harness || scope) {
+    variant.appliesTo = {};
+    if (harness) variant.appliesTo.harness = harness;
+    if (scope) variant.appliesTo.scope = scope;
+  }
+
+  const fields = fs.fields || {};
+  for (const key of VARIANT_FIELD_KEYS) {
+    const fieldState = fields[key];
+    if (!fieldState || !fieldState.override) continue; // inherit: omit key
+    if (VARIANT_KV_FIELDS.has(key)) {
+      variant[key] = rowsToObjectLocal(fieldState.value);
+    } else if (VARIANT_LIST_FIELDS.has(key)) {
+      variant[key] = Array.isArray(fieldState.value) ? [...fieldState.value] : [];
+    } else {
+      variant[key] = String(fieldState.value ?? "");
+    }
+  }
+  return variant;
+}
+
+// Inverse of variantFromForm: derives the pre-filled tri-state form for an
+// existing (or brand-new, `variant = {}`) variant against the server's
+// canonical spec. A field counts as "overridden" purely by key presence on
+// the variant object (own property, not undefined) — an overridden empty
+// array/object is still `override: true`, distinguishing it from inherit.
+export function formStateFromVariant(variant, canonical) {
+  const v = variant || {};
+  const c = canonical || {};
+  const fields = {};
+  for (const key of VARIANT_FIELD_KEYS) {
+    const overridden = Object.prototype.hasOwnProperty.call(v, key) && v[key] !== undefined;
+    const source = overridden ? v[key] : c[key];
+    if (VARIANT_KV_FIELDS.has(key)) {
+      fields[key] = { override: overridden, value: objectToRowsLocal(source) };
+    } else if (VARIANT_LIST_FIELDS.has(key)) {
+      fields[key] = { override: overridden, value: Array.isArray(source) ? [...source] : [] };
+    } else {
+      fields[key] = { override: overridden, value: String(source ?? "") };
+    }
+  }
+  return {
+    label: String(v.label ?? ""),
+    appliesToHarness: (v.appliesTo && v.appliesTo.harness) || "",
+    appliesToScope: (v.appliesTo && v.appliesTo.scope) || "",
+    fields,
+  };
+}
+
+// Client-side pre-check mirroring the backend's variant-label uniqueness
+// rule (spec.rs::validate_variants): case-insensitive, trimmed comparison
+// against every other variant. `excludeIndex` lets the editor exclude the
+// variant currently being edited from the comparison.
+export function isDuplicateVariantLabel(label, variants, excludeIndex) {
+  const norm = String(label ?? "").trim().toLowerCase();
+  if (!norm) return false;
+  return (Array.isArray(variants) ? variants : []).some(
+    (v, i) => i !== excludeIndex && String((v && v.label) || "").trim().toLowerCase() === norm
+  );
+}
+
+// Which fields a saved variant overrides — drives the "overridden-field
+// chips" in the variant list row (spec §4.4).
+export function overriddenFieldsOf(variant) {
+  const v = variant || {};
+  return VARIANT_FIELD_KEYS.filter(
+    (key) => Object.prototype.hasOwnProperty.call(v, key) && v[key] !== undefined
+  );
+}
+
+// Plain-English "applies to" summary for a variant list row, e.g.
+// "Claude Code, project" or "Any harness, any scope".
+export function appliesToSummary(appliesTo) {
+  const harnessId = appliesTo && appliesTo.harness;
+  const scope = appliesTo && appliesTo.scope;
+  const harnessLabel = harnessId
+    ? (MCP_HARNESSES.find((h) => h.id === harnessId) || {}).label || harnessId
+    : "any harness";
+  const scopeLabel = scope === "project" ? "project" : scope === "global" ? "global" : "any scope";
+  return `${harnessLabel}, ${scopeLabel}`;
+}
+
+// Groups mcp_discover's flat entry list by harness, preserving each
+// harness's first-seen order (spec §4.6).
+export function groupDiscoveredByHarness(entries) {
+  const groups = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const harness = (entry && entry.harness) || "unknown";
+    if (!groups.has(harness)) groups.set(harness, []);
+    groups.get(harness).push(entry);
+  }
+  return Array.from(groups.entries()).map(([harness, items]) => ({ harness, items }));
+}
