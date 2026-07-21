@@ -196,6 +196,32 @@ fn package_basename(pkg: &str) -> String {
 
 const SHELL_INFOS: &[&str] = &["bash", "sh", "shell", "zsh", "console", "text", ""];
 
+/// `docker run` flags that take a separate value token (space-separated,
+/// e.g. `--name helper`), beyond `-e`/`--env` (handled separately). Used so
+/// the image-name scan in `parse_command_line` doesn't mistake a flag's
+/// value for the image (e.g. `docker run --name helper ghcr.io/acme/mcp`
+/// picking `helper` as the image instead of the real one that follows it).
+const DOCKER_VALUE_FLAGS: &[&str] = &[
+    "--name",
+    "-v", "--volume",
+    "-p", "--publish",
+    "-w", "--workdir",
+    "--network",
+    "-u", "--user",
+    "--entrypoint",
+    "-h", "--hostname",
+    "--memory", "-m",
+    "--cpus",
+    "-l", "--label",
+    "--mount",
+    "--restart",
+    "--add-host",
+    "--dns",
+    "--env-file",
+    "--cap-add", "--cap-drop",
+    "--platform",
+];
+
 fn strip_prompt(line: &str) -> String {
     let t = line.trim_start();
     let t = t.strip_prefix('$').or_else(|| t.strip_prefix('>')).unwrap_or(t);
