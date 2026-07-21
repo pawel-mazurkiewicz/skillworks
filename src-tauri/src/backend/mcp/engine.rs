@@ -219,8 +219,17 @@ pub async fn remove_entry(
     adapter: &McpAdapter,
     id: &str,
 ) -> BackendResult<bool> {
-    if !fs::try_exists(path).await.unwrap_or(false) {
-        return Ok(false);
+    // `try_exists` only maps a `NotFound` metadata error to `Ok(false)`;
+    // every other error (e.g. `PermissionDenied` on the file or a parent
+    // directory) is returned as-is. The old `.unwrap_or(false)` collapsed
+    // *all* of those into "doesn't exist", so a permission error on the
+    // config file read as a successful no-op deactivation instead of the
+    // I/O failure it actually was. Only a real NotFound should short-circuit
+    // here; everything else must propagate.
+    match fs::try_exists(path).await {
+        Ok(false) => return Ok(false),
+        Ok(true) => {}
+        Err(err) => return Err(err.into()),
     }
     match adapter.format {
         ConfigFormat::Json => {
@@ -509,5 +518,48 @@ mod tests {
         let a = adapter_for("claude").unwrap();
         let entries = read_entries(&dir.path().join("nope.json"), a).await.unwrap();
         assert!(entries.is_empty());
+    }
+
+    /// Regression test: `remove_entry` used to collapse every `try_exists`
+    /// error (not just `NotFound`) into "file doesn't exist" -> `Ok(false)`,
+    /// so a permission error read as a successful no-op deactivation
+    /// instead of the I/O failure it actually was. Lock down the parent
+    /// directory so `try_exists` on a file inside it returns
+    /// `PermissionDenied`, not `NotFound`, and assert that now propagates
+    /// as an `Err` rather than a silent `Ok(false)`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_entry_propagates_permission_errors_instead_of_reporting_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Root ignores directory permission bits, so this guard would be
+        // meaningless (and would leave a locked-down directory around) when
+        // the test runs as root (e.g. some CI/container setups).
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let dir = TempDir::new().unwrap();
+        let locked = dir.path().join("locked");
+        fs::create_dir_all(&locked).await.unwrap();
+        let path = locked.join("mcp.json");
+        let a = adapter_for("claude").unwrap();
+
+        fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .await
+            .unwrap();
+
+        let result = remove_entry(&path, a, "s1").await;
+
+        // Restore permissions before any cleanup/assertions that could
+        // otherwise fail to tear down the TempDir.
+        fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(result, Err(BackendError::Io(_))),
+            "permission error must propagate, not read as a missing-file no-op: {result:?}"
+        );
     }
 }
