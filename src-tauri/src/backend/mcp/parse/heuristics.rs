@@ -387,6 +387,15 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                         }
                         i += 2;
                     }
+                    // Known value-taking flags (space-separated form): the
+                    // *next* token is the flag's value, not the image.
+                    // Without this, `--name` would fall into the generic
+                    // `starts_with('-')` branch below (consume just the
+                    // flag) and its value would be mistaken for the image
+                    // on the next iteration. The `--name=helper` form is
+                    // still handled correctly by the generic branch, since
+                    // the value is embedded in that one token.
+                    t if DOCKER_VALUE_FLAGS.contains(&t) => i += 2,
                     t if t.starts_with('-') => i += 1,
                     t => { image = Some(t.to_string()); break; }
                 }
@@ -578,6 +587,19 @@ mod tests {
         assert!(d.args.contains(&"TOKEN=abc".to_string()));
         assert_eq!(d.name.as_deref(), Some("mcp-img"));
         assert_eq!(d.env.get("TOKEN").map(String::as_str), Some("abc"), "docker -e also mirrored to env for placeholder checks");
+    }
+
+    #[test]
+    fn h3_docker_skips_value_of_known_flags_when_picking_image() {
+        let md = "```sh\ndocker run --name helper ghcr.io/acme/mcp\n```";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        assert_eq!(
+            cands[0].name.as_deref(),
+            Some("mcp"),
+            "the real image, not --name's value, must be picked"
+        );
+        assert_eq!(cands[0].command.as_deref(), Some("docker"));
     }
 
     #[test]
