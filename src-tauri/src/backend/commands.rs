@@ -2426,12 +2426,16 @@ pub async fn mcp_update_server_impl(
 /// Remove a server from the library. Warns (but does not deactivate) if the
 /// entry is still present in any harness's global config.
 #[tauri::command]
-pub async fn mcp_remove_server(id: String) -> BackendResult<McpLibraryResponse> {
-    mcp_remove_server_impl(id, None, None).await
+pub async fn mcp_remove_server(
+    id: String,
+    project_path: Option<String>,
+) -> BackendResult<McpLibraryResponse> {
+    mcp_remove_server_impl(id, project_path, None, None).await
 }
 
 pub async fn mcp_remove_server_impl(
     id: String,
+    project_path: Option<String>,
     app_home_override: Option<PathBuf>,
     home_dir_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
@@ -2446,16 +2450,36 @@ pub async fn mcp_remove_server_impl(
 
     // Warn (do not deactivate) where the entry is still present in configs.
     let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
     let mut warnings = Vec::new();
+
     for adapter in super::mcp::adapters::adapters() {
-        let path = super::mcp::adapters::config_path_for(adapter, "global", &home_dir, None)?;
-        let entries = super::mcp::engine::read_entries(&path, adapter).await?;
-        if entries.iter().any(|(k, _)| k == &id) {
-            warnings.push(format!(
-                "{id} is still active in {} global ({})",
-                adapter.harness_id,
-                path.display()
-            ));
+        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        if let Some(root) = project_root.as_deref() {
+            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+        }
+
+        for (scope, path) in targets {
+            match read_entries(&path, adapter).await {
+                Ok(entries) => {
+                    if entries.iter().any(|(k, _)| k == &id) {
+                        warnings.push(format!(
+                            "{id} is still active in {} {} ({})",
+                            adapter.harness_id,
+                            scope,
+                            path.display()
+                        ));
+                    }
+                }
+                Err(err) => {
+                    warnings.push(format!(
+                        "couldn't check {} {} ({}): {err}",
+                        adapter.harness_id,
+                        scope,
+                        path.display()
+                    ));
+                }
+            }
         }
     }
 
@@ -4151,6 +4175,7 @@ mod tests {
 
         let resp = mcp_remove_server_impl(
             "context7".into(),
+            None,
             Some(app_home.clone()),
             Some(dir.path().join("home")),
         )
@@ -4161,6 +4186,7 @@ mod tests {
         // Removing a non-existent id errors.
         assert!(mcp_remove_server_impl(
             "context7".into(),
+            None,
             Some(app_home),
             Some(dir.path().join("home"))
         )
@@ -4239,10 +4265,37 @@ mod tests {
         .await
         .unwrap();
 
-        let resp = mcp_remove_server_impl("context7".into(), Some(app_home), Some(home))
+        let resp = mcp_remove_server_impl("context7".into(), None, Some(app_home), Some(home))
             .await
             .unwrap();
         assert!(resp.warnings.iter().any(|w| w.contains("cursor")), "{:?}", resp.warnings);
+    }
+
+    #[tokio::test]
+    async fn remove_warns_project_scope_and_tolerates_malformed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        let project = dir.path().join("repo");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+        tokio::fs::create_dir_all(&project).await.unwrap();
+
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
+        mcp_activate_impl("s1".into(), "claude".into(), "project".into(), None,
+            Some(project.to_string_lossy().into_owned()),
+            Some(app_home.clone()), Some(home.clone())).await.unwrap();
+        // malformed global cursor config must not abort the removal
+        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::write(home.join(".cursor/mcp.json"), "{ nope").await.unwrap();
+
+        let resp = mcp_remove_server_impl("s1".into(),
+            Some(project.to_string_lossy().into_owned()),
+            Some(app_home), Some(home)).await.unwrap();
+        assert!(resp.servers.is_empty(), "removal succeeded despite malformed config");
+        assert!(resp.warnings.iter().any(|w| w.contains("claude") && w.contains("project")),
+            "project activation warned: {:?}", resp.warnings);
+        assert!(resp.warnings.iter().any(|w| w.contains("couldn't check")),
+            "malformed config becomes warning: {:?}", resp.warnings);
     }
 
     #[tokio::test]
