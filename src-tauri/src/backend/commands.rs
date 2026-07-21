@@ -2343,12 +2343,17 @@ fn resolve_home_dir(home_dir_override: Option<PathBuf>) -> BackendResult<PathBuf
 }
 
 /// Process-wide lock guarding every library load-modify-save cycle
-/// (add/update/remove). The desktop app is single-instance but can issue
-/// concurrent Tauri commands from the frontend (or, in tests, concurrent
-/// tasks); without serialization a read-modify-write race can silently
-/// drop a mutation. Held across the whole impl (not just the file I/O)
-/// since this is a single desktop app and correctness matters more than
-/// micro-concurrency here.
+/// (add/update/remove) *and* every harness target-config mutation
+/// (activate/deactivate's `write_entry`/`remove_entry`). The desktop app is
+/// single-instance but can issue concurrent Tauri commands from the
+/// frontend (or, in tests, concurrent tasks); without serialization a
+/// read-modify-write race on either the library file or a target config
+/// (e.g. two concurrent `mcp_activate` calls against the same harness
+/// config) can silently drop a mutation. Held across the whole impl (not
+/// just the file I/O) since this is a single desktop app and correctness
+/// matters more than micro-concurrency here. One mutex is safe to share
+/// between both use sites: the activate/deactivate impls never call back
+/// into the library-mutating commands, so there is no re-entrancy risk.
 static MCP_LIBRARY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn resolve_mcp_app_home(app_home_override: Option<PathBuf>) -> BackendResult<PathBuf> {
@@ -2536,7 +2541,10 @@ pub async fn mcp_activate_impl(
     let path = config_path_for(adapter, &scope, &home_dir, project_root.as_deref())?;
 
     let inv = resolve_effective(spec, &harness, &scope, variant_label.as_deref())?;
-    write_entry(&path, adapter, &id, &inv).await?;
+    {
+        let _guard = MCP_LIBRARY_LOCK.lock().await;
+        write_entry(&path, adapter, &id, &inv).await?;
+    }
 
     Ok(McpActivationResult {
         server_id: id,
@@ -2576,7 +2584,10 @@ pub async fn mcp_deactivate_impl(
     let home_dir = resolve_home_dir(home_dir_override)?;
     let project_root = resolve_project_root(project_path)?;
     let path = config_path_for(adapter, &scope, &home_dir, project_root.as_deref())?;
-    remove_entry(&path, adapter, &id).await?;
+    {
+        let _guard = MCP_LIBRARY_LOCK.lock().await;
+        remove_entry(&path, adapter, &id).await?;
+    }
     Ok(McpActivationResult {
         server_id: id,
         harness,
@@ -4258,6 +4269,99 @@ mod tests {
         for h in handles { h.await.unwrap().unwrap(); }
         let resp = mcp_list_library_impl(Some(app_home)).await.unwrap();
         assert_eq!(resp.servers.len(), 10, "no lost updates under concurrency");
+    }
+
+    /// Regression test for the target-config race fixed alongside the
+    /// unique-temp-file work in `fs_atomic`: many concurrent
+    /// `mcp_activate_impl` calls against the *same* harness config file
+    /// (same harness + scope) must all land — none silently lost to a
+    /// read-modify-write race or a shared-temp-file rename collision.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_activations_to_same_config_do_not_lose_entries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+
+        const N: usize = 25;
+        for i in 0..N {
+            mcp_add_manual_impl(test_spec(&format!("srv-{i}")), Some(app_home.clone()))
+                .await
+                .unwrap();
+        }
+
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let ah = app_home.clone();
+            let home = home.clone();
+            handles.push(tokio::spawn(async move {
+                mcp_activate_impl(
+                    format!("srv-{i}"),
+                    "cursor".into(),
+                    "global".into(),
+                    None,
+                    None,
+                    Some(ah),
+                    Some(home),
+                )
+                .await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let active_count = statuses
+            .iter()
+            .filter(|s| s.harness == "cursor" && s.scope == "global" && s.active)
+            .count();
+        assert_eq!(active_count, N, "every concurrent activation must land, none lost to the race");
+    }
+
+    /// Regression test for the unserialized target-config write race: many
+    /// `mcp_activate_impl` calls racing to write *distinct* entries into the
+    /// *same* harness config file must never lose an entry to a
+    /// read-modify-write race, and the shared per-process temp file used to
+    /// name each atomic write must never collide either (see
+    /// `fs_atomic::unique_tmp_suffix`). Before the `MCP_LIBRARY_LOCK` guard
+    /// around activation, concurrent writers here could clobber each
+    /// other's rename.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_activations_to_same_config_lose_no_entries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+
+        const N: usize = 20;
+        for i in 0..N {
+            mcp_add_manual_impl(test_spec(&format!("srv-{i}")), Some(app_home.clone()))
+                .await
+                .unwrap();
+        }
+
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let app_home = app_home.clone();
+            let home = home.clone();
+            handles.push(tokio::spawn(async move {
+                mcp_activate_impl(
+                    format!("srv-{i}"), "claude".into(), "global".into(),
+                    None, None, Some(app_home), Some(home),
+                ).await
+            }));
+        }
+        for h in handles { h.await.unwrap().unwrap(); }
+
+        let doc: serde_json::Value = serde_json::from_slice(
+            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
+        ).unwrap();
+        let servers = doc["mcpServers"].as_object().expect("mcpServers object");
+        assert_eq!(servers.len(), N, "no lost activations under concurrency: {servers:?}");
+        for i in 0..N {
+            assert!(servers.contains_key(&format!("srv-{i}")), "missing srv-{i}");
+        }
     }
 
     #[tokio::test]
