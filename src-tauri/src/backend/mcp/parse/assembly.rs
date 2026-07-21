@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::backend::mcp::spec::{validate_spec, McpServerSpec, McpSource, McpTransport, McpVariant};
+use crate::backend::mcp::spec::{
+    validate_spec, McpServerSpec, McpSource, McpTransport, McpVariant,
+};
 use crate::backend::types::McpServerDraft;
 
 use super::fences::scan_fences;
@@ -16,7 +18,7 @@ pub struct ExtractionResult {
     pub warnings: Vec<String>,
 }
 
-fn slugify(name: &str) -> String {
+pub(crate) fn slugify(name: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = true; // suppress leading dashes
     for c in name.chars() {
@@ -29,7 +31,9 @@ fn slugify(name: &str) -> String {
             prev_dash = true;
         }
     }
-    while out.ends_with('-') { out.pop(); }
+    while out.ends_with('-') {
+        out.pop();
+    }
     out
 }
 
@@ -65,7 +69,7 @@ fn looks_like_shell_reference(value: &str) -> bool {
     value.starts_with('$') || value.starts_with('~') || value.contains("${")
 }
 
-fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
+pub(crate) fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
     let mut out = Vec::new();
     let mut check = |field: &str, value: &str| {
         if is_placeholder(value) {
@@ -75,10 +79,18 @@ fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
             ));
         }
     };
-    for (k, v) in &spec.env { check(&format!("env.{k}"), v); }
-    for (k, v) in &spec.headers { check(&format!("headers.{k}"), v); }
-    for a in &spec.args { check("args", a); }
-    if let Some(u) = &spec.url { check("url", u); }
+    for (k, v) in &spec.env {
+        check(&format!("env.{k}"), v);
+    }
+    for (k, v) in &spec.headers {
+        check(&format!("headers.{k}"), v);
+    }
+    for a in &spec.args {
+        check("args", a);
+    }
+    if let Some(u) = &spec.url {
+        check("url", u);
+    }
     if let Some(cmd) = &spec.command {
         if looks_like_shell_reference(cmd) {
             out.push(format!(
@@ -97,15 +109,23 @@ fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
             }
         };
         if let Some(env) = &variant.env {
-            for (k, v) in env { check_variant(&format!("env.{k}"), v); }
+            for (k, v) in env {
+                check_variant(&format!("env.{k}"), v);
+            }
         }
         if let Some(headers) = &variant.headers {
-            for (k, v) in headers { check_variant(&format!("headers.{k}"), v); }
+            for (k, v) in headers {
+                check_variant(&format!("headers.{k}"), v);
+            }
         }
         if let Some(args) = &variant.args {
-            for a in args { check_variant("args", a); }
+            for a in args {
+                check_variant("args", a);
+            }
         }
-        if let Some(u) = &variant.url { check_variant("url", u); }
+        if let Some(u) = &variant.url {
+            check_variant("url", u);
+        }
         if let Some(cmd) = &variant.command {
             if looks_like_shell_reference(cmd) {
                 out.push(format!(
@@ -127,7 +147,10 @@ fn same_invocation(a: &Candidate, b: &Candidate) -> bool {
 /// exactly equal to the target's value. This is deliberately one-sided:
 /// it never asks whether the target's map is empty, only the folding
 /// (inferred-name) side's.
-fn maps_compatible(group_map: &BTreeMap<String, String>, target_map: &BTreeMap<String, String>) -> bool {
+fn maps_compatible(
+    group_map: &BTreeMap<String, String>,
+    target_map: &BTreeMap<String, String>,
+) -> bool {
     group_map.is_empty() || group_map == target_map
 }
 
@@ -147,9 +170,15 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
     for c in candidates {
         let raw = c.name.clone().unwrap_or_else(|| fallback_name.to_string());
         let mut slug = slugify(&raw);
-        if slug.is_empty() { slug = slugify(fallback_name); }
-        if slug.is_empty() { slug = "server".to_string(); }
-        if !groups.contains_key(&slug) { order.push(slug.clone()); }
+        if slug.is_empty() {
+            slug = slugify(fallback_name);
+        }
+        if slug.is_empty() {
+            slug = "server".to_string();
+        }
+        if !groups.contains_key(&slug) {
+            order.push(slug.clone());
+        }
         groups.entry(slug).or_default().push(c);
     }
 
@@ -187,9 +216,10 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
             }
             let matches = h_candidates.iter().any(|c_h| {
                 g_candidates.iter().any(|g| same_invocation(g, c_h))
-                    && g_candidates
-                        .iter()
-                        .all(|g| maps_compatible(&g.env, &c_h.env) && maps_compatible(&g.headers, &c_h.headers))
+                    && g_candidates.iter().all(|g| {
+                        maps_compatible(&g.env, &c_h.env)
+                            && maps_compatible(&g.headers, &c_h.headers)
+                    })
             });
             if matches {
                 targets.push(j);
@@ -199,7 +229,8 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
             fold_target[i] = Some(targets[0]);
         }
     }
-    let mut group_vecs: Vec<Vec<Candidate>> = order.iter().map(|s| groups.remove(s).unwrap()).collect();
+    let mut group_vecs: Vec<Vec<Candidate>> =
+        order.iter().map(|s| groups.remove(s).unwrap()).collect();
     for i in 0..order.len() {
         if let Some(target) = fold_target[i] {
             let moved = std::mem::take(&mut group_vecs[i]);
@@ -217,10 +248,17 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
         // The merged group's id/name follows the highest-priority candidate
         // (config key > `claude mcp add` name > package/image basename),
         // not necessarily the name-slug it was first bucketed under.
-        let raw = canonical.name.clone().unwrap_or_else(|| fallback_name.to_string());
+        let raw = canonical
+            .name
+            .clone()
+            .unwrap_or_else(|| fallback_name.to_string());
         let mut slug = slugify(&raw);
-        if slug.is_empty() { slug = slugify(fallback_name); }
-        if slug.is_empty() { slug = "server".to_string(); }
+        if slug.is_empty() {
+            slug = slugify(fallback_name);
+        }
+        if slug.is_empty() {
+            slug = "server".to_string();
+        }
         let mut evidence = vec![canonical.evidence.clone()];
         if !canonical.ignored_keys.is_empty() {
             evidence.push(format!("ignored: {}", canonical.ignored_keys.join(", ")));
@@ -285,7 +323,10 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
             id: slug.clone(),
             name: canonical.name.clone().unwrap_or_else(|| slug.clone()),
             description: None,
-            source: McpSource { kind: "url".to_string(), url: Some(source_url.to_string()) },
+            source: McpSource {
+                kind: "url".to_string(),
+                url: Some(source_url.to_string()),
+            },
             transport: canonical.transport,
             command: canonical.command.clone(),
             args: canonical.args.clone(),
@@ -328,12 +369,22 @@ mod tests {
         assert_eq!(r.drafts.len(), 1, "one server, described three ways");
         let c7 = r.drafts.iter().find(|d| d.spec.id == "context7").unwrap();
         assert_eq!(c7.spec.command.as_deref(), Some("npx"), "H1 canonical");
-        assert_eq!(c7.spec.variants.len(), 2, "docker + http styles both become variants");
+        assert_eq!(
+            c7.spec.variants.len(),
+            2,
+            "docker + http styles both become variants"
+        );
         assert_eq!(c7.spec.variants[0].label, "remote-http");
         assert_eq!(c7.spec.variants[1].label, "docker");
         assert_eq!(c7.spec.source.kind, "url");
-        assert_eq!(c7.spec.source.url.as_deref(), Some("https://github.com/o/r"));
-        assert!(c7.evidence.iter().any(|e| e.contains("H1")), "evidence carried");
+        assert_eq!(
+            c7.spec.source.url.as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert!(
+            c7.evidence.iter().any(|e| e.contains("H1")),
+            "evidence carried"
+        );
     }
 
     #[test]
@@ -353,7 +404,10 @@ mod tests {
         );
         let r = drafts_of(md);
         assert_eq!(r.drafts.len(), 1);
-        assert!(r.drafts[0].spec.variants.is_empty(), "same invocation → dedup, not variant");
+        assert!(
+            r.drafts[0].spec.variants.is_empty(),
+            "same invocation → dedup, not variant"
+        );
     }
 
     #[test]
@@ -361,7 +415,10 @@ mod tests {
         let md = "```json\n{\"mcpServers\":{\"s\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"],\"env\":{\"API_KEY\":\"YOUR_API_KEY\",\"T\":\"<token>\"}}}}\n```";
         let r = drafts_of(md);
         assert_eq!(r.drafts.len(), 1);
-        assert_eq!(r.drafts[0].spec.env.get("API_KEY").map(String::as_str), Some("YOUR_API_KEY"));
+        assert_eq!(
+            r.drafts[0].spec.env.get("API_KEY").map(String::as_str),
+            Some("YOUR_API_KEY")
+        );
         assert!(r.warnings.iter().any(|w| w.contains("YOUR_API_KEY")));
         assert!(r.warnings.iter().any(|w| w.contains("<token>")));
     }
@@ -374,8 +431,13 @@ mod tests {
         );
         let r = drafts_of(md);
         assert_eq!(r.drafts.len(), 1);
-        assert!(r.warnings.iter().any(|w| w.contains("remote-http") && w.contains("YOUR_TOKEN")),
-            "variant label named in warning: {:?}", r.warnings);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("remote-http") && w.contains("YOUR_TOKEN")),
+            "variant label named in warning: {:?}",
+            r.warnings
+        );
     }
 
     #[test]
@@ -391,7 +453,10 @@ mod tests {
     fn nothing_found_is_empty_success() {
         let r = drafts_of("# Just a readme\nNo config here.\n");
         assert!(r.drafts.is_empty());
-        assert!(r.warnings.is_empty(), "the 'nothing found' warning is added by the command, not the parser");
+        assert!(
+            r.warnings.is_empty(),
+            "the 'nothing found' warning is added by the command, not the parser"
+        );
     }
 
     #[test]
@@ -415,11 +480,19 @@ mod tests {
     fn explicit_names_with_shared_launcher_never_merge() {
         let md = "```json\n{\"mcpServers\":{\"github\":{\"command\":\"npx\",\"args\":[\"-y\",\"multi-mcp\"],\"env\":{\"GITHUB_TOKEN\":\"a\"}},\"gitlab\":{\"command\":\"npx\",\"args\":[\"-y\",\"multi-mcp\"],\"env\":{\"GITLAB_TOKEN\":\"b\"}}}}\n```";
         let r = drafts_of(md);
-        assert_eq!(r.drafts.len(), 2, "distinct explicit servers must both survive");
+        assert_eq!(
+            r.drafts.len(),
+            2,
+            "distinct explicit servers must both survive"
+        );
         let ids: Vec<&str> = r.drafts.iter().map(|d| d.spec.id.as_str()).collect();
         assert!(ids.contains(&"github") && ids.contains(&"gitlab"));
         let gl = r.drafts.iter().find(|d| d.spec.id == "gitlab").unwrap();
-        assert_eq!(gl.spec.env.get("GITLAB_TOKEN").map(String::as_str), Some("b"), "env preserved");
+        assert_eq!(
+            gl.spec.env.get("GITLAB_TOKEN").map(String::as_str),
+            Some("b"),
+            "env preserved"
+        );
     }
 
     #[test]
@@ -483,7 +556,11 @@ mod tests {
             "```sh\ndocker run -e T=other img\n```\n",
         );
         let r = drafts_of(md);
-        assert_eq!(r.drafts.len(), 2, "env-incompatible inferred group stays separate");
+        assert_eq!(
+            r.drafts.len(),
+            2,
+            "env-incompatible inferred group stays separate"
+        );
     }
 
     #[test]
@@ -517,10 +594,19 @@ mod tests {
     #[test]
     fn crlf_readme_yields_one_draft_with_remote_variant() {
         let r = drafts_of(CONTEXT7_STYLE_README_CRLF);
-        assert_eq!(r.drafts.len(), 1, "one server, three CRLF sections: {:?}", r.warnings);
+        assert_eq!(
+            r.drafts.len(),
+            1,
+            "one server, three CRLF sections: {:?}",
+            r.warnings
+        );
         let d = &r.drafts[0];
         assert_eq!(d.spec.id, "context7");
-        assert_eq!(d.spec.command.as_deref(), Some("npx"), "H1 json block is canonical");
+        assert_eq!(
+            d.spec.command.as_deref(),
+            Some("npx"),
+            "H1 json block is canonical"
+        );
         assert_eq!(d.spec.args, vec!["-y", "@upstash/context7-mcp"]);
         assert_eq!(
             d.spec.variants.len(),
@@ -529,8 +615,15 @@ mod tests {
              only the remote block survives as a variant"
         );
         assert_eq!(d.spec.variants[0].label, "remote-http");
-        assert_eq!(d.spec.variants[0].url.as_deref(), Some("https://mcp.context7.com/mcp"));
-        assert!(r.warnings.is_empty(), "no placeholders in this fixture: {:?}", r.warnings);
+        assert_eq!(
+            d.spec.variants[0].url.as_deref(),
+            Some("https://mcp.context7.com/mcp")
+        );
+        assert!(
+            r.warnings.is_empty(),
+            "no placeholders in this fixture: {:?}",
+            r.warnings
+        );
     }
 
     /// Monorepo-style README bundling three servers under one `mcpServers`
@@ -567,15 +660,27 @@ mod tests {
 
     #[test]
     fn monorepo_readme_with_unicode_name_yields_three_drafts() {
-        assert_eq!(slugify("café-mcp"), "caf-mcp", "actual slugify behavior for this fixture's unicode name");
+        assert_eq!(
+            slugify("café-mcp"),
+            "caf-mcp",
+            "actual slugify behavior for this fixture's unicode name"
+        );
 
         let r = drafts_of(MONOREPO_STYLE_README);
-        assert_eq!(r.drafts.len(), 3, "three servers, one unicode-named: {:?}", r.warnings);
+        assert_eq!(
+            r.drafts.len(),
+            3,
+            "three servers, one unicode-named: {:?}",
+            r.warnings
+        );
         let mut ids: Vec<&str> = r.drafts.iter().map(|d| d.spec.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, vec!["alpha", "beta", "caf-mcp"]);
         let cafe = r.drafts.iter().find(|d| d.spec.id == "caf-mcp").unwrap();
-        assert_eq!(cafe.spec.name, "café-mcp", "display name keeps the original unicode; only the id is slugified");
+        assert_eq!(
+            cafe.spec.name, "café-mcp",
+            "display name keeps the original unicode; only the id is slugified"
+        );
         assert_eq!(cafe.spec.command.as_deref(), Some("npx"));
         assert_eq!(cafe.spec.args, vec!["-y", "@acme/cafe-mcp"]);
     }
