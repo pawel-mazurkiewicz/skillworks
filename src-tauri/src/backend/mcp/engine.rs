@@ -63,6 +63,16 @@ pub fn render_entry_json(adapter: &McpAdapter, inv: &EffectiveInvocation) -> Val
     if adapter.discriminator == Discriminator::OpenCodeTypes {
         obj.insert("enabled".into(), json!(true));
     }
+    // Copilot CLI's mcp-config schema documents a `tools` array on every
+    // server entry (local and remote), used to allow-list which of the
+    // server's tools Copilot may call; omitting it defaults to `*` (all
+    // tools) but Copilot's docs show it explicitly set, so emit the
+    // documented default rather than relying on the implicit one. No
+    // per-server allow-list support yet — always `["*"]`. Guarded to the
+    // copilot adapter only; no other harness's dialect uses this field.
+    if adapter.harness_id == "copilot" {
+        obj.insert("tools".into(), json!(["*"]));
+    }
     Value::Object(obj)
 }
 
@@ -387,8 +397,25 @@ mod tests {
     #[test]
     fn copilot_dialect_types() {
         let a = adapter_for("copilot").unwrap();
-        assert_eq!(render_entry_json(a, &stdio_inv())["type"], "local");
-        assert_eq!(render_entry_json(a, &http_inv())["type"], "http");
+        let local = render_entry_json(a, &stdio_inv());
+        assert_eq!(local["type"], "local");
+        assert_eq!(local["tools"], json!(["*"]), "copilot entries default to allow all tools");
+        let remote = render_entry_json(a, &http_inv());
+        assert_eq!(remote["type"], "http");
+        assert_eq!(remote["tools"], json!(["*"]));
+    }
+
+    #[test]
+    fn tools_field_is_copilot_only() {
+        // No other harness's dialect should pick up Copilot's `tools`
+        // allow-list field.
+        for id in ["claude", "cursor", "kiro", "opencode", "gemini"] {
+            let a = adapter_for(id).unwrap();
+            assert!(
+                render_entry_json(a, &stdio_inv()).get("tools").is_none(),
+                "{id} unexpectedly got a tools field"
+            );
+        }
     }
 
     #[test]
