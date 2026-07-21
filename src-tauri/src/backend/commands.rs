@@ -2342,6 +2342,15 @@ fn resolve_home_dir(home_dir_override: Option<PathBuf>) -> BackendResult<PathBuf
     }
 }
 
+/// Process-wide lock guarding every library load-modify-save cycle
+/// (add/update/remove). The desktop app is single-instance but can issue
+/// concurrent Tauri commands from the frontend (or, in tests, concurrent
+/// tasks); without serialization a read-modify-write race can silently
+/// drop a mutation. Held across the whole impl (not just the file I/O)
+/// since this is a single desktop app and correctness matters more than
+/// micro-concurrency here.
+static MCP_LIBRARY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn resolve_mcp_app_home(app_home_override: Option<PathBuf>) -> BackendResult<PathBuf> {
     let home_dir = dirs::home_dir()
         .ok_or_else(|| BackendError::Validation("home directory unavailable".to_string()))?;
@@ -2377,6 +2386,7 @@ pub async fn mcp_add_manual_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
     validate_spec(&spec)?;
+    let _guard = MCP_LIBRARY_LOCK.lock().await;
     let app_home = resolve_mcp_app_home(app_home_override).await?;
     let mut servers = load_library(&app_home).await?;
     if servers.iter().any(|s| s.id == spec.id) {
@@ -2386,6 +2396,29 @@ pub async fn mcp_add_manual_impl(
         )));
     }
     servers.push(spec);
+    save_library(&app_home, &servers).await?;
+    Ok(McpLibraryResponse { servers, warnings: Vec::new() })
+}
+
+/// Replace an existing library server spec in place.
+#[tauri::command]
+pub async fn mcp_update_server(spec: McpServerSpec) -> BackendResult<McpLibraryResponse> {
+    mcp_update_server_impl(spec, None).await
+}
+
+pub async fn mcp_update_server_impl(
+    spec: McpServerSpec,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<McpLibraryResponse> {
+    validate_spec(&spec)?;
+    let _guard = MCP_LIBRARY_LOCK.lock().await;
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let mut servers = load_library(&app_home).await?;
+    let idx = servers
+        .iter()
+        .position(|s| s.id == spec.id)
+        .ok_or_else(|| BackendError::NotFound(format!("No library server with id {:?}", spec.id)))?;
+    servers[idx] = spec;
     save_library(&app_home, &servers).await?;
     Ok(McpLibraryResponse { servers, warnings: Vec::new() })
 }
@@ -2402,6 +2435,7 @@ pub async fn mcp_remove_server_impl(
     app_home_override: Option<PathBuf>,
     home_dir_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
+    let _guard = MCP_LIBRARY_LOCK.lock().await;
     let app_home = resolve_mcp_app_home(app_home_override).await?;
     let mut servers = load_library(&app_home).await?;
     let before = servers.len();
@@ -4148,6 +4182,45 @@ mod tests {
             headers: Default::default(),
             variants: vec![],
         }
+    }
+
+    #[tokio::test]
+    async fn mcp_update_server_replaces_and_validates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
+
+        let mut edited = test_spec("s1");
+        edited.args = vec!["-y".into(), "other-pkg".into()];
+        let resp = mcp_update_server_impl(edited, Some(app_home.clone())).await.unwrap();
+        assert_eq!(resp.servers[0].args[1], "other-pkg");
+
+        // unknown id
+        assert!(matches!(
+            mcp_update_server_impl(test_spec("ghost"), Some(app_home.clone())).await,
+            Err(BackendError::NotFound(_))
+        ));
+        // invalid spec rejected before any write
+        let mut bad = test_spec("s1");
+        bad.command = None;
+        assert!(mcp_update_server_impl(bad, Some(app_home)).await.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn library_mutations_do_not_lose_updates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app_home = dir.path().join("apphome");
+        // 10 concurrent adds with distinct ids -> all 10 present afterward
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let ah = app_home.clone();
+            handles.push(tokio::spawn(async move {
+                mcp_add_manual_impl(test_spec(&format!("srv-{i}")), Some(ah)).await
+            }));
+        }
+        for h in handles { h.await.unwrap().unwrap(); }
+        let resp = mcp_list_library_impl(Some(app_home)).await.unwrap();
+        assert_eq!(resp.servers.len(), 10, "no lost updates under concurrency");
     }
 
     #[tokio::test]

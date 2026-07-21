@@ -45,6 +45,7 @@ pub fn run() {
             backend::commands::mcp_list_library,
             backend::commands::mcp_add_manual,
             backend::commands::mcp_remove_server,
+            backend::commands::mcp_update_server,
             backend::commands::mcp_activate,
             backend::commands::mcp_deactivate,
             backend::commands::mcp_status,
