@@ -2883,8 +2883,14 @@ pub async fn mcp_reconcile_impl(
                 {
                     Some(g) => {
                         g.found_in.push(target_ref);
-                        if g.matches.is_none() {
-                            g.matches = matches;
+                        // Only keep the "matches a library server" hint when every
+                        // grouped target agrees. Match is resolved per-target
+                        // (variant selection is harness/scope-specific), so one
+                        // target could match while another doesn't — dropping the
+                        // hint on disagreement avoids asserting a match that holds
+                        // for only some of the deduped targets.
+                        if g.matches != matches {
+                            g.matches = None;
                         }
                     }
                     None => groups.push(ImportGroup {
@@ -5125,6 +5131,72 @@ mod tests {
             "identical invocation collapses to one candidate"
         );
         assert_eq!(srv[0].found_in.len(), 2, "lists both targets");
+    }
+
+    #[tokio::test]
+    async fn reconcile_drops_match_hint_when_grouped_targets_disagree() {
+        use crate::backend::mcp::spec::{McpAppliesTo, McpVariant};
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+
+        // Library server "lib" whose cursor variant matches the observed
+        // invocation, but whose canonical (kiro) form does not.
+        let lib = McpServerSpec {
+            id: "lib".into(),
+            name: "Lib".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "base".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![McpVariant {
+                label: "cursor-only".into(),
+                applies_to: Some(McpAppliesTo {
+                    harness: Some("cursor".into()),
+                    scope: None,
+                }),
+                transport: None,
+                command: None,
+                args: Some(vec!["-y".into(), "shared".into()]),
+                env: None,
+                url: None,
+                headers: None,
+            }],
+        };
+        seed_library(&app_home, &[lib]).await;
+
+        // The same unmanaged "srv" (matching only the cursor variant) in both
+        // cursor and kiro — dedups to one candidate spanning two targets.
+        let body = r#"{"mcpServers":{"srv":{"command":"npx","args":["-y","shared"]}}}"#;
+        tokio::fs::write(home.join(".cursor/mcp.json"), body)
+            .await
+            .unwrap();
+        tokio::fs::write(home.join(".kiro/settings/mcp.json"), body)
+            .await
+            .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        let srv = out.imports.iter().find(|c| c.key == "srv").unwrap();
+        assert_eq!(srv.found_in.len(), 2);
+        assert!(
+            srv.matches_library_id.is_none(),
+            "hint dropped because the match holds for only one grouped target"
+        );
     }
 
     #[tokio::test]
