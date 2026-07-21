@@ -123,6 +123,17 @@ Before the URL-ingestion flow is exposed as a one-click UI action:
   when the docker image basename matches the config key; separate drafts are
   the common real-world result.
 
+## Phase D follow-ups (from whole-phase review, 2026-07-21)
+
+Non-blocking; landed Phase D but flagged for a later pass:
+- Add a wall-clock total budget to `fetch_markdown_guarded` (worst case ~4 min
+  across 8 hops of per-hop timeouts; SSRF/size already bounded).
+- Distinct in-tab "couldn't load" state instead of falling through to the
+  empty-library copy when a tab refresh fails.
+- Narrow the add-card duplicate-id inline message to the real dup-id case
+  (currently any `validation` kind trips it); add the amber placeholder flag to
+  variant kv rows; dedupe `renderKvRows`/`renderVariantKvRows`.
+
 ## Open questions (carried forward)
 - JSONC comment preservation for OpenCode configs (dropped in A).
 - Copilot project path: `.mcp.json` chosen; `.github/mcp.json` also exists.
