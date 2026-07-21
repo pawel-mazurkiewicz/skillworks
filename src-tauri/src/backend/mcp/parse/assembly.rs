@@ -228,13 +228,27 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
         let mut variants: Vec<McpVariant> = Vec::new();
         let mut used_labels: Vec<String> = Vec::new();
         for alt in &group[1..] {
-            if same_invocation(&canonical, alt) || variants.iter().any(|v| {
+            // Dedup must also key on env/headers, not just
+            // (transport, command, args, url): two candidates that share an
+            // invocation but carry different env/header values (e.g. two
+            // `github` config blocks that differ only by token) are
+            // distinct servers, not duplicates — collapsing them here would
+            // silently drop the second one's credentials.
+            let alt_env_field = if alt.env.is_empty() { None } else { Some(&alt.env) };
+            let alt_headers_field = if alt.headers.is_empty() { None } else { Some(&alt.headers) };
+            let duplicate_of_canonical = same_invocation(&canonical, alt)
+                && canonical.env == alt.env
+                && canonical.headers == alt.headers;
+            let duplicate_of_variant = variants.iter().any(|v| {
                 // compare against already-added variants via their fields
                 v.transport == Some(alt.transport)
                     && v.command == alt.command
                     && v.args.as_deref() == Some(alt.args.as_slice())
                     && v.url == alt.url
-            }) {
+                    && v.env.as_ref() == alt_env_field
+                    && v.headers.as_ref() == alt_headers_field
+            });
+            if duplicate_of_canonical || duplicate_of_variant {
                 continue;
             }
             let mut label = variant_label(alt);
@@ -395,6 +409,29 @@ mod tests {
         assert!(ids.contains(&"github") && ids.contains(&"gitlab"));
         let gl = r.drafts.iter().find(|d| d.spec.id == "gitlab").unwrap();
         assert_eq!(gl.spec.env.get("GITLAB_TOKEN").map(String::as_str), Some("b"), "env preserved");
+    }
+
+    #[test]
+    fn same_command_candidates_differing_only_by_env_become_a_variant_not_dropped() {
+        // Two `github` blocks, identical transport/command/args/url, but
+        // different env tokens. Before widening the dedup key past
+        // (transport, command, args, url), the second block's env was
+        // silently dropped as an "exact duplicate" of the first.
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"github\":{\"command\":\"npx\",\"args\":[\"-y\",\"github-mcp\"],\"env\":{\"GITHUB_TOKEN\":\"tok-a\"}}}}\n```\n",
+            "```json\n{\"mcpServers\":{\"github\":{\"command\":\"npx\",\"args\":[\"-y\",\"github-mcp\"],\"env\":{\"GITHUB_TOKEN\":\"tok-b\"}}}}\n```\n",
+        );
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1);
+        let d = &r.drafts[0];
+        assert_eq!(d.spec.env.get("GITHUB_TOKEN").map(String::as_str), Some("tok-a"), "first block stays canonical");
+        assert_eq!(d.spec.variants.len(), 1, "the differently-tokened second block must survive as a variant, not be dropped");
+        let v = &d.spec.variants[0];
+        assert_eq!(
+            v.env.as_ref().and_then(|e| e.get("GITHUB_TOKEN")).map(String::as_str),
+            Some("tok-b"),
+            "second block's distinct env token preserved on the variant"
+        );
     }
 
     #[test]
