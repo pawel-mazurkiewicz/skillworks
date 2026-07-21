@@ -147,3 +147,116 @@ test("generation guard drops stale writes", async () => {
   assert.equal(isStale(first, second), true, "an older generation is stale once a newer one exists");
   assert.equal(isStale(second, second), false, "the current generation is never stale");
 });
+
+test("MCP_HARNESSES mirrors the backend adapter table order and trust notes", async () => {
+  const { MCP_HARNESSES } = await loadLogic();
+  assert.equal(MCP_HARNESSES.length, 7);
+  assert.deepEqual(
+    MCP_HARNESSES.map((h) => h.id),
+    ["claude", "codex", "cursor", "opencode", "gemini", "copilot", "kiro"]
+  );
+  assert.deepEqual(
+    MCP_HARNESSES.filter((h) => h.trustNote).map((h) => h.id),
+    ["claude", "codex"]
+  );
+  for (const h of MCP_HARNESSES) {
+    assert.ok(h.label && typeof h.label === "string", `${h.id} needs a label`);
+  }
+});
+
+test("validateSpecDraft: stdio transport requires a non-empty command", async () => {
+  const { validateSpecDraft } = await loadLogic();
+  const missing = validateSpecDraft({
+    id: "srv-1",
+    name: "Server",
+    transport: "stdio",
+    command: "",
+    url: "",
+  });
+  assert.equal(missing.valid, false);
+  assert.ok(missing.errors.command, "expected a command error");
+
+  const ok = validateSpecDraft({
+    id: "srv-1",
+    name: "Server",
+    transport: "stdio",
+    command: "npx",
+    url: "",
+  });
+  assert.equal(ok.valid, true);
+  assert.deepEqual(ok.errors, {});
+});
+
+test("validateSpecDraft: http/sse transports require a non-empty url", async () => {
+  const { validateSpecDraft } = await loadLogic();
+  for (const transport of ["http", "sse"]) {
+    const missing = validateSpecDraft({
+      id: "srv-1",
+      name: "Server",
+      transport,
+      command: "",
+      url: "",
+    });
+    assert.equal(missing.valid, false, `${transport} without url should be invalid`);
+    assert.ok(missing.errors.url, `${transport} expected a url error`);
+
+    const ok = validateSpecDraft({
+      id: "srv-1",
+      name: "Server",
+      transport,
+      command: "",
+      url: "https://example.com/mcp",
+    });
+    assert.equal(ok.valid, true, `${transport} with url should be valid`);
+  }
+});
+
+test("validateSpecDraft: name is required and id must match the backend pattern", async () => {
+  const { validateSpecDraft } = await loadLogic();
+  const noName = validateSpecDraft({
+    id: "srv-1",
+    name: "   ",
+    transport: "stdio",
+    command: "npx",
+    url: "",
+  });
+  assert.equal(noName.valid, false);
+  assert.ok(noName.errors.name, "expected a name error");
+
+  const badId = validateSpecDraft({
+    id: "Not Valid!",
+    name: "Server",
+    transport: "stdio",
+    command: "npx",
+    url: "",
+  });
+  assert.equal(badId.valid, false);
+  assert.ok(badId.errors.id, "expected an id error");
+
+  const unknownTransport = validateSpecDraft({
+    id: "srv-1",
+    name: "Server",
+    transport: "carrier-pigeon",
+    command: "npx",
+    url: "",
+  });
+  assert.equal(unknownTransport.valid, false);
+  assert.ok(unknownTransport.errors.transport, "expected a transport error");
+});
+
+test("activeTargetsOf returns only active targets for the given server", async () => {
+  const { activeTargetsOf } = await loadLogic();
+  const statuses = [
+    { serverId: "srv-1", harness: "claude", scope: "global", active: true },
+    { serverId: "srv-1", harness: "claude", scope: "project", active: false },
+    { serverId: "srv-1", harness: "codex", scope: "global", active: true },
+    { serverId: "srv-2", harness: "claude", scope: "global", active: true },
+  ];
+  assert.deepEqual(activeTargetsOf("srv-1", statuses), [
+    { harness: "claude", scope: "global" },
+    { harness: "codex", scope: "global" },
+  ]);
+  assert.deepEqual(activeTargetsOf("srv-missing", statuses), []);
+  assert.deepEqual(activeTargetsOf("srv-1", []), []);
+  assert.deepEqual(activeTargetsOf("srv-1", undefined), []);
+});

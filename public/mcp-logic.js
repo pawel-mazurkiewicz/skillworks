@@ -120,3 +120,60 @@ export function newGeneration() {
 export function isStale(gen, current) {
   return gen !== current;
 }
+
+// The 7 activation-matrix rows, in the same order as
+// src-tauri/src/backend/mcp/adapters.rs::ADAPTERS (harness_id, label,
+// project_trust_note). Kept as a literal array (not derived from the
+// backend) since the frontend has no way to introspect Rust statics; if the
+// adapter table changes, this const must be updated to match.
+export const MCP_HARNESSES = [
+  { id: "claude", label: "Claude Code", trustNote: true },
+  { id: "codex", label: "Codex", trustNote: true },
+  { id: "cursor", label: "Cursor", trustNote: false },
+  { id: "opencode", label: "OpenCode", trustNote: false },
+  { id: "gemini", label: "Gemini CLI", trustNote: false },
+  { id: "copilot", label: "Copilot CLI", trustNote: false },
+  { id: "kiro", label: "Kiro", trustNote: false },
+];
+
+const VALID_TRANSPORTS = new Set(["stdio", "http", "sse"]);
+const VALID_ID = /^[a-z0-9][a-z0-9-]*$/;
+
+// Client-side mirror of src-tauri/src/backend/mcp/spec.rs::validate_spec's
+// basic (non-variant) rules: valid id shape, non-empty name, and
+// transport-dependent required fields (stdio -> command, http/sse -> url).
+// Returns { valid, errors } where `errors` is keyed by form field name so
+// the fields form can show inline messages next to the offending control.
+export function validateSpecDraft(spec) {
+  const errors = {};
+  const id = String((spec && spec.id) || "");
+  if (!VALID_ID.test(id)) {
+    errors.id =
+      "Id must start with a lowercase letter or digit and contain only lowercase letters, digits, and hyphens.";
+  }
+  const name = String((spec && spec.name) || "").trim();
+  if (!name) {
+    errors.name = "Server name is required.";
+  }
+  const transport = spec && spec.transport;
+  const command = String((spec && spec.command) || "").trim();
+  const url = String((spec && spec.url) || "").trim();
+  if (!VALID_TRANSPORTS.has(transport)) {
+    errors.transport = "Choose a transport.";
+  } else if (transport === "stdio") {
+    if (!command) errors.command = "Stdio transport requires a command.";
+  } else if (!url) {
+    errors.url = `${transport === "http" ? "HTTP" : "SSE"} transport requires a url.`;
+  }
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+// Pure helper for the staleness/Reapply flow (spec §4.2/§4.3): given the
+// full statuses list from mcp_status, return the {harness, scope} pairs
+// where this server is currently active — i.e. the targets Reapply must
+// re-run mcp_activate against.
+export function activeTargetsOf(serverId, statuses) {
+  return (Array.isArray(statuses) ? statuses : [])
+    .filter((s) => s && s.serverId === serverId && s.active)
+    .map((s) => ({ harness: s.harness, scope: s.scope }));
+}
