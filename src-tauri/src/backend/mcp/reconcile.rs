@@ -33,6 +33,8 @@ pub fn invocation_eq(a: &ObservedInvocation, b: &ObservedInvocation) -> bool {
         && a.env == b.env
         && a.url == b.url
         && a.headers == b.headers
+        && a.enabled == b.enabled
+        && a.tools == b.tools
 }
 
 fn diff_string_map(
@@ -93,6 +95,20 @@ pub fn diff_invocation(
     }
     diff_string_map("env", &expected.env, &observed.env, &mut out);
     diff_string_map("headers", &expected.headers, &observed.headers, &mut out);
+    if expected.enabled != observed.enabled {
+        out.push(FieldDiff {
+            field: "enabled".into(),
+            expected: expected.enabled.map(|b| b.to_string()),
+            observed: observed.enabled.map(|b| b.to_string()),
+        });
+    }
+    if expected.tools != observed.tools {
+        out.push(FieldDiff {
+            field: "tools".into(),
+            expected: expected.tools.as_ref().map(|t| t.join(" ")),
+            observed: observed.tools.as_ref().map(|t| t.join(" ")),
+        });
+    }
     out
 }
 
@@ -129,6 +145,8 @@ mod tests {
             env: BTreeMap::new(),
             url: None,
             headers: BTreeMap::new(),
+            enabled: None,
+            tools: None,
             unmapped: vec![],
         }
     }
@@ -157,6 +175,32 @@ mod tests {
         let fields: Vec<&str> = diffs.iter().map(|d| d.field.as_str()).collect();
         assert!(fields.contains(&"args"));
         assert!(fields.contains(&"env.TOKEN"));
+    }
+
+    #[test]
+    fn enabled_divergence_is_significant() {
+        // OpenCode's `enabled: false` on disk must surface as drift, not read
+        // as in-sync against the library's rendered `enabled: true`.
+        let mut expected = stdio(&["-y", "pkg"]);
+        expected.enabled = Some(true);
+        let mut observed = stdio(&["-y", "pkg"]);
+        observed.enabled = Some(false);
+        assert!(!invocation_eq(&expected, &observed));
+        let diffs = diff_invocation(&expected, &observed);
+        assert!(diffs.iter().any(|d| d.field == "enabled"));
+    }
+
+    #[test]
+    fn tools_divergence_is_significant() {
+        // Copilot's restrictive allow-list must not silently read as the
+        // library's `["*"]`.
+        let mut expected = stdio(&["-y", "pkg"]);
+        expected.tools = Some(vec!["*".into()]);
+        let mut observed = stdio(&["-y", "pkg"]);
+        observed.tools = Some(vec!["search".into()]);
+        assert!(!invocation_eq(&expected, &observed));
+        let diffs = diff_invocation(&expected, &observed);
+        assert!(diffs.iter().any(|d| d.field == "tools"));
     }
 
     #[test]

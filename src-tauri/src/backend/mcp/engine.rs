@@ -23,6 +23,13 @@ pub struct ObservedInvocation {
     pub env: BTreeMap<String, String>,
     pub url: Option<String>,
     pub headers: BTreeMap<String, String>,
+    /// OpenCode's renderer-owned `enabled` discriminant. `Some` only for the
+    /// opencode dialect (a missing key on disk means enabled → `Some(true)`);
+    /// `None` for every other harness so it never contributes to drift there.
+    pub enabled: Option<bool>,
+    /// Copilot's renderer-owned `tools` allow-list. `Some` only for the copilot
+    /// dialect (a missing key on disk defaults to `["*"]`); `None` elsewhere.
+    pub tools: Option<Vec<String>>,
     pub unmapped: Vec<String>,
 }
 
@@ -89,6 +96,9 @@ pub fn parse_entry(adapter: &McpAdapter, value: &Value) -> BackendResult<Observe
     let env_key = adapter.env_field;
 
     let mut consumed: Vec<&str> = vec!["type", "enabled", env_key, headers_key];
+    if adapter.harness_id == "copilot" {
+        consumed.push("tools");
+    }
 
     let mut command: Option<String> = None;
     let mut args: Vec<String> = Vec::new();
@@ -176,6 +186,25 @@ pub fn parse_entry(adapter: &McpAdapter, value: &Value) -> BackendResult<Observe
         .cloned()
         .collect();
 
+    // Renderer-owned discriminant fields are significant: surfacing a divergence
+    // is how the user learns their on-disk `enabled`/`tools` no longer match the
+    // library's rendered form. A missing key maps to the harness default so the
+    // common (key-absent) case doesn't read as false drift.
+    let enabled = if adapter.discriminator == Discriminator::OpenCodeTypes {
+        Some(obj.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+    } else {
+        None
+    };
+    let tools = if adapter.harness_id == "copilot" {
+        Some(
+            obj.get("tools")
+                .map(|v| json_string_vec(Some(v)))
+                .unwrap_or_else(|| vec!["*".to_string()]),
+        )
+    } else {
+        None
+    };
+
     Ok(ObservedInvocation {
         transport,
         command,
@@ -183,6 +212,8 @@ pub fn parse_entry(adapter: &McpAdapter, value: &Value) -> BackendResult<Observe
         env,
         url,
         headers,
+        enabled,
+        tools,
         unmapped,
     })
 }
@@ -409,11 +440,7 @@ pub async fn write_entry(
 }
 
 /// Remove only `id`. Returns true when an entry was actually removed.
-pub async fn remove_entry(
-    path: &Path,
-    adapter: &McpAdapter,
-    id: &str,
-) -> BackendResult<bool> {
+pub async fn remove_entry(path: &Path, adapter: &McpAdapter, id: &str) -> BackendResult<bool> {
     // `try_exists` only maps a `NotFound` metadata error to `Ok(false)`;
     // every other error (e.g. `PermissionDenied` on the file or a parent
     // directory) is returned as-is. The old `.unwrap_or(false)` collapsed
@@ -584,7 +611,11 @@ mod tests {
         let a = adapter_for("copilot").unwrap();
         let local = render_entry_json(a, &stdio_inv());
         assert_eq!(local["type"], "local");
-        assert_eq!(local["tools"], json!(["*"]), "copilot entries default to allow all tools");
+        assert_eq!(
+            local["tools"],
+            json!(["*"]),
+            "copilot entries default to allow all tools"
+        );
         let remote = render_entry_json(a, &http_inv());
         assert_eq!(remote["type"], "http");
         assert_eq!(remote["tools"], json!(["*"]));
@@ -846,6 +877,46 @@ mod tests {
         assert_eq!(obs.args, vec!["-y".to_string(), "pkg".to_string()]);
         assert_eq!(obs.env.get("K").map(String::as_str), Some("V"));
         assert!(obs.unmapped.is_empty());
+    }
+
+    #[test]
+    fn parse_entry_opencode_enabled_is_significant() {
+        let a = adapter_for("opencode").unwrap();
+        // Explicit disable on disk must surface, not read as in-sync.
+        let disk = json!({"type": "local", "command": ["npx", "-y", "pkg"], "enabled": false});
+        let obs = parse_entry(a, &disk).unwrap();
+        assert_eq!(obs.enabled, Some(false));
+        // A missing key defaults to enabled, matching the rendered library form.
+        let absent = json!({"type": "local", "command": ["npx", "-y", "pkg"]});
+        assert_eq!(parse_entry(a, &absent).unwrap().enabled, Some(true));
+        // Rendered library entry carries enabled: true.
+        let expected = parse_entry(a, &render_entry_value(a, &stdio_inv())).unwrap();
+        assert_eq!(expected.enabled, Some(true));
+    }
+
+    #[test]
+    fn parse_entry_copilot_tools_is_significant() {
+        let a = adapter_for("copilot").unwrap();
+        // A restrictive allow-list on disk must be captured, not ignored.
+        let disk =
+            json!({"type": "local", "command": "npx", "args": ["-y", "pkg"], "tools": ["search"]});
+        let obs = parse_entry(a, &disk).unwrap();
+        assert_eq!(obs.tools, Some(vec!["search".to_string()]));
+        assert!(!obs.unmapped.contains(&"tools".to_string()));
+        // A missing key defaults to the rendered library form's ["*"].
+        let absent = json!({"type": "local", "command": "npx", "args": ["-y", "pkg"]});
+        assert_eq!(
+            parse_entry(a, &absent).unwrap().tools,
+            Some(vec!["*".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_entry_leaves_discriminant_fields_none_for_other_harnesses() {
+        let a = adapter_for("cursor").unwrap();
+        let obs = parse_entry(a, &json!({"command": "npx", "args": ["-y", "pkg"]})).unwrap();
+        assert_eq!(obs.enabled, None);
+        assert_eq!(obs.tools, None);
     }
 
     #[test]
