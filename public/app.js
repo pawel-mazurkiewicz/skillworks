@@ -191,6 +191,8 @@ async function bootstrap() {
         runAction(() => loadMarketplace());
       } else if (state.activeTopTab === "mcp" && !state.mcp.loaded) {
         runAction(() => loadMcp());
+      } else if (state.activeTopTab === "mcp-servers" && window.McpServers) {
+        runAction(() => window.McpServers.onEnter());
       }
     });
   });
@@ -516,6 +518,11 @@ async function loadState() {
     // Sets are optional context for Manage tab — ignore failures here.
   }
   render();
+  // Project-change and the global Refresh button both funnel through here —
+  // notify the MCP Servers controller so its own slices stay in sync.
+  if (window.McpServers) {
+    window.McpServers.onWorkspaceChanged();
+  }
 }
 
 function applyState(nextData) {

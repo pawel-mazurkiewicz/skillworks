@@ -1,6 +1,6 @@
 # MCP Server Management — Roadmap
 
-**Status:** Living document. Phase A specced + planned; B–E pending.
+**Status:** Living document. Phases A + B + D implemented on `feature/mcp-management-phase-a` (reviewed, all tests green); C, E, F pending.
 **Date:** 2026-07-20
 
 ## Ultimate goal
@@ -30,10 +30,10 @@ once (with per-harness/per-scope invocation variants), then toggled anywhere.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **A — Library + engine** | `McpServerSpec`/variants, `<appHome>/mcp/servers.json`, adapter table (7 harnesses), generic JSON/TOML engine, activate/deactivate/status/discover-read commands, `mcp_register.rs` refactored onto engine | Spec: `2026-07-20-mcp-management-phase-a-design.md` · Plan: `../plans/2026-07-20-mcp-management-phase-a.md` |
-| **B — URL ingestion** | `parse.rs` heuristics: fetch GitHub/README/instruction URL; extract fenced ```json `mcpServers` blocks, `npx`/`uvx`/`docker run` command lines, `claude mcp add …` lines; produce draft spec for user review; `mcp_add_from_url` command | Not started |
+| **A — Library + engine** | `McpServerSpec`/variants, `<appHome>/mcp/servers.json`, adapter table (7 harnesses), generic JSON/TOML engine, activate/deactivate/status/discover-read commands, `mcp_register.rs` refactored onto engine | **Done** (spec + plan + implementation, final review passed) |
+| **B — URL ingestion** | `parse.rs` heuristics: fetch GitHub/README/instruction URL; extract fenced ```json `mcpServers` blocks, `npx`/`uvx`/`docker run` command lines, `claude mcp add …` lines; produce draft spec for user review; `mcp_add_from_url` command | **Done** (spec `2026-07-20-mcp-management-phase-b-design.md`, final review passed; D pre-work items below) |
 | **C — Discovery reconciliation** | Promote Phase A's read-only `mcp_discover` into full reconciliation: match unmanaged entries to library specs, "import to library" flow (source.kind = "discovered"), conflict handling when an entry diverges from its spec | Not started |
-| **D — Frontend UI** | "MCP Servers" surface mirroring the skills grid: library list, per-harness×scope activation matrix, add-from-URL form, discovered-servers panel, variant editor. Follows design tokens + workshop aesthetic | Not started |
+| **D — Frontend UI** | "MCP Servers" surface mirroring the skills grid: library list, per-harness×scope activation matrix, add-from-URL form, discovered-servers panel, variant editor. Follows design tokens + workshop aesthetic | **Done** (spec `2026-07-21-mcp-management-phase-d-design.md`, Tasks 1–10 complete incl. Playwright smoke + full gate) |
 | **E — Agent-assisted tools** | Node MCP server (`src/mcp-server.js` + `core.js`) mirror: `add_mcp_server`, `add_mcp_server_from_url`, `activate_mcp_server`, `deactivate_mcp_server`, `list_mcp_servers` tools so the user's coding agent can parse prose pages and manage servers. Shares the library file + adapter semantics with the Rust side (keep in lockstep like `targets.rs` ↔ `core.js`) | Not started |
 | **F — Deferred harnesses** | Add medium/low-confidence harnesses behind an "experimental" flag once verified on a real machine (see below) | Not started |
 
@@ -105,6 +105,34 @@ These were researched but cut from v1. Verify on a real machine before enabling.
 - **Copilot in VS Code** uses `.vscode/mcp.json` / user-profile `mcp.json` with
   key **`servers`** (not `mcpServers`) and explicit `type` — a distinct target
   if VS Code support is ever wanted.
+
+## Phase D pre-work (from Phase B whole-phase review, 2026-07-21)
+
+Before the URL-ingestion flow is exposed as a one-click UI action:
+- SSRF host guard (deny loopback/link-local/private ranges) + redirect cap on
+  `mcp_add_from_url`'s fetch; the `.md` catch-all row fetches arbitrary https
+  hosts today.
+- Turn the 1 MiB size cap into a real fetch guard (Content-Length check or
+  bounded read) — currently enforced only after full download.
+- Split `parse.rs` (~1.2k lines) along its natural seams: url / fences /
+  heuristics / assembly.
+- Add 1-2 verbatim real-world README fixtures (multi-fence, CRLF, unicode
+  names) — current tests are synthetic minimal fences.
+- Placeholder/shell-ref warnings scan only the canonical spec, not variants.
+- Note for UI copy: the "1 draft + 2 variants" multi-style outcome only occurs
+  when the docker image basename matches the config key; separate drafts are
+  the common real-world result.
+
+## Phase D follow-ups (from whole-phase review, 2026-07-21)
+
+Non-blocking; landed Phase D but flagged for a later pass:
+- Add a wall-clock total budget to `fetch_markdown_guarded` (worst case ~4 min
+  across 8 hops of per-hop timeouts; SSRF/size already bounded).
+- Distinct in-tab "couldn't load" state instead of falling through to the
+  empty-library copy when a tab refresh fails.
+- Narrow the add-card duplicate-id inline message to the real dup-id case
+  (currently any `validation` kind trips it); add the amber placeholder flag to
+  variant kv rows; dedupe `renderKvRows`/`renderVariantKvRows`.
 
 ## Open questions (carried forward)
 - JSONC comment preservation for OpenCode configs (dropped in A).

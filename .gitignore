@@ -8,3 +8,13 @@ dist/
 src-tauri/target/
 src-tauri/binaries/skillworks-server-*
 /.env.release
+/test-results/
+/playwright-report/
+/blob-report/
+
+# Local agent config + app-managed skill symlinks (per-machine, not source)
+/.claude/
+/.codex/
+/.gemini/
+/.opencode/
+assets/IMG_0991.jpeg

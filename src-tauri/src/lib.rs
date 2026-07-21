@@ -42,6 +42,15 @@ pub fn run() {
             backend::commands::register_mcp_server,
             backend::commands::unregister_mcp_server,
             backend::commands::mcp_manual_snippet,
+            backend::commands::mcp_list_library,
+            backend::commands::mcp_add_manual,
+            backend::commands::mcp_remove_server,
+            backend::commands::mcp_update_server,
+            backend::commands::mcp_activate,
+            backend::commands::mcp_deactivate,
+            backend::commands::mcp_status,
+            backend::commands::mcp_discover,
+            backend::commands::mcp_add_from_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Skillworks desktop");

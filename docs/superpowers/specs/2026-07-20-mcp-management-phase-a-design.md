@@ -220,3 +220,7 @@ equivalence coverage. This proves the engine against known-good behavior.
 - Copilot project path: `.mcp.json` chosen over `.github/mcp.json` for v1;
   revisit if needed.
 - Discovery reconciliation heuristics beyond name-match (C).
+- JSONC reads (OpenCode): a commented opencode.json fails parsing; Phase A
+  surfaces this as a per-target status error (activation refuses to touch the
+  file — clobber protection). A dependency-free lenient reader is a Phase B/C
+  candidate.
