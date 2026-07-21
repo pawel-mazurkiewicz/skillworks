@@ -15,6 +15,12 @@
 // Response adapters exist because a few Rust commands return narrower
 // payloads (just State) than the frontend currently consumes — the shim
 // reshapes those without forcing additional Rust changes in this phase.
+//
+// A 6th, optional tuple element `silent` suppresses the error toast for
+// that route (the caller renders the failure inline instead) — used by the
+// MCP "parse URL" route, where a bad URL is an expected, in-panel outcome.
+
+import { buildMcpRoutes } from "./mcp-logic.js";
 
 const TAURI_DESKTOP =
   typeof window !== "undefined" &&
@@ -307,6 +313,8 @@ const ROUTES = [
 
   ["POST", /^\/api\/mcp\/unregister$/, "unregister_mcp_server",
     (_url, body) => ({ harnessIds: (body && body.harnessIds) || [] })],
+
+  ...buildMcpRoutes(),
 ];
 
 function invokeFn() {
@@ -329,6 +337,18 @@ function fireToast(message) {
   }
 }
 
+// Thrown for every invoke() failure so callers can branch on the backend's
+// error `kind` (e.g. "notFound" vs "validation") instead of just its
+// message string. Still an `instanceof Error`, so existing catch blocks
+// that only read `.message` keep working unchanged.
+export class ApiError extends Error {
+  constructor(kind, message) {
+    super(message);
+    this.name = "ApiError";
+    this.kind = kind;
+  }
+}
+
 export async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const body = options.body || null;
@@ -336,7 +356,7 @@ export async function api(path, options = {}) {
   if (TAURI_DESKTOP) {
     const url = new URL(path, "http://localhost");
     for (const route of ROUTES) {
-      const [routeMethod, pattern, command, argsBuilder, adapter] = route;
+      const [routeMethod, pattern, command, argsBuilder, adapter, silent] = route;
       if (routeMethod !== method) continue;
       const m = url.pathname.match(pattern);
       if (!m) continue;
@@ -352,9 +372,9 @@ export async function api(path, options = {}) {
         const rust = await invoke(command, args);
         return adapter ? adapter(rust, body, url) : rust;
       } catch (err) {
-        const message = extractInvokeError(err);
-        fireToast(message);
-        throw new Error(message);
+        const { kind, message } = extractInvokeError(err);
+        if (!silent) fireToast(message);
+        throw new ApiError(kind, message);
       }
     }
     const err = `No Tauri command mapped for ${method} ${path}`;
@@ -377,15 +397,23 @@ export async function api(path, options = {}) {
   return payload;
 }
 
+// Extracts both `kind` and `message` from a raw invoke() rejection. The
+// Rust envelope (src-tauri/src/backend/state.rs) serializes errors as
+// `{ kind, message, error }`; `kind` is undefined for anything that isn't
+// that shape (plain strings, unexpected throws).
 function extractInvokeError(err) {
-  if (!err) return "Request failed";
-  if (typeof err === "string") return err;
-  if (err.error) return String(err.error);
-  if (err.message) return String(err.message);
+  if (!err) return { kind: undefined, message: "Request failed" };
+  if (typeof err === "string") return { kind: undefined, message: err };
+  if (err.error || err.message) {
+    return {
+      kind: err.kind,
+      message: String(err.error || err.message),
+    };
+  }
   try {
-    return JSON.stringify(err);
+    return { kind: undefined, message: JSON.stringify(err) };
   } catch (_) {
-    return String(err);
+    return { kind: undefined, message: String(err) };
   }
 }
 

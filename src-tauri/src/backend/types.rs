@@ -736,3 +736,75 @@ pub struct MarketplaceSkillsResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+// ---------------------------------------------------------------------------
+// MCP (Model Context Protocol) DTOs.
+// ---------------------------------------------------------------------------
+
+/// Status of one library server against one harness target.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTargetStatus {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+    /// Set when the target's config file could not be read/parsed; `active`
+    /// is unreliable for such a row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpActivationResult {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+}
+
+/// A server entry found in a harness config that no library spec claims.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredMcpEntry {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub key: String,
+    pub entry: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpLibraryResponse {
+    pub servers: Vec<super::mcp::spec::McpServerSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// One parsed-from-URL draft: a full spec plus the evidence trail that
+/// produced it. Never persisted by the parser — the caller reviews and
+/// saves via `mcp_add_manual`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDraft {
+    pub spec: super::mcp::spec::McpServerSpec,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpUrlParseResponse {
+    pub source_url: String,
+    pub fetched_url: String,
+    pub drafts: Vec<McpServerDraft>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
