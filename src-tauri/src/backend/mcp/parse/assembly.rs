@@ -87,6 +87,34 @@ fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
             ));
         }
     }
+    for variant in &spec.variants {
+        let mut check_variant = |field: &str, value: &str| {
+            if is_placeholder(value) {
+                out.push(format!(
+                    "{} (variant {}): {field} contains placeholder {value:?} — fill in a real value before activating",
+                    spec.id, variant.label
+                ));
+            }
+        };
+        if let Some(env) = &variant.env {
+            for (k, v) in env { check_variant(&format!("env.{k}"), v); }
+        }
+        if let Some(headers) = &variant.headers {
+            for (k, v) in headers { check_variant(&format!("headers.{k}"), v); }
+        }
+        if let Some(args) = &variant.args {
+            for a in args { check_variant("args", a); }
+        }
+        if let Some(u) = &variant.url { check_variant("url", u); }
+        if let Some(cmd) = &variant.command {
+            if looks_like_shell_reference(cmd) {
+                out.push(format!(
+                    "{} (variant {}): command references a shell variable or home path ({cmd}) — verify the path before activating",
+                    spec.id, variant.label
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -314,6 +342,18 @@ mod tests {
     }
 
     #[test]
+    fn variant_placeholder_values_warn_with_label() {
+        let md = concat!(
+            "```json\n{\"mcpServers\":{\"s\":{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"]}}}\n```\n",
+            "```json\n{\"mcpServers\":{\"s\":{\"type\":\"http\",\"url\":\"https://x/mcp\",\"headers\":{\"Auth\":\"YOUR_TOKEN\"}}}}\n```\n",
+        );
+        let r = drafts_of(md);
+        assert_eq!(r.drafts.len(), 1);
+        assert!(r.warnings.iter().any(|w| w.contains("remote-http") && w.contains("YOUR_TOKEN")),
+            "variant label named in warning: {:?}", r.warnings);
+    }
+
+    #[test]
     fn invalid_group_becomes_warning_not_draft() {
         // remote entry with empty url → validate_spec fails → warning
         let md = "```json\n{\"mcpServers\":{\"broken\":{\"type\":\"http\",\"url\":\"\"}}}\n```";
@@ -378,5 +418,86 @@ mod tests {
         // matches both invocations env-compatibly for "a" (empty env) — but "b" also matches
         // same_invocation. Two candidate targets -> ambiguity -> the inferred group must NOT fold.
         assert_eq!(r.drafts.len(), 3);
+    }
+
+    // --- Real-world-realistic fixtures (Phase D Task 5) -----------------
+    //
+    // These two READMEs are modeled on real MCP server docs (Context7-style
+    // single server, monorepo-style server bundle) with two wrinkles that
+    // real-world markdown actually has: CRLF line endings (common on repos
+    // authored/edited on Windows) and a non-ASCII server name. Both are
+    // regression fixtures for the parser, not just illustrative examples.
+
+    /// Context7-style single-server README, CRLF (`\r\n`) line endings
+    /// throughout — verbatim-realistic: intro prose, an H1 json config
+    /// block, an H3 `claude mcp add` bash block (identical invocation to
+    /// the H1 block, so it dedups rather than becoming a variant), and a
+    /// remote/hosted H1 json block (becomes the one surviving variant).
+    const CONTEXT7_STYLE_README_CRLF: &str = "# Context7 MCP Server\r\n\r\nContext7 pulls up-to-date, version-specific documentation and code examples straight from the source, and places them directly into your prompt.\r\n\r\nWithout Context7, LLMs often hallucinate APIs or reference outdated library versions, because their training data is frozen in time.\r\n\r\n## Why Context7?\r\n\r\n- Up-to-date code examples, straight from the source\r\n- Removes outdated or hallucinated APIs\r\n- No more tab-switching to check documentation\r\n\r\n## Installation\r\n\r\nAdd this to your `claude_desktop_config.json`:\r\n\r\n```json\r\n{\r\n  \"mcpServers\": {\r\n    \"context7\": {\r\n      \"command\": \"npx\",\r\n      \"args\": [\"-y\", \"@upstash/context7-mcp\"]\r\n    }\r\n  }\r\n}\r\n```\r\n\r\nOr install it directly with the Claude Code CLI:\r\n\r\n```bash\r\nclaude mcp add context7 -- npx -y @upstash/context7-mcp\r\n```\r\n\r\n### Remote server (hosted)\r\n\r\nIf you would rather not run anything locally, point your agent at our hosted endpoint instead:\r\n\r\n```json\r\n{\r\n  \"mcpServers\": {\r\n    \"context7\": {\r\n      \"type\": \"http\",\r\n      \"url\": \"https://mcp.context7.com/mcp\"\r\n    }\r\n  }\r\n}\r\n```\r\n\r\nThat's it — restart your client and the Context7 tools will show up.\r\n";
+
+    #[test]
+    fn crlf_readme_yields_one_draft_with_remote_variant() {
+        let r = drafts_of(CONTEXT7_STYLE_README_CRLF);
+        assert_eq!(r.drafts.len(), 1, "one server, three CRLF sections: {:?}", r.warnings);
+        let d = &r.drafts[0];
+        assert_eq!(d.spec.id, "context7");
+        assert_eq!(d.spec.command.as_deref(), Some("npx"), "H1 json block is canonical");
+        assert_eq!(d.spec.args, vec!["-y", "@upstash/context7-mcp"]);
+        assert_eq!(
+            d.spec.variants.len(),
+            1,
+            "the `claude mcp add` bash block is an identical invocation (dedup, not a variant); \
+             only the remote block survives as a variant"
+        );
+        assert_eq!(d.spec.variants[0].label, "remote-http");
+        assert_eq!(d.spec.variants[0].url.as_deref(), Some("https://mcp.context7.com/mcp"));
+        assert!(r.warnings.is_empty(), "no placeholders in this fixture: {:?}", r.warnings);
+    }
+
+    /// Monorepo-style README bundling three servers under one `mcpServers`
+    /// map, one of which is named with a non-ASCII character (`café-mcp`).
+    /// `slugify` drops non-ASCII codepoints as separators (see
+    /// `slugify_and_name_fallback` above for the ASCII case), so the actual
+    /// (not guessed) slug is asserted below by running the real function.
+    const MONOREPO_STYLE_README: &str = concat!(
+        "# Acme MCP Monorepo\n",
+        "\n",
+        "This repo bundles three Model Context Protocol servers behind a single package.\n",
+        "\n",
+        "## Configuration\n",
+        "\n",
+        "```json\n",
+        "{\n",
+        "  \"mcpServers\": {\n",
+        "    \"alpha\": {\n",
+        "      \"command\": \"npx\",\n",
+        "      \"args\": [\"-y\", \"@acme/alpha-mcp\"]\n",
+        "    },\n",
+        "    \"beta\": {\n",
+        "      \"command\": \"npx\",\n",
+        "      \"args\": [\"-y\", \"@acme/beta-mcp\"]\n",
+        "    },\n",
+        "    \"café-mcp\": {\n",
+        "      \"command\": \"npx\",\n",
+        "      \"args\": [\"-y\", \"@acme/cafe-mcp\"]\n",
+        "    }\n",
+        "  }\n",
+        "}\n",
+        "```\n",
+    );
+
+    #[test]
+    fn monorepo_readme_with_unicode_name_yields_three_drafts() {
+        assert_eq!(slugify("café-mcp"), "caf-mcp", "actual slugify behavior for this fixture's unicode name");
+
+        let r = drafts_of(MONOREPO_STYLE_README);
+        assert_eq!(r.drafts.len(), 3, "three servers, one unicode-named: {:?}", r.warnings);
+        let mut ids: Vec<&str> = r.drafts.iter().map(|d| d.spec.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["alpha", "beta", "caf-mcp"]);
+        let cafe = r.drafts.iter().find(|d| d.spec.id == "caf-mcp").unwrap();
+        assert_eq!(cafe.spec.name, "café-mcp", "display name keeps the original unicode; only the id is slugified");
+        assert_eq!(cafe.spec.command.as_deref(), Some("npx"));
+        assert_eq!(cafe.spec.args, vec!["-y", "@acme/cafe-mcp"]);
     }
 }
