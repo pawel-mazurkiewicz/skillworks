@@ -782,6 +782,50 @@ pub struct DiscoveredMcpEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReconcileTargetRef {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportCandidate {
+    pub key: String,
+    pub suggested_spec: super::mcp::spec::McpServerSpec,
+    pub found_in: Vec<ReconcileTargetRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches_library_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDriftEntry {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub diff: Vec<super::mcp::reconcile::FieldDiff>,
+    /// The library spec with its canonical invocation replaced by what is on
+    /// disk — ready for the "adopt config → update library" PATCH.
+    pub observed_spec: super::mcp::spec::McpServerSpec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpReconcileResponse {
+    pub imports: Vec<McpImportCandidate>,
+    pub conflicts: Vec<McpDriftEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpLibraryResponse {
     pub servers: Vec<super::mcp::spec::McpServerSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -807,4 +851,3 @@ pub struct McpUrlParseResponse {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
-

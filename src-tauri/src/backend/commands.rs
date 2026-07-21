@@ -15,7 +15,11 @@ use tokio::fs;
 use super::config::Config;
 use super::fs_helpers::{copy_directory, move_directory, unique_skill_destination};
 use super::mcp::adapters::{adapter_for, adapters, config_path_for};
-use super::mcp::engine::{read_entries, remove_entry, write_entry};
+use super::mcp::engine::{
+    parse_entry, read_entries, remove_entry, render_entry_value, write_entry, ObservedInvocation,
+};
+use super::mcp::parse::{placeholder_warnings, slugify};
+use super::mcp::reconcile::{diff_invocation, invocation_eq, spec_from_observed};
 use super::mcp::spec::{load_library, resolve_effective, save_library, validate_spec, McpServerSpec};
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
@@ -30,8 +34,9 @@ use super::targets::{
 };
 use super::types::{
     DiscoveredMcpEntry, DiscoveryReport, DuplicateGroup, DuplicateSkillEntry, ManifestEntry,
-    McpActivationResult, McpLibraryResponse, McpTargetStatus, McpUrlParseResponse,
-    PickDirectoryResponse, ProjectRecord, ProjectSelection, ProjectSource, ScanProjectsResponse,
+    McpActivationResult, McpDriftEntry, McpImportCandidate, McpLibraryResponse,
+    McpReconcileResponse, McpTargetStatus, McpUrlParseResponse, PickDirectoryResponse,
+    ProjectRecord, ProjectSelection, ProjectSource, ReconcileTargetRef, ScanProjectsResponse,
     ScanReport, SkillFileContent, SkillRecord, State, StateSummary, TargetRecord,
 };
 
@@ -72,16 +77,14 @@ pub async fn build_state(
 
     let selected_project = match project.as_deref() {
         Some(p) if !p.is_empty() => normalize_project_path(Path::new(p)),
-        _ => std::env::current_dir()
-            .unwrap_or_else(|_| home_dir.clone()),
+        _ => std::env::current_dir().unwrap_or_else(|_| home_dir.clone()),
     };
 
     // Skills.
     let skills = discover_skills(&vault_root).await?;
 
     // Custom targets.
-    let custom_targets_value =
-        serde_json::Value::Array(config.custom_targets.clone());
+    let custom_targets_value = serde_json::Value::Array(config.custom_targets.clone());
     let custom_targets = safe_read_custom_targets(&custom_targets_value);
 
     // Targets.
@@ -102,10 +105,7 @@ pub async fn build_state(
         .iter()
         .map(|t| t.enabled_skill_ids.len() as u32)
         .sum();
-    let unmanaged_count: u32 = target_states
-        .iter()
-        .map(|t| t.unmanaged.len() as u32)
-        .sum();
+    let unmanaged_count: u32 = target_states.iter().map(|t| t.unmanaged.len() as u32).sum();
 
     let project_exists = path_exists(&selected_project).await;
 
@@ -512,9 +512,8 @@ pub async fn toggle_skill_impl(
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let skills = discover_skills(&ctx.vault_root).await?;
     let skill = resolve_skill(&skills, &skill_id)?.clone();
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
     let target = targets
         .into_iter()
@@ -553,9 +552,8 @@ pub async fn bulk_toggle_skills_impl(
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let skills_all = discover_skills(&ctx.vault_root).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let all_targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     let mut resolved_targets: Vec<TargetRecord> = Vec::with_capacity(target_ids.len());
@@ -643,9 +641,8 @@ pub async fn bulk_move_skills_impl(
     ensure_dir(&destination_root).await?;
     let skills_all = discover_skills(&ctx.vault_root).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
 
     for skill in &resolved_skills {
         let real_path = PathBuf::from(&skill.real_path);
@@ -682,9 +679,8 @@ pub async fn bulk_delete_skills_impl(
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let skills_all = discover_skills(&ctx.vault_root).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
 
     for skill in &resolved_skills {
         remove_managed_skill_links(skill, &ctx.home_dir, &ctx.project_path, &custom).await?;
@@ -725,20 +721,20 @@ pub async fn find_vault_duplicates_impl(
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let bytes = meta.as_ref().map(|m| m.len()).unwrap_or(content.len() as u64);
+        let bytes = meta
+            .as_ref()
+            .map(|m| m.len())
+            .unwrap_or(content.len() as u64);
 
-        by_hash
-            .entry(hash)
-            .or_default()
-            .push(DuplicateSkillEntry {
-                id: skill.id.clone(),
-                name: skill.name.clone(),
-                description: skill.description.clone(),
-                path: skill.path.clone(),
-                relative_path: skill.relative_path.clone(),
-                mtime_ms,
-                bytes,
-            });
+        by_hash.entry(hash).or_default().push(DuplicateSkillEntry {
+            id: skill.id.clone(),
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            path: skill.path.clone(),
+            relative_path: skill.relative_path.clone(),
+            mtime_ms,
+            bytes,
+        });
     }
 
     let mut groups: Vec<DuplicateGroup> = Vec::new();
@@ -790,9 +786,8 @@ pub async fn dedupe_vault_skills_impl(
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let skills_all = discover_skills(&ctx.vault_root).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     if keep_ids.is_empty() && !delete_ids.is_empty() {
@@ -904,15 +899,11 @@ fn merge_config(
     }
     if let Some(ct) = custom_targets {
         let value = serde_json::Value::Array(ct);
-        let normalized = normalize_custom_targets(&value)
-            .map_err(BackendError::Validation)?;
+        let normalized = normalize_custom_targets(&value).map_err(BackendError::Validation)?;
         current.custom_targets = normalized;
     }
     if let Some(ids) = hidden_target_ids {
-        current.hidden_target_ids = ids
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
+        current.hidden_target_ids = ids.into_iter().filter(|s| !s.is_empty()).collect();
     }
     if let Some(s) = sets {
         current.sets = s;
@@ -994,11 +985,7 @@ pub async fn add_project_impl(
             "project_path is required".to_string(),
         ));
     }
-    let ctx = load_context(
-        current_project_path.clone(),
-        app_home_override.clone(),
-    )
-    .await?;
+    let ctx = load_context(current_project_path.clone(), app_home_override.clone()).await?;
 
     let target = Path::new(&project_path).to_path_buf();
     let mut record = build_project_record(&target, ProjectSource::Manual).await;
@@ -1033,11 +1020,7 @@ pub async fn remove_project_impl(
     current_project_path: Option<String>,
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
-    let ctx = load_context(
-        current_project_path.clone(),
-        app_home_override.clone(),
-    )
-    .await?;
+    let ctx = load_context(current_project_path.clone(), app_home_override.clone()).await?;
 
     let normalized = normalize_project_path(Path::new(&project_path))
         .to_string_lossy()
@@ -1066,9 +1049,7 @@ pub async fn remove_project_impl(
 }
 
 #[tauri::command]
-pub async fn clear_scanned_projects(
-    project_path: Option<String>,
-) -> BackendResult<State> {
+pub async fn clear_scanned_projects(project_path: Option<String>) -> BackendResult<State> {
     clear_scanned_projects_impl(project_path, None).await
 }
 
@@ -1149,9 +1130,7 @@ pub async fn scan_projects_impl(
 }
 
 #[tauri::command]
-pub async fn pick_directory(
-    app: tauri::AppHandle,
-) -> BackendResult<PickDirectoryResponse> {
+pub async fn pick_directory(app: tauri::AppHandle) -> BackendResult<PickDirectoryResponse> {
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
@@ -1283,13 +1262,13 @@ pub async fn preview_git_install_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<GitInstallPlan> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let all_targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     // Resolve the targets the caller asked to link into.
-    let resolved_target_ids = resolve_target_id_selector(target_ids.as_deref(), target_id.as_deref());
+    let resolved_target_ids =
+        resolve_target_id_selector(target_ids.as_deref(), target_id.as_deref());
     let mut targets: Vec<TargetRecord> = Vec::new();
     for tid in &resolved_target_ids {
         let t = all_targets
@@ -1300,13 +1279,7 @@ pub async fn preview_git_install_impl(
         targets.push(t);
     }
 
-    git_install_preview(
-        &repo_url,
-        git_ref.as_deref(),
-        &ctx.vault_root,
-        targets,
-    )
-    .await
+    git_install_preview(&repo_url, git_ref.as_deref(), &ctx.vault_root, targets).await
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1340,9 +1313,8 @@ pub async fn install_from_git_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<InstallFromGitResponse> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let all_targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     let default_target_ids =
@@ -1534,16 +1506,12 @@ pub async fn list_sets_impl(
 
     let mut pinned = PinnedSets::default();
     if project.is_some() {
-        let project_record = ctx
-            .config
-            .projects
-            .iter()
-            .find(|p| {
-                p.get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|s| Path::new(s) == ctx.project_path.as_path())
-                    .unwrap_or(false)
-            });
+        let project_record = ctx.config.projects.iter().find(|p| {
+            p.get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| Path::new(s) == ctx.project_path.as_path())
+                .unwrap_or(false)
+        });
         let ids: Vec<String> = project_record
             .and_then(|p| p.get("pinnedSetIds"))
             .and_then(|v| v.as_array())
@@ -1619,9 +1587,7 @@ pub async fn create_set_impl(
 ) -> BackendResult<CreateSetResponse> {
     let name_trimmed = name.trim();
     if name_trimmed.is_empty() {
-        return Err(BackendError::Validation(
-            "Set name is required".to_string(),
-        ));
+        return Err(BackendError::Validation("Set name is required".to_string()));
     }
     if scope != "global" && scope != "project" {
         return Err(BackendError::Validation("Invalid scope".to_string()));
@@ -1662,8 +1628,7 @@ pub async fn create_set_impl(
 
     if scope == "global" {
         let mut next = ctx.config.clone();
-        let raw =
-            serde_json::to_value(&record).map_err(BackendError::Json)?;
+        let raw = serde_json::to_value(&record).map_err(BackendError::Json)?;
         next.sets.push(raw);
         save_merged_config(&ctx.app_home, &next).await?;
     } else {
@@ -1673,10 +1638,7 @@ pub async fn create_set_impl(
     }
 
     let state = build_state(project_path, app_home_override).await?;
-    Ok(CreateSetResponse {
-        set: record,
-        state,
-    })
+    Ok(CreateSetResponse { set: record, state })
 }
 
 #[tauri::command]
@@ -1695,10 +1657,7 @@ pub async fn update_set_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<UpdateSetResponse> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let patch_obj = patch
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let patch_obj = patch.as_object().cloned().unwrap_or_default();
 
     // Try global first.
     let global_idx = ctx
@@ -1759,10 +1718,7 @@ fn apply_patch(mut existing: Set, patch: &serde_json::Map<String, serde_json::Va
 }
 
 #[tauri::command]
-pub async fn delete_set(
-    id: String,
-    project: Option<String>,
-) -> BackendResult<DeleteSetResponse> {
+pub async fn delete_set(id: String, project: Option<String>) -> BackendResult<DeleteSetResponse> {
     delete_set_impl(id, project, None).await
 }
 
@@ -1841,9 +1797,8 @@ pub async fn snapshot_set_impl(
 
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let skills = discover_skills(&ctx.vault_root).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     let mut entries: Vec<SetEntry> = Vec::new();
@@ -1876,10 +1831,7 @@ pub async fn snapshot_set_impl(
 }
 
 #[tauri::command]
-pub async fn plan_apply_set(
-    id: String,
-    project_path: String,
-) -> BackendResult<ApplySetPlan> {
+pub async fn plan_apply_set(id: String, project_path: String) -> BackendResult<ApplySetPlan> {
     plan_apply_set_impl(id, project_path, None).await
 }
 
@@ -1891,9 +1843,8 @@ pub async fn plan_apply_set_impl(
     let ctx = load_context(Some(project_path.clone()), app_home_override).await?;
     let set = locate_set(&ctx, &id).await?;
     let skills = discover_skills(&ctx.vault_root).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
 
     let plan = build_apply_plan(&set, &skills, &targets).await?;
@@ -2000,10 +1951,7 @@ async fn build_apply_plan(
 }
 
 #[tauri::command]
-pub async fn apply_set(
-    id: String,
-    project_path: String,
-) -> BackendResult<ApplySetResponse> {
+pub async fn apply_set(id: String, project_path: String) -> BackendResult<ApplySetResponse> {
     apply_set_impl(id, project_path, None).await
 }
 
@@ -2015,9 +1963,8 @@ pub async fn apply_set_impl(
     let ctx = load_context(Some(project_path.clone()), app_home_override.clone()).await?;
     let set = locate_set(&ctx, &id).await?;
     let skills = discover_skills(&ctx.vault_root).await?;
-    let custom = safe_read_custom_targets(&serde_json::Value::Array(
-        ctx.config.custom_targets.clone(),
-    ));
+    let custom =
+        safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
     let plan = build_apply_plan(&set, &skills, &targets).await?;
 
@@ -2402,7 +2349,10 @@ pub async fn mcp_add_manual_impl(
     }
     servers.push(spec);
     save_library(&app_home, &servers).await?;
-    Ok(McpLibraryResponse { servers, warnings: Vec::new() })
+    Ok(McpLibraryResponse {
+        servers,
+        warnings: Vec::new(),
+    })
 }
 
 /// Replace an existing library server spec in place.
@@ -2422,10 +2372,15 @@ pub async fn mcp_update_server_impl(
     let idx = servers
         .iter()
         .position(|s| s.id == spec.id)
-        .ok_or_else(|| BackendError::NotFound(format!("No library server with id {:?}", spec.id)))?;
+        .ok_or_else(|| {
+            BackendError::NotFound(format!("No library server with id {:?}", spec.id))
+        })?;
     servers[idx] = spec;
     save_library(&app_home, &servers).await?;
-    Ok(McpLibraryResponse { servers, warnings: Vec::new() })
+    Ok(McpLibraryResponse {
+        servers,
+        warnings: Vec::new(),
+    })
 }
 
 /// Remove a server from the library. Warns (but does not deactivate) if the
@@ -2450,7 +2405,9 @@ pub async fn mcp_remove_server_impl(
     let before = servers.len();
     servers.retain(|s| s.id != id);
     if servers.len() == before {
-        return Err(BackendError::NotFound(format!("No library server with id {id:?}")));
+        return Err(BackendError::NotFound(format!(
+            "No library server with id {id:?}"
+        )));
     }
 
     // Warn (do not deactivate) where the entry is still present in configs.
@@ -2459,9 +2416,15 @@ pub async fn mcp_remove_server_impl(
     let mut warnings = Vec::new();
 
     for adapter in super::mcp::adapters::adapters() {
-        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        let mut targets = vec![(
+            "global",
+            config_path_for(adapter, "global", &home_dir, None)?,
+        )];
         if let Some(root) = project_root.as_deref() {
-            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+            targets.push((
+                "project",
+                config_path_for(adapter, "project", &home_dir, Some(root))?,
+            ));
         }
 
         for (scope, path) in targets {
@@ -2617,9 +2580,15 @@ pub async fn mcp_status_impl(
 
     let mut out = Vec::new();
     for adapter in adapters() {
-        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        let mut targets = vec![(
+            "global",
+            config_path_for(adapter, "global", &home_dir, None)?,
+        )];
         if let Some(root) = project_root.as_deref() {
-            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+            targets.push((
+                "project",
+                config_path_for(adapter, "project", &home_dir, Some(root))?,
+            ));
         }
         for (scope, path) in targets {
             match read_entries(&path, adapter).await {
@@ -2664,9 +2633,7 @@ pub async fn mcp_status_impl(
 /// Find MCP entries present in harness configs that are not tracked in the
 /// library (hand-added or migrated from a previous tool).
 #[tauri::command]
-pub async fn mcp_discover(
-    project_path: Option<String>,
-) -> BackendResult<Vec<DiscoveredMcpEntry>> {
+pub async fn mcp_discover(project_path: Option<String>) -> BackendResult<Vec<DiscoveredMcpEntry>> {
     mcp_discover_impl(project_path, None, None).await
 }
 
@@ -2686,9 +2653,15 @@ pub async fn mcp_discover_impl(
 
     let mut out = Vec::new();
     for adapter in adapters() {
-        let mut targets = vec![("global", config_path_for(adapter, "global", &home_dir, None)?)];
+        let mut targets = vec![(
+            "global",
+            config_path_for(adapter, "global", &home_dir, None)?,
+        )];
         if let Some(root) = project_root.as_deref() {
-            targets.push(("project", config_path_for(adapter, "project", &home_dir, Some(root))?));
+            targets.push((
+                "project",
+                config_path_for(adapter, "project", &home_dir, Some(root))?,
+            ));
         }
         for (scope, path) in targets {
             let entries = match read_entries(&path, adapter).await {
@@ -2711,6 +2684,179 @@ pub async fn mcp_discover_impl(
         }
     }
     Ok(out)
+}
+
+struct ImportGroup {
+    key: String,
+    observed: ObservedInvocation,
+    found_in: Vec<ReconcileTargetRef>,
+    matches: Option<String>,
+}
+
+/// Expected observed-invocation for a library spec at a target, normalized
+/// through the same render→parse pipeline as on-disk entries.
+fn expected_observed(
+    adapter: &super::mcp::adapters::McpAdapter,
+    spec: &McpServerSpec,
+    scope: &str,
+) -> BackendResult<ObservedInvocation> {
+    let inv = resolve_effective(spec, adapter.harness_id, scope, None)?;
+    let value = render_entry_value(adapter, &inv);
+    parse_entry(adapter, &value)
+}
+
+/// The library spec with its canonical invocation replaced by what is on disk
+/// (id/name/description/variants preserved) — the payload for "adopt config".
+fn adopt_spec(library: &McpServerSpec, observed: &ObservedInvocation) -> McpServerSpec {
+    let mut s = library.clone();
+    s.transport = observed.transport;
+    s.command = observed.command.clone();
+    s.args = observed.args.clone();
+    s.env = observed.env.clone();
+    s.url = observed.url.clone();
+    s.headers = observed.headers.clone();
+    s
+}
+
+/// Reconcile every harness config against the library: report drift for
+/// entries the library already tracks, and classify unmanaged entries as
+/// import candidates (deduped across targets with identical invocations).
+#[tauri::command]
+pub async fn mcp_reconcile(project_path: Option<String>) -> BackendResult<McpReconcileResponse> {
+    mcp_reconcile_impl(project_path, None, None).await
+}
+
+pub async fn mcp_reconcile_impl(
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<McpReconcileResponse> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let library = load_library(&app_home).await?;
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+
+    let mut warnings: Vec<String> = Vec::new();
+    let mut conflicts: Vec<McpDriftEntry> = Vec::new();
+    let mut groups: Vec<ImportGroup> = Vec::new();
+
+    for adapter in adapters() {
+        let mut targets = vec![(
+            "global",
+            config_path_for(adapter, "global", &home_dir, None)?,
+        )];
+        if let Some(root) = project_root.as_deref() {
+            targets.push((
+                "project",
+                config_path_for(adapter, "project", &home_dir, Some(root))?,
+            ));
+        }
+        for (scope, path) in targets {
+            let entries = match read_entries(&path, adapter).await {
+                Ok(e) => e,
+                Err(e) => {
+                    warnings.push(format!("{} ({scope}): {e}", adapter.harness_id));
+                    continue;
+                }
+            };
+            for (key, value) in entries {
+                let observed = match parse_entry(adapter, &value) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        warnings.push(format!("{}/{scope} \"{key}\": {e}", adapter.harness_id));
+                        continue;
+                    }
+                };
+                let config_path = path.to_string_lossy().into_owned();
+
+                if let Some(spec) = library.iter().find(|s| s.id == key) {
+                    match expected_observed(adapter, spec, scope) {
+                        Ok(expected) => {
+                            if !invocation_eq(&expected, &observed) {
+                                conflicts.push(McpDriftEntry {
+                                    server_id: key.clone(),
+                                    harness: adapter.harness_id.to_string(),
+                                    scope: scope.to_string(),
+                                    config_path,
+                                    diff: diff_invocation(&expected, &observed),
+                                    observed_spec: adopt_spec(spec, &observed),
+                                    trust_note: (adapter.project_trust_note && scope == "project")
+                                        .then(|| PROJECT_TRUST_NOTE.to_string()),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            warnings.push(format!("{}/{scope} \"{key}\": {e}", adapter.harness_id))
+                        }
+                    }
+                    continue;
+                }
+
+                let matches = library.iter().find_map(|s| {
+                    expected_observed(adapter, s, scope)
+                        .ok()
+                        .filter(|exp| invocation_eq(exp, &observed))
+                        .map(|_| s.id.clone())
+                });
+                let target_ref = ReconcileTargetRef {
+                    harness: adapter.harness_id.to_string(),
+                    scope: scope.to_string(),
+                    config_path,
+                };
+                match groups
+                    .iter_mut()
+                    .find(|g| g.key == key && invocation_eq(&g.observed, &observed))
+                {
+                    Some(g) => {
+                        g.found_in.push(target_ref);
+                        if g.matches.is_none() {
+                            g.matches = matches;
+                        }
+                    }
+                    None => groups.push(ImportGroup {
+                        key: key.clone(),
+                        observed,
+                        found_in: vec![target_ref],
+                        matches,
+                    }),
+                }
+            }
+        }
+    }
+
+    let mut imports = Vec::new();
+    for g in groups {
+        let id = slugify(&g.key);
+        if id.is_empty() {
+            warnings.push(format!("\"{}\": cannot derive a valid id — skipped", g.key));
+            continue;
+        }
+        let spec = spec_from_observed(id, g.key.clone(), &g.observed);
+        if let Err(e) = validate_spec(&spec) {
+            warnings.push(format!("\"{}\": {e}", g.key));
+            continue;
+        }
+        let mut cand_warnings = placeholder_warnings(&spec);
+        if !g.observed.unmapped.is_empty() {
+            cand_warnings.push(format!(
+                "ignored config keys: {}",
+                g.observed.unmapped.join(", ")
+            ));
+        }
+        imports.push(McpImportCandidate {
+            key: g.key,
+            suggested_spec: spec,
+            found_in: g.found_in,
+            matches_library_id: g.matches,
+            warnings: cand_warnings,
+        });
+    }
+
+    Ok(McpReconcileResponse {
+        imports,
+        conflicts,
+        warnings,
+    })
 }
 
 use super::marketplace::HttpClient;
@@ -2905,12 +3051,9 @@ mod tests {
         let env = make_env().await;
         write_skill_file(&env.vault.join("ios/swiftui"), "SwiftUI", "body-1").await;
 
-        let result = read_skill_file_impl(
-            "ios/swiftui".to_string(),
-            Some(env.app_home.clone()),
-        )
-        .await
-        .expect("read");
+        let result = read_skill_file_impl("ios/swiftui".to_string(), Some(env.app_home.clone()))
+            .await
+            .expect("read");
         assert_eq!(result.id, "ios/swiftui");
         assert!(result.content.contains("body-1"));
         assert!(result.path.ends_with("ios/swiftui"));
@@ -3054,7 +3197,9 @@ mod tests {
             .iter()
             .find(|t| t.id == env.target_global_id)
             .unwrap();
-        assert!(target.enabled_skill_ids.contains(&"ios/swiftui".to_string()));
+        assert!(target
+            .enabled_skill_ids
+            .contains(&"ios/swiftui".to_string()));
     }
 
     #[tokio::test]
@@ -3087,7 +3232,9 @@ mod tests {
             .iter()
             .find(|t| t.id == env.target_global_id)
             .unwrap();
-        assert!(!target.enabled_skill_ids.contains(&"ios/swiftui".to_string()));
+        assert!(!target
+            .enabled_skill_ids
+            .contains(&"ios/swiftui".to_string()));
     }
 
     #[tokio::test]
@@ -3110,7 +3257,9 @@ mod tests {
             .iter()
             .find(|t| t.id == env.target_global_id)
             .unwrap();
-        assert!(target1.enabled_skill_ids.contains(&"ios/swiftui".to_string()));
+        assert!(target1
+            .enabled_skill_ids
+            .contains(&"ios/swiftui".to_string()));
 
         // Second toggle: should disable.
         let state2 = toggle_skill_impl(
@@ -3127,7 +3276,9 @@ mod tests {
             .iter()
             .find(|t| t.id == env.target_global_id)
             .unwrap();
-        assert!(!target2.enabled_skill_ids.contains(&"ios/swiftui".to_string()));
+        assert!(!target2
+            .enabled_skill_ids
+            .contains(&"ios/swiftui".to_string()));
     }
 
     #[tokio::test]
@@ -3147,7 +3298,10 @@ mod tests {
             "scope": "global",
             "path": second_target.to_string_lossy(),
         }));
-        config.save(&env.app_home.join("config.json")).await.unwrap();
+        config
+            .save(&env.app_home.join("config.json"))
+            .await
+            .unwrap();
 
         let state = bulk_toggle_skills_impl(
             vec!["ios/swiftui".to_string(), "web/react".to_string()],
@@ -3161,7 +3315,9 @@ mod tests {
 
         for tid in &["test-custom", "test-custom-2"] {
             let target = state.targets.iter().find(|t| t.id == *tid).unwrap();
-            assert!(target.enabled_skill_ids.contains(&"ios/swiftui".to_string()));
+            assert!(target
+                .enabled_skill_ids
+                .contains(&"ios/swiftui".to_string()));
             assert!(target.enabled_skill_ids.contains(&"web/react".to_string()));
         }
     }
@@ -3469,11 +3625,15 @@ mod tests {
         // Standard `skills/` with one skill.
         let s1 = project.join("skills").join("a");
         fs::create_dir_all(&s1).await.unwrap();
-        fs::write(s1.join("SKILL.md"), "---\nname: a\n---\n").await.unwrap();
+        fs::write(s1.join("SKILL.md"), "---\nname: a\n---\n")
+            .await
+            .unwrap();
         // .claude/skills/ with one skill.
         let s2 = project.join(".claude").join("skills").join("b");
         fs::create_dir_all(&s2).await.unwrap();
-        fs::write(s2.join("SKILL.md"), "---\nname: b\n---\n").await.unwrap();
+        fs::write(s2.join("SKILL.md"), "---\nname: b\n---\n")
+            .await
+            .unwrap();
 
         let sources = find_project_skill_sources(&project).await;
         assert_eq!(sources.len(), 2, "should find skills/ and .claude/skills/");
@@ -3556,12 +3716,10 @@ mod tests {
         assert_eq!(result.report.imported, 1);
         assert!(result.report.skipped >= 2);
         // Vault has the good skill.
-        assert!(env.vault.join("gooda").join(SKILL_FILE).is_file()
-            || result
-                .state
-                .skills
-                .iter()
-                .any(|s| s.name == "GoodA"));
+        assert!(
+            env.vault.join("gooda").join(SKILL_FILE).is_file()
+                || result.state.skills.iter().any(|s| s.name == "GoodA")
+        );
     }
 
     #[tokio::test]
@@ -3570,12 +3728,9 @@ mod tests {
         let source = env._root.path().join("dupe");
         let skill_dir = source.join("a");
         fs::create_dir_all(&skill_dir).await.unwrap();
-        fs::write(
-            skill_dir.join(SKILL_FILE),
-            "---\nname: A\n---\n",
-        )
-        .await
-        .unwrap();
+        fs::write(skill_dir.join(SKILL_FILE), "---\nname: A\n---\n")
+            .await
+            .unwrap();
 
         let path_str = source.to_string_lossy().into_owned();
         let result = import_suggested_skills_impl(
@@ -3764,10 +3919,7 @@ mod tests {
         )
         .await
         .expect("create project");
-        let project_file = env
-            .project
-            .join(".agent-skill-manager")
-            .join("sets.json");
+        let project_file = env.project.join(".agent-skill-manager").join("sets.json");
         assert!(project_file.exists(), "project sets.json should exist");
 
         // Invalid scope is rejected.
@@ -3830,9 +3982,13 @@ mod tests {
         assert_eq!(updated.set.entries.len(), 1);
 
         // Updating an unknown id returns NotFound.
-        let bad =
-            update_set_impl("set_unknown".to_string(), serde_json::json!({}), None, Some(env.app_home.clone()))
-                .await;
+        let bad = update_set_impl(
+            "set_unknown".to_string(),
+            serde_json::json!({}),
+            None,
+            Some(env.app_home.clone()),
+        )
+        .await;
         assert!(bad.is_err());
     }
 
@@ -3879,12 +4035,8 @@ mod tests {
         assert!(remaining.is_empty());
 
         // Unknown id → error.
-        let bad = delete_set_impl(
-            "set_unknown".to_string(),
-            None,
-            Some(env.app_home.clone()),
-        )
-        .await;
+        let bad =
+            delete_set_impl("set_unknown".to_string(), None, Some(env.app_home.clone())).await;
         assert!(bad.is_err());
     }
 
@@ -3917,7 +4069,12 @@ mod tests {
         .expect("snapshot");
 
         assert_eq!(snap.set.entries.len(), 2);
-        let names: Vec<String> = snap.set.entries.iter().map(|e| e.skill_name.clone()).collect();
+        let names: Vec<String> = snap
+            .set
+            .entries
+            .iter()
+            .map(|e| e.skill_name.clone())
+            .collect();
         assert!(names.contains(&"SkillA".to_string()));
         assert!(names.contains(&"SkillB".to_string()));
         for entry in &snap.set.entries {
@@ -4093,10 +4250,7 @@ mod tests {
 
         assert_eq!(result.per_target_result[0].status, "applied");
         assert!(
-            result
-                .warnings
-                .iter()
-                .any(|w| w.contains("GhostSkill")),
+            result.warnings.iter().any(|w| w.contains("GhostSkill")),
             "missing skill should surface as a warning"
         );
         let target = result
@@ -4167,7 +4321,10 @@ mod tests {
             id: "context7".into(),
             name: "Context7".into(),
             description: None,
-            source: crate::backend::mcp::spec::McpSource { kind: "manual".into(), url: None },
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
             transport: crate::backend::mcp::spec::McpTransport::Stdio,
             command: Some("npx".into()),
             args: vec!["-y".into(), "@upstash/context7-mcp".into()],
@@ -4190,7 +4347,9 @@ mod tests {
         // Invalid spec rejected.
         let mut bad = spec.clone();
         bad.id = "Bad Id".into();
-        assert!(mcp_add_manual_impl(bad, Some(app_home.clone())).await.is_err());
+        assert!(mcp_add_manual_impl(bad, Some(app_home.clone()))
+            .await
+            .is_err());
 
         let resp = mcp_list_library_impl(Some(app_home.clone())).await.unwrap();
         assert_eq!(resp.servers[0].id, "context7");
@@ -4221,7 +4380,10 @@ mod tests {
             id: id.into(),
             name: id.into(),
             description: None,
-            source: crate::backend::mcp::spec::McpSource { kind: "manual".into(), url: None },
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
             transport: crate::backend::mcp::spec::McpTransport::Stdio,
             command: Some("npx".into()),
             args: vec!["-y".into(), "pkg".into()],
@@ -4236,11 +4398,15 @@ mod tests {
     async fn mcp_update_server_replaces_and_validates() {
         let dir = tempfile::TempDir::new().unwrap();
         let app_home = dir.path().join("apphome");
-        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone()))
+            .await
+            .unwrap();
 
         let mut edited = test_spec("s1");
         edited.args = vec!["-y".into(), "other-pkg".into()];
-        let resp = mcp_update_server_impl(edited, Some(app_home.clone())).await.unwrap();
+        let resp = mcp_update_server_impl(edited, Some(app_home.clone()))
+            .await
+            .unwrap();
         assert_eq!(resp.servers[0].args[1], "other-pkg");
 
         // unknown id
@@ -4266,7 +4432,9 @@ mod tests {
                 mcp_add_manual_impl(test_spec(&format!("srv-{i}")), Some(ah)).await
             }));
         }
-        for h in handles { h.await.unwrap().unwrap(); }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
         let resp = mcp_list_library_impl(Some(app_home)).await.unwrap();
         assert_eq!(resp.servers.len(), 10, "no lost updates under concurrency");
     }
@@ -4372,10 +4540,17 @@ mod tests {
         tokio::fs::create_dir_all(&home).await.unwrap();
 
         // Put the server in the library AND activate it for cursor global.
-        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone()))
+            .await
+            .unwrap();
         mcp_activate_impl(
-            "context7".into(), "cursor".into(), "global".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
+            "context7".into(),
+            "cursor".into(),
+            "global".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
         )
         .await
         .unwrap();
@@ -4383,7 +4558,11 @@ mod tests {
         let resp = mcp_remove_server_impl("context7".into(), None, Some(app_home), Some(home))
             .await
             .unwrap();
-        assert!(resp.warnings.iter().any(|w| w.contains("cursor")), "{:?}", resp.warnings);
+        assert!(
+            resp.warnings.iter().any(|w| w.contains("cursor")),
+            "{:?}",
+            resp.warnings
+        );
     }
 
     #[tokio::test]
@@ -4395,22 +4574,52 @@ mod tests {
         tokio::fs::create_dir_all(&home).await.unwrap();
         tokio::fs::create_dir_all(&project).await.unwrap();
 
-        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
-        mcp_activate_impl("s1".into(), "claude".into(), "project".into(), None,
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone()))
+            .await
+            .unwrap();
+        mcp_activate_impl(
+            "s1".into(),
+            "claude".into(),
+            "project".into(),
+            None,
             Some(project.to_string_lossy().into_owned()),
-            Some(app_home.clone()), Some(home.clone())).await.unwrap();
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
         // malformed global cursor config must not abort the removal
-        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
-        tokio::fs::write(home.join(".cursor/mcp.json"), "{ nope").await.unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        tokio::fs::write(home.join(".cursor/mcp.json"), "{ nope")
+            .await
+            .unwrap();
 
-        let resp = mcp_remove_server_impl("s1".into(),
+        let resp = mcp_remove_server_impl(
+            "s1".into(),
             Some(project.to_string_lossy().into_owned()),
-            Some(app_home), Some(home)).await.unwrap();
-        assert!(resp.servers.is_empty(), "removal succeeded despite malformed config");
-        assert!(resp.warnings.iter().any(|w| w.contains("claude") && w.contains("project")),
-            "project activation warned: {:?}", resp.warnings);
-        assert!(resp.warnings.iter().any(|w| w.contains("couldn't check")),
-            "malformed config becomes warning: {:?}", resp.warnings);
+            Some(app_home),
+            Some(home),
+        )
+        .await
+        .unwrap();
+        assert!(
+            resp.servers.is_empty(),
+            "removal succeeded despite malformed config"
+        );
+        assert!(
+            resp.warnings
+                .iter()
+                .any(|w| w.contains("claude") && w.contains("project")),
+            "project activation warned: {:?}",
+            resp.warnings
+        );
+        assert!(
+            resp.warnings.iter().any(|w| w.contains("couldn't check")),
+            "malformed config becomes warning: {:?}",
+            resp.warnings
+        );
     }
 
     #[tokio::test]
@@ -4422,55 +4631,84 @@ mod tests {
         tokio::fs::create_dir_all(&home).await.unwrap();
         tokio::fs::create_dir_all(&project).await.unwrap();
 
-        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone()))
+            .await
+            .unwrap();
 
         // Global activate for claude writes ~/.claude.json.
         let res = mcp_activate_impl(
-            "context7".into(), "claude".into(), "global".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
-        ).await.unwrap();
+            "context7".into(),
+            "claude".into(),
+            "global".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
         assert!(res.active);
-        let doc: serde_json::Value = serde_json::from_slice(
-            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
-        ).unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(home.join(".claude.json")).await.unwrap())
+                .unwrap();
         assert_eq!(doc["mcpServers"]["context7"]["command"], "npx");
 
         // Project activate for claude writes <repo>/.mcp.json + returns trust note.
         let res = mcp_activate_impl(
-            "context7".into(), "claude".into(), "project".into(),
-            None, Some(project.to_string_lossy().into_owned()),
-            Some(app_home.clone()), Some(home.clone()),
-        ).await.unwrap();
+            "context7".into(),
+            "claude".into(),
+            "project".into(),
+            None,
+            Some(project.to_string_lossy().into_owned()),
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
         assert!(res.trust_note.is_some());
         assert!(project.join(".mcp.json").exists());
 
         // Status reflects both, and covers all 7 global + 7 project rows.
         let statuses = mcp_status_impl(
             Some(project.to_string_lossy().into_owned()),
-            Some(app_home.clone()), Some(home.clone()),
-        ).await.unwrap();
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
         assert_eq!(statuses.len(), 14);
-        let claude_g = statuses.iter()
-            .find(|s| s.harness == "claude" && s.scope == "global").unwrap();
+        let claude_g = statuses
+            .iter()
+            .find(|s| s.harness == "claude" && s.scope == "global")
+            .unwrap();
         assert!(claude_g.active);
-        let cursor_g = statuses.iter()
-            .find(|s| s.harness == "cursor" && s.scope == "global").unwrap();
+        let cursor_g = statuses
+            .iter()
+            .find(|s| s.harness == "cursor" && s.scope == "global")
+            .unwrap();
         assert!(!cursor_g.active);
 
         // Without a project only 7 global rows come back.
         let statuses = mcp_status_impl(None, Some(app_home.clone()), Some(home.clone()))
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(statuses.len(), 7);
 
         // Deactivate global.
         let res = mcp_deactivate_impl(
-            "context7".into(), "claude".into(), "global".into(),
-            None, Some(app_home.clone()), Some(home.clone()),
-        ).await.unwrap();
+            "context7".into(),
+            "claude".into(),
+            "global".into(),
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
         assert!(!res.active);
-        let doc: serde_json::Value = serde_json::from_slice(
-            &tokio::fs::read(home.join(".claude.json")).await.unwrap(),
-        ).unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(home.join(".claude.json")).await.unwrap())
+                .unwrap();
         assert!(doc["mcpServers"].get("context7").is_none());
     }
 
@@ -4480,23 +4718,46 @@ mod tests {
         let app_home = dir.path().join("apphome");
         let home = dir.path().join("home");
         tokio::fs::create_dir_all(&home).await.unwrap();
-        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("s1"), Some(app_home.clone()))
+            .await
+            .unwrap();
 
         // Unknown server id.
         assert!(mcp_activate_impl(
-            "nope".into(), "claude".into(), "global".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
-        ).await.is_err());
+            "nope".into(),
+            "claude".into(),
+            "global".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .is_err());
         // Unknown harness.
         assert!(mcp_activate_impl(
-            "s1".into(), "emacs".into(), "global".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
-        ).await.is_err());
+            "s1".into(),
+            "emacs".into(),
+            "global".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .is_err());
         // Project scope without project path.
         assert!(mcp_activate_impl(
-            "s1".into(), "claude".into(), "project".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
-        ).await.is_err());
+            "s1".into(),
+            "claude".into(),
+            "project".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
@@ -4504,19 +4765,34 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let app_home = dir.path().join("apphome");
         let home = dir.path().join("home");
-        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
         tokio::fs::write(
             home.join(".cursor/mcp.json"),
             r#"{"mcpServers":{"handmade":{"command":"x"}}}"#,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
-        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone()))
+            .await
+            .unwrap();
         mcp_activate_impl(
-            "context7".into(), "cursor".into(), "global".into(),
-            None, None, Some(app_home.clone()), Some(home.clone()),
-        ).await.unwrap();
+            "context7".into(),
+            "cursor".into(),
+            "global".into(),
+            None,
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
 
-        let found = mcp_discover_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let found = mcp_discover_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
         // Managed entry excluded; handmade one reported.
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "handmade");
@@ -4528,14 +4804,20 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let app_home = dir.path().join("apphome");
         let home = dir.path().join("home");
-        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
         tokio::fs::write(home.join(".cursor/mcp.json"), "{ not json")
             .await
             .unwrap();
 
-        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone()))
+            .await
+            .unwrap();
 
-        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
         assert_eq!(statuses.len(), 7);
 
         let cursor_g = statuses
@@ -4546,7 +4828,12 @@ mod tests {
         assert!(!cursor_g.active);
 
         for s in statuses.iter().filter(|s| s.harness != "cursor") {
-            assert!(s.error.is_none(), "{} unexpectedly errored: {:?}", s.harness, s.error);
+            assert!(
+                s.error.is_none(),
+                "{} unexpectedly errored: {:?}",
+                s.harness,
+                s.error
+            );
         }
     }
 
@@ -4555,7 +4842,9 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let app_home = dir.path().join("apphome");
         let home = dir.path().join("home");
-        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
         tokio::fs::write(home.join(".cursor/mcp.json"), "{ not json")
             .await
             .unwrap();
@@ -4566,10 +4855,142 @@ mod tests {
         .await
         .unwrap();
 
-        let found = mcp_discover_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let found = mcp_discover_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "handmade");
         assert_eq!(found[0].harness, "claude");
+    }
+
+    async fn seed_library(app_home: &std::path::Path, servers: &[McpServerSpec]) {
+        crate::backend::mcp::spec::save_library(app_home, servers)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconcile_flags_unmanaged_drift_and_dedup() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+
+        // Library server "context7" (stdio npx). We'll drift it in cursor and
+        // leave an unmanaged "extra" in kiro; and put an invocation-identical
+        // copy of context7 under a different key "ctx" in kiro.
+        let ctx = McpServerSpec {
+            id: "context7".into(),
+            name: "Context7".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "@upstash/context7-mcp".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![],
+        };
+        seed_library(&app_home, &[ctx]).await;
+
+        // cursor global: context7 present but drifted (extra arg).
+        tokio::fs::write(
+            home.join(".cursor/mcp.json"),
+            r#"{"mcpServers":{"context7":{"command":"npx","args":["-y","@upstash/context7-mcp","--verbose"]},"extra":{"command":"foo","args":[]}}}"#,
+        )
+        .await
+        .unwrap();
+        // kiro global: an invocation-identical copy of context7 under key "ctx".
+        tokio::fs::write(
+            home.join(".kiro/settings/mcp.json"),
+            r#"{"mcpServers":{"ctx":{"command":"npx","args":["-y","@upstash/context7-mcp"]}}}"#,
+        )
+        .await
+        .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await
+            .unwrap();
+
+        // One drift entry for cursor/context7.
+        assert_eq!(out.conflicts.len(), 1);
+        assert_eq!(out.conflicts[0].server_id, "context7");
+        assert_eq!(out.conflicts[0].harness, "cursor");
+        assert!(out.conflicts[0].diff.iter().any(|d| d.field == "args"));
+
+        // Import candidates: "extra" (unknown) and "ctx" (matches context7).
+        let keys: Vec<&str> = out.imports.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"extra"));
+        let ctx_cand = out.imports.iter().find(|c| c.key == "ctx").unwrap();
+        assert_eq!(ctx_cand.matches_library_id.as_deref(), Some("context7"));
+        // "extra" is a plain unknown.
+        let extra = out.imports.iter().find(|c| c.key == "extra").unwrap();
+        assert!(extra.matches_library_id.is_none());
+        assert_eq!(extra.suggested_spec.source.kind, "discovered");
+    }
+
+    #[tokio::test]
+    async fn reconcile_dedups_identical_invocation_across_targets() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+        // Same unmanaged "srv" (identical stdio invocation) in cursor + kiro.
+        let body = r#"{"mcpServers":{"srv":{"command":"npx","args":["-y","srv"]}}}"#;
+        tokio::fs::write(home.join(".cursor/mcp.json"), body)
+            .await
+            .unwrap();
+        tokio::fs::write(home.join(".kiro/settings/mcp.json"), body)
+            .await
+            .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        let srv: Vec<_> = out.imports.iter().filter(|c| c.key == "srv").collect();
+        assert_eq!(
+            srv.len(),
+            1,
+            "identical invocation collapses to one candidate"
+        );
+        assert_eq!(srv[0].found_in.len(), 2, "lists both targets");
+    }
+
+    #[tokio::test]
+    async fn reconcile_warns_on_placeholder_and_malformed() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        // placeholder env + a malformed sibling file handled elsewhere; here a
+        // placeholder token should attach a candidate warning.
+        tokio::fs::write(
+            home.join(".cursor/mcp.json"),
+            r#"{"mcpServers":{"srv":{"command":"npx","args":["-y","srv"],"env":{"TOKEN":"YOUR_TOKEN_HERE"}}}}"#,
+        )
+        .await
+        .unwrap();
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        let srv = out.imports.iter().find(|c| c.key == "srv").unwrap();
+        assert!(srv.warnings.iter().any(|w| w.contains("placeholder")));
     }
 
     #[tokio::test]
@@ -4577,7 +4998,9 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let app_home = dir.path().join("apphome");
         let home = dir.path().join("home");
-        tokio::fs::create_dir_all(home.join(".config/opencode")).await.unwrap();
+        tokio::fs::create_dir_all(home.join(".config/opencode"))
+            .await
+            .unwrap();
         tokio::fs::write(
             home.join(".config/opencode/opencode.json"),
             "// comment\n{\"mcp\":{}}",
@@ -4585,9 +5008,13 @@ mod tests {
         .await
         .unwrap();
 
-        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone())).await.unwrap();
+        mcp_add_manual_impl(test_spec("context7"), Some(app_home.clone()))
+            .await
+            .unwrap();
 
-        let statuses = mcp_status_impl(None, Some(app_home), Some(home)).await.unwrap();
+        let statuses = mcp_status_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
         let opencode_g = statuses
             .iter()
             .find(|s| s.harness == "opencode" && s.scope == "global")
@@ -4605,7 +5032,11 @@ mod tests {
             url: &str,
             _headers: &[(&str, &str)],
         ) -> BackendResult<crate::backend::marketplace::HttpResponse> {
-            let (status, body) = self.responses.get(url).cloned().unwrap_or((404, String::new()));
+            let (status, body) = self
+                .responses
+                .get(url)
+                .cloned()
+                .unwrap_or((404, String::new()));
             Ok(crate::backend::marketplace::HttpResponse { status, body })
         }
     }
@@ -4621,10 +5052,15 @@ mod tests {
             )]
             .into(),
         };
-        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap();
+        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client)
+            .await
+            .unwrap();
         assert_eq!(resp.drafts.len(), 1);
         assert_eq!(resp.drafts[0].spec.id, "ctx");
-        assert_eq!(resp.fetched_url, "https://raw.githubusercontent.com/o/r/HEAD/README.md");
+        assert_eq!(
+            resp.fetched_url,
+            "https://raw.githubusercontent.com/o/r/HEAD/README.md"
+        );
         assert_eq!(resp.source_url, "https://github.com/o/r");
     }
 
@@ -4637,16 +5073,22 @@ mod tests {
             )]
             .into(),
         };
-        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap();
+        let resp = mcp_add_from_url_impl("https://github.com/o/r".into(), &client)
+            .await
+            .unwrap();
         assert_eq!(resp.drafts.len(), 1);
         assert!(resp.fetched_url.contains("/master/"));
     }
 
     #[tokio::test]
     async fn add_from_url_error_and_empty_cases() {
-        let client = FakeHttp { responses: Default::default() };
+        let client = FakeHttp {
+            responses: Default::default(),
+        };
         // both HEAD and master 404 → error mentioning status
-        let err = mcp_add_from_url_impl("https://github.com/o/r".into(), &client).await.unwrap_err();
+        let err = mcp_add_from_url_impl("https://github.com/o/r".into(), &client)
+            .await
+            .unwrap_err();
         assert!(format!("{err}").contains("404"));
         // page with no config → success, empty drafts, guidance warning
         let client = FakeHttp {
@@ -4656,7 +5098,9 @@ mod tests {
             )]
             .into(),
         };
-        let resp = mcp_add_from_url_impl("https://example.com/x.md".into(), &client).await.unwrap();
+        let resp = mcp_add_from_url_impl("https://example.com/x.md".into(), &client)
+            .await
+            .unwrap();
         assert!(resp.drafts.is_empty());
         assert!(resp.warnings.iter().any(|w| w.contains("manual")));
         // oversized body → error
@@ -4667,6 +5111,10 @@ mod tests {
             )]
             .into(),
         };
-        assert!(mcp_add_from_url_impl("https://example.com/big.md".into(), &client).await.is_err());
+        assert!(
+            mcp_add_from_url_impl("https://example.com/big.md".into(), &client)
+                .await
+                .is_err()
+        );
     }
 }
