@@ -808,11 +808,20 @@ pub struct McpDriftEntry {
     pub scope: String,
     pub config_path: String,
     pub diff: Vec<super::mcp::reconcile::FieldDiff>,
-    /// The library spec with its canonical invocation replaced by what is on
-    /// disk — ready for the "adopt config → update library" PATCH.
+    /// The library spec with its drifted fields replaced by what is on disk —
+    /// ready for the "adopt config → update library" PATCH. Only meaningful when
+    /// `adoptable` is true.
     pub observed_spec: super::mcp::spec::McpServerSpec,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_note: Option<String>,
+    /// Label of the variant controlling this target's effective invocation, if
+    /// any. When set, the drift is against the variant — not the canonical
+    /// fields — so a canonical adopt would be wrong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_label: Option<String>,
+    /// False when a variant controls this target: the UI disables "Adopt into
+    /// library" and points the user at the variant instead.
+    pub adoptable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

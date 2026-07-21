@@ -21,7 +21,8 @@ use super::mcp::engine::{
 use super::mcp::parse::{placeholder_warnings, slugify};
 use super::mcp::reconcile::{diff_invocation, invocation_eq, spec_from_observed, FieldDiff};
 use super::mcp::spec::{
-    load_library, resolve_effective, save_library, validate_spec, McpServerSpec, McpTransport,
+    load_library, resolve_effective, resolve_effective_selection, save_library, validate_spec,
+    McpServerSpec, McpTransport,
 };
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
@@ -2701,10 +2702,10 @@ fn expected_observed(
     adapter: &super::mcp::adapters::McpAdapter,
     spec: &McpServerSpec,
     scope: &str,
-) -> BackendResult<ObservedInvocation> {
-    let inv = resolve_effective(spec, adapter.harness_id, scope, None)?;
+) -> BackendResult<(ObservedInvocation, Option<String>)> {
+    let (inv, variant_label) = resolve_effective_selection(spec, adapter.harness_id, scope, None)?;
     let value = render_entry_value(adapter, &inv);
-    parse_entry(adapter, &value)
+    Ok((parse_entry(adapter, &value)?, variant_label))
 }
 
 /// Build the "adopt config" payload: the library spec with ONLY the fields that
@@ -2834,9 +2835,16 @@ pub async fn mcp_reconcile_impl(
 
                 if let Some(spec) = library.iter().find(|s| s.id == key) {
                     match expected_observed(adapter, spec, scope) {
-                        Ok(expected) => {
+                        Ok((expected, variant_label)) => {
                             let diff = diff_invocation(&expected, &observed);
                             if !diff.is_empty() {
+                                // When a variant controls this target the drift is
+                                // against the variant's effective invocation, so a
+                                // canonical adopt would leave the variant still
+                                // overriding (conflict persists) and could corrupt
+                                // unrelated canonical-using targets. Refuse the
+                                // adopt for those rows and point at the variant.
+                                let adoptable = variant_label.is_none();
                                 conflicts.push(McpDriftEntry {
                                     server_id: key.clone(),
                                     harness: adapter.harness_id.to_string(),
@@ -2846,6 +2854,8 @@ pub async fn mcp_reconcile_impl(
                                     diff,
                                     trust_note: (adapter.project_trust_note && scope == "project")
                                         .then(|| PROJECT_TRUST_NOTE.to_string()),
+                                    variant_label,
+                                    adoptable,
                                 });
                             }
                         }
@@ -2859,7 +2869,7 @@ pub async fn mcp_reconcile_impl(
                 let matches = library.iter().find_map(|s| {
                     expected_observed(adapter, s, scope)
                         .ok()
-                        .filter(|exp| invocation_eq(exp, &observed))
+                        .filter(|(exp, _)| invocation_eq(exp, &observed))
                         .map(|_| s.id.clone())
                 });
                 let target_ref = ReconcileTargetRef {
@@ -5017,6 +5027,72 @@ mod tests {
         let extra = out.imports.iter().find(|c| c.key == "extra").unwrap();
         assert!(extra.matches_library_id.is_none());
         assert_eq!(extra.suggested_spec.source.kind, "discovered");
+    }
+
+    #[tokio::test]
+    async fn reconcile_variant_controlled_drift_is_not_adoptable() {
+        use crate::backend::mcp::spec::{McpAppliesTo, McpVariant};
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+
+        // Library server whose cursor target is governed by a variant.
+        let srv = McpServerSpec {
+            id: "srv".into(),
+            name: "Srv".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "canonical".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![McpVariant {
+                label: "cursor-only".into(),
+                applies_to: Some(McpAppliesTo {
+                    harness: Some("cursor".into()),
+                    scope: None,
+                }),
+                transport: None,
+                command: None,
+                args: Some(vec!["-y".into(), "cursor-args".into()]),
+                env: None,
+                url: None,
+                headers: None,
+            }],
+        };
+        seed_library(&app_home, &[srv]).await;
+
+        // cursor global: drifted from the VARIANT's effective invocation.
+        tokio::fs::write(
+            home.join(".cursor/mcp.json"),
+            r#"{"mcpServers":{"srv":{"command":"npx","args":["-y","cursor-args","--drift"]}}}"#,
+        )
+        .await
+        .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+
+        assert_eq!(out.conflicts.len(), 1);
+        let c = &out.conflicts[0];
+        assert_eq!(c.server_id, "srv");
+        assert_eq!(c.harness, "cursor");
+        assert_eq!(c.variant_label.as_deref(), Some("cursor-only"));
+        assert!(
+            !c.adoptable,
+            "a variant-controlled target must not offer a canonical adopt"
+        );
+        // The diff is against the variant's effective args, not the canonical.
+        assert!(c.diff.iter().any(|d| d.field == "args"));
     }
 
     #[tokio::test]

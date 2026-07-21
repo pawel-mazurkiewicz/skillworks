@@ -1376,6 +1376,14 @@ function renderConflictEntry(conflict, index) {
     .join("");
   const reapplyPending = state.reconcilePending.has(`reapply:${index}`);
   const adoptPending = state.reconcilePending.has(`adopt:${index}`);
+  // adoptable defaults true when the backend omits the flag (older responses).
+  const adoptable = conflict.adoptable !== false;
+  const variantNote =
+    !adoptable && conflict.variantLabel
+      ? `<p class="mcp-servers-trust-note">This target is controlled by variant "${escapeHtml(
+          conflict.variantLabel
+        )}" — edit that variant to change it.</p>`
+      : "";
 
   return `
     <li class="mcp-servers-reconcile-row" data-mcp-conflict-row="${index}">
@@ -1392,9 +1400,10 @@ function renderConflictEntry(conflict, index) {
         </table>
       </div>
       ${conflict.trustNote ? `<p class="mcp-servers-trust-note">${escapeHtml(conflict.trustNote)}</p>` : ""}
+      ${variantNote}
       <div class="button-row">
         <button type="button" class="button" data-mcp-reapply="${index}" ${reapplyPending ? "disabled" : ""}>${reapplyPending ? "Reapplying…" : "Reapply library"}</button>
-        <button type="button" class="button ghost" data-mcp-adopt="${index}" ${adoptPending ? "disabled" : ""}>${adoptPending ? "Adopting…" : "Adopt into library"}</button>
+        <button type="button" class="button ghost" data-mcp-adopt="${index}" ${adoptPending || !adoptable ? "disabled" : ""}>${adoptPending ? "Adopting…" : "Adopt into library"}</button>
       </div>
     </li>`;
 }
@@ -1477,6 +1486,9 @@ async function handleReconcileReapply(index) {
 async function handleReconcileAdopt(index) {
   const conflict = state.conflicts[index];
   if (!conflict) return;
+  // A variant controls this target — the button is disabled, but guard the
+  // handler too so a stray call can't write to the canonical fields.
+  if (conflict.adoptable === false) return;
   const name = libraryServerName(conflict.serverId);
   if (
     !window.confirm(
