@@ -101,12 +101,31 @@ function blankManualSpec() {
 // MCP data the user has never asked to see.
 let entered = false;
 
-const els = {
-  list: document.querySelector("#mcpServersList"),
-  detail: document.querySelector("#mcpServersDetail"),
-  add: document.querySelector("#mcpServersAdd"),
-  discovered: document.querySelector("#mcpServersDiscovered"),
-};
+// Queried lazily, not at module top-level: index.html loads mcp-servers.js
+// *before* app.js (see the two <script type="module"> tags at the bottom
+// of the body), and app.js is what synchronously clones the
+// `#appShellTemplate` markup — which is where #mcpServersList/.../
+// #mcpServersDiscovered actually live — into the live `#root` tree (via
+// `flushSync(() => createRoot(rootElement).render(...))`). Querying those
+// ids here at import time always resolves to null, since the template
+// hasn't been cloned into the document yet. `initDom()` (called once, from
+// `onEnter()`, which only ever fires from a user's tab click well after
+// bootstrap has run) queries the real elements and binds the delegated
+// listeners for real.
+let els = { list: null, detail: null, add: null, discovered: null };
+let domInitialized = false;
+
+function initDom() {
+  if (domInitialized) return;
+  domInitialized = true;
+  els = {
+    list: document.querySelector("#mcpServersList"),
+    detail: document.querySelector("#mcpServersDetail"),
+    add: document.querySelector("#mcpServersAdd"),
+    discovered: document.querySelector("#mcpServersDiscovered"),
+  };
+  bindDomEvents();
+}
 
 function projectPath() {
   const input = document.querySelector("#projectInput");
@@ -150,6 +169,7 @@ async function refreshAll() {
 }
 
 export async function onEnter() {
+  initDom();
   entered = true;
   await refreshAll();
 }
@@ -1283,6 +1303,57 @@ async function handleAddCard(card) {
   }
 }
 
+// ---------- Discovered panel (§4.6, read-only) ----------
+
+function summarizeEntry(entry) {
+  const value = entry && entry.entry;
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 140 ? `${json.slice(0, 140)}…` : json;
+  } catch (_) {
+    return String(value);
+  }
+}
+
+function renderDiscovered() {
+  if (!els.discovered) return;
+  const groups = groupDiscoveredByHarness(state.discovered);
+  if (!groups.length) {
+    els.discovered.innerHTML = `<p class="empty-copy">Nothing found in your harness configs that isn't already tracked in your library.</p>`;
+    return;
+  }
+  const harnessLabel = (id) => (MCP_HARNESSES.find((h) => h.id === id) || {}).label || id;
+  const groupsHtml = groups
+    .map((group) => {
+      const rows = group.items
+        .map(
+          (entry) => `
+        <li class="mcp-servers-discovered-row">
+          <span class="mcp-servers-discovered-key">${escapeHtml(entry.key)}</span>
+          <span class="mcp-servers-chip">${escapeHtml(entry.scope)}</span>
+          <span class="mcp-servers-mono">${escapeHtml(entry.configPath)}</span>
+          <span class="mcp-servers-mono mcp-servers-discovered-entry">${escapeHtml(summarizeEntry(entry))}</span>
+        </li>`
+        )
+        .join("");
+      return `
+        <section class="mcp-servers-discovered-group">
+          <h5>${escapeHtml(harnessLabel(group.harness))}</h5>
+          <ul class="mcp-servers-discovered-list">${rows}</ul>
+        </section>`;
+    })
+    .join("");
+  els.discovered.innerHTML = `
+    ${groupsHtml}
+    <p class="mcp-servers-hint mcp-servers-discovered-footer">Importing these into your library arrives in a future update.</p>
+  `;
+}
+
+// ---------- DOM event wiring (bound once, from initDom()) ----------
+
+function bindDomEvents() {
 if (els.add) {
   els.add.addEventListener("input", (event) => {
     const urlInput = event.target.closest("[data-mcp-add-url]");
@@ -1334,54 +1405,6 @@ if (els.add) {
       renderAdd();
     }
   });
-}
-
-// ---------- Discovered panel (§4.6, read-only) ----------
-
-function summarizeEntry(entry) {
-  const value = entry && entry.entry;
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  try {
-    const json = JSON.stringify(value);
-    return json.length > 140 ? `${json.slice(0, 140)}…` : json;
-  } catch (_) {
-    return String(value);
-  }
-}
-
-function renderDiscovered() {
-  if (!els.discovered) return;
-  const groups = groupDiscoveredByHarness(state.discovered);
-  if (!groups.length) {
-    els.discovered.innerHTML = `<p class="empty-copy">Nothing found in your harness configs that isn't already tracked in your library.</p>`;
-    return;
-  }
-  const harnessLabel = (id) => (MCP_HARNESSES.find((h) => h.id === id) || {}).label || id;
-  const groupsHtml = groups
-    .map((group) => {
-      const rows = group.items
-        .map(
-          (entry) => `
-        <li class="mcp-servers-discovered-row">
-          <span class="mcp-servers-discovered-key">${escapeHtml(entry.key)}</span>
-          <span class="mcp-servers-chip">${escapeHtml(entry.scope)}</span>
-          <span class="mcp-servers-mono">${escapeHtml(entry.configPath)}</span>
-          <span class="mcp-servers-mono mcp-servers-discovered-entry">${escapeHtml(summarizeEntry(entry))}</span>
-        </li>`
-        )
-        .join("");
-      return `
-        <section class="mcp-servers-discovered-group">
-          <h5>${escapeHtml(harnessLabel(group.harness))}</h5>
-          <ul class="mcp-servers-discovered-list">${rows}</ul>
-        </section>`;
-    })
-    .join("");
-  els.discovered.innerHTML = `
-    ${groupsHtml}
-    <p class="mcp-servers-hint mcp-servers-discovered-footer">Importing these into your library arrives in a future update.</p>
-  `;
 }
 
 // ---------- Event wiring ----------
@@ -1596,6 +1619,7 @@ if (els.detail) {
       handleVariantSave(server, detail);
     }
   });
+}
 }
 
 window.McpServers = { onEnter, onWorkspaceChanged };
