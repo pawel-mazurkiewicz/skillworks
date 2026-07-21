@@ -239,6 +239,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
         if toks[2] == "add" {
             let mut transport = None;
             let mut env = BTreeMap::new();
+            let mut headers = BTreeMap::new();
             let mut i = 3;
             let mut name = None;
             let mut positional: Vec<String> = Vec::new();
@@ -251,7 +252,22 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                         }
                         i += 2;
                     }
-                    "--scope" | "-s" | "--header" | "-H" => { i += 2; }
+                    "--header" | "-H" => {
+                        // `claude mcp add --header "K: V"` — capture into
+                        // headers so remote drafts aren't silently emitted
+                        // unauthenticated. Accepts "K: V" or "K:V".
+                        if let Some(raw) = toks.get(i + 1) {
+                            let (k, v) = match raw.split_once(':') {
+                                Some((k, v)) => (k.trim(), v.trim()),
+                                None => (raw.trim(), ""),
+                            };
+                            if !k.is_empty() {
+                                headers.insert(k.to_string(), v.to_string());
+                            }
+                        }
+                        i += 2;
+                    }
+                    "--scope" | "-s" => { i += 2; }
                     "--" => { positional.extend(toks[i + 1..].iter().cloned()); break; }
                     t if t.starts_with('-') => { i += 1; }
                     t => {
@@ -269,7 +285,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                     return Some(Candidate {
                         name: Some(name), priority: 3, transport,
                         command: None, args: Vec::new(), env: BTreeMap::new(),
-                        url: Some(url), headers: BTreeMap::new(),
+                        url: Some(url), headers,
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
                         name_inferred: false,
@@ -280,7 +296,7 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                     return Some(Candidate {
                         name: Some(name), priority: 3, transport: McpTransport::Stdio,
                         command: Some(command), args: positional[1..].to_vec(), env,
-                        url: None, headers: BTreeMap::new(),
+                        url: None, headers,
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
                         name_inferred: false,
@@ -502,6 +518,22 @@ mod tests {
         let r = &cands[1];
         assert_eq!(r.transport, McpTransport::Http);
         assert_eq!(r.url.as_deref(), Some("https://mcp.context7.com/mcp"));
+    }
+
+    #[test]
+    fn h3_claude_mcp_add_captures_header_flag() {
+        let md = "```bash\nclaude mcp add --transport http --header \"Authorization: Bearer YOUR_TOKEN\" svc https://x/mcp\n```";
+        let cands = extract_h3(md, &scan_fences(md));
+        assert_eq!(cands.len(), 1);
+        let c = &cands[0];
+        assert_eq!(c.name.as_deref(), Some("svc"));
+        assert_eq!(c.transport, McpTransport::Http);
+        assert_eq!(c.url.as_deref(), Some("https://x/mcp"));
+        assert_eq!(
+            c.headers.get("Authorization").map(String::as_str),
+            Some("Bearer YOUR_TOKEN"),
+            "--header must be captured, not silently dropped"
+        );
     }
 
     #[test]
