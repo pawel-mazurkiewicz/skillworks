@@ -494,7 +494,7 @@ function registerMcpTools(server, z) {
     "remove_mcp_server",
     {
       description:
-        "Remove a server from the Skillworks library. Warns (but does not deactivate) if the entry is still written into any harness's config.",
+        "Remove a server from the Skillworks library. Warns (but does not deactivate) if the entry is still written into any harness's config, and separately warns about any harness config that couldn't be checked (e.g. malformed or unreadable).",
       inputSchema: {
         id: z.string().describe("Library server id to remove."),
         projectPath: z
@@ -513,6 +513,16 @@ function registerMcpTools(server, z) {
       const stillActiveAt = status
         .filter((row) => row.serverId === id && row.active)
         .map((row) => ({ harness: row.harness, scope: row.scope, configPath: row.configPath }));
+      // mcpStatus rows for a target it couldn't even read (malformed JSON/TOML,
+      // permission error, ...) come back as `active: false` + an `error`
+      // field, so the filter above silently drops them -- `stillActiveAt: []`
+      // would then falsely read as "definitely removed everywhere". Surface
+      // those separately so the caller knows the check was incomplete for
+      // that target. Mirrors Rust's `mcp_remove_server_impl`, which folds an
+      // unreadable target into its `warnings` list instead of dropping it.
+      const couldNotCheck = status
+        .filter((row) => row.serverId === id && row.error)
+        .map((row) => ({ harness: row.harness, scope: row.scope, configPath: row.configPath, error: row.error }));
 
       const servers = await mcpCore.loadLibrary(appHome);
       const before = servers.length;
@@ -521,7 +531,7 @@ function registerMcpTools(server, z) {
         throw new Error(`No library server with id ${JSON.stringify(id)}`);
       }
       await mcpCore.saveLibrary(appHome, remaining);
-      return toContent({ removed: id, stillActiveAt });
+      return toContent({ removed: id, stillActiveAt, couldNotCheck });
     },
   );
 }

@@ -187,3 +187,15 @@ message; Codex is fully supported (TOML).
   agents without web access — deferred; add only if a real need appears.
 - Comment-preserving Codex TOML in JS — no equivalent to `toml_edit`; revisit if
   reflow bothers users.
+
+## 9. Known limitations / follow-ups
+
+- **Cross-process file locking is not implemented.** The Tauri desktop app
+  (Rust) and this Node MCP server both read-modify-write the same shared
+  files on disk (`<appHome>/mcp/servers.json`, and any given harness's
+  config, e.g. `.claude.json` / `.codex/config.toml`) with no cross-process
+  lock — only within-process guards (e.g. `MCP_LIBRARY_LOCK` on the Rust
+  side). If the desktop app and an agent-driven Node tool call edit the same
+  file at roughly the same time, one writer's change can be silently lost
+  (last writer wins, not merged). Accepted as a documented limitation for
+  v1; revisit if concurrent-edit reports come in.

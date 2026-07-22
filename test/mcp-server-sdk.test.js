@@ -3,6 +3,7 @@ const assert = require("node:assert");
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs/promises");
+const mcpCore = require("../src/mcp-core");
 
 async function withClient(fn) {
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
@@ -19,7 +20,7 @@ async function withClient(fn) {
   const client = new Client({ name: "test", version: "1.0.0" });
   await client.connect(transport);
   try {
-    return await fn(client);
+    return await fn(client, { home, appHome });
   } finally {
     await client.close();
   }
@@ -134,10 +135,38 @@ test("MCP-server tool flow: add -> list (present) -> activate cursor/global -> l
     const removePayload = payloadOf(removeRes);
     assert.equal(removePayload.removed, "context7");
     assert.deepEqual(removePayload.stillActiveAt, []);
+    assert.deepEqual(removePayload.couldNotCheck, []);
 
     const listRes4 = await client.callTool({ name: "list_mcp_servers", arguments: {} });
     const listPayload4 = payloadOf(listRes4);
     assert.ok(!listPayload4.servers.some((s) => s.id === "context7"), "context7 should be gone from the library");
+  });
+});
+
+test("remove_mcp_server surfaces couldNotCheck warnings for a harness target it can't read, without dropping them", async () => {
+  await withClient(async (client, { home }) => {
+    const spec = { id: "flaky-server", name: "Flaky", transport: "stdio", command: "npx" };
+    const addRes = await client.callTool({ name: "add_mcp_server", arguments: { spec } });
+    assert.ok(!addRes.isError, `add_mcp_server errored: ${JSON.stringify(addRes)}`);
+
+    // Malformed Cursor global config: mcpStatus records this target as an
+    // `error` row (active: false), which the naive `row.active` filter used
+    // to drop entirely.
+    const cursor = mcpCore.adapterFor("cursor");
+    const cursorGlobalPath = mcpCore.configPathFor(cursor, "global", home);
+    await fs.mkdir(path.dirname(cursorGlobalPath), { recursive: true });
+    await fs.writeFile(cursorGlobalPath, "{ not json");
+
+    const removeRes = await client.callTool({ name: "remove_mcp_server", arguments: { id: "flaky-server" } });
+    assert.ok(!removeRes.isError, `remove_mcp_server errored: ${JSON.stringify(removeRes)}`);
+    const payload = payloadOf(removeRes);
+    assert.equal(payload.removed, "flaky-server");
+    assert.deepEqual(payload.stillActiveAt, []);
+    assert.ok(Array.isArray(payload.couldNotCheck));
+    const cursorWarning = payload.couldNotCheck.find((w) => w.harness === "cursor" && w.scope === "global");
+    assert.ok(cursorWarning, `expected a couldNotCheck warning for cursor/global: ${JSON.stringify(payload.couldNotCheck)}`);
+    assert.equal(cursorWarning.configPath, cursorGlobalPath);
+    assert.match(cursorWarning.error, /Invalid JSON/);
   });
 });
 
