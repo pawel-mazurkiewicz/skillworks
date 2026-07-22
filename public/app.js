@@ -332,6 +332,21 @@ async function bootstrap() {
 
   elements.gitPreviewButton.addEventListener("click", () => runAction(() => runGitPreview()));
 
+  // A rendered preview (and its skill selection) is only valid for the exact
+  // repo URL + ref it was built from. Editing either input drops the preview
+  // so a submit can't silently fall back to install-everything (no
+  // selectedSourceKeys) or reuse source keys against a different ref.
+  const invalidateGitPreview = () => {
+    if (!state.preview) {
+      return;
+    }
+    state.preview = null;
+    elements.gitPreviewResult.hidden = true;
+    elements.gitPreviewResult.innerHTML = "";
+  };
+  elements.gitRepoInput.addEventListener("input", invalidateGitPreview);
+  elements.gitRefInput.addEventListener("input", invalidateGitPreview);
+
   elements.gitTargetCheckboxes.addEventListener("change", (event) => {
     if (event.target.matches("input[type=checkbox]")) {
       updateGitTargetSummary();

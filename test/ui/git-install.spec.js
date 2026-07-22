@@ -216,6 +216,28 @@ try {
       expect(installCalls.length).toBe(0);
     });
 
+    test("editing the repo URL or ref invalidates the rendered preview", async ({ page }) => {
+      await openFromGitTab(page);
+      await page.locator("#gitRepoInput").fill(REPO_URL);
+      await page.locator("#gitPreviewButton").click();
+      await expect(page.locator(".preview-item")).toHaveCount(2);
+
+      // Editing the URL drops the preview (and its selection state) so a
+      // later submit can't silently reuse a stale selection or fall back to
+      // install-everything while the old preview is still on screen.
+      await page.locator("#gitRepoInput").fill(`${REPO_URL}-fork`);
+      await expect(page.locator("#gitPreviewResult")).toBeHidden();
+      await expect(page.locator(".preview-item")).toHaveCount(0);
+
+      // Same for the ref input.
+      await page.locator("#gitRepoInput").fill(REPO_URL);
+      await page.locator("#gitPreviewButton").click();
+      await expect(page.locator(".preview-item")).toHaveCount(2);
+      await page.locator("#gitRefInput").fill("v2");
+      await expect(page.locator("#gitPreviewResult")).toBeHidden();
+      await expect(page.locator(".preview-item")).toHaveCount(0);
+    });
+
     test("marketplace install auto-previews with only the clicked skill selected", async ({ page }) => {
       const { installCalls } = await installApiMocks(page);
       await page.goto("/");
