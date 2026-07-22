@@ -1256,7 +1256,12 @@ async function runGitPreview(options = {}) {
     },
   });
   renderInstallPreview(plan, { repoUrl, preselectSlug: options.preselectSlug });
-  showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
+  const preselectToastShown =
+    Boolean(skillSlug(options.preselectSlug)) &&
+    (plan.candidates || []).some((c) => c.action !== "skip");
+  if (!preselectToastShown) {
+    showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
+  }
 }
 
 function skillSlug(value) {
