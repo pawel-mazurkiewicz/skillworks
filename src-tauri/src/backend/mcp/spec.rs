@@ -107,17 +107,17 @@ fn check_transport_fields(
     context: &str,
 ) -> BackendResult<()> {
     match transport {
-        McpTransport::Stdio if command.as_deref().unwrap_or("").is_empty() => {
-            Err(BackendError::Validation(format!(
-                "{context}: stdio transport requires a command"
-            )))
-        }
-        McpTransport::Http | McpTransport::Sse
-            if url.as_deref().unwrap_or("").is_empty() =>
-        {
+        McpTransport::Stdio if command.as_deref().unwrap_or("").is_empty() => Err(
+            BackendError::Validation(format!("{context}: stdio transport requires a command")),
+        ),
+        McpTransport::Http | McpTransport::Sse if url.as_deref().unwrap_or("").is_empty() => {
             Err(BackendError::Validation(format!(
                 "{context}: {} transport requires a url",
-                if transport == McpTransport::Http { "http" } else { "sse" }
+                if transport == McpTransport::Http {
+                    "http"
+                } else {
+                    "sse"
+                }
             )))
         }
         _ => Ok(()),
@@ -129,12 +129,14 @@ fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
     for v in &spec.variants {
         if v.label.trim().is_empty() {
             return Err(BackendError::Validation(format!(
-                "{}: variant label must not be empty", spec.id
+                "{}: variant label must not be empty",
+                spec.id
             )));
         }
         if seen.contains(&v.label) {
             return Err(BackendError::Validation(format!(
-                "{}: duplicate variant label {:?}", spec.id, v.label
+                "{}: duplicate variant label {:?}",
+                spec.id, v.label
             )));
         }
         seen.push(v.label.clone());
@@ -142,14 +144,16 @@ fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
             if let Some(h) = &applies.harness {
                 adapter_for(h).map_err(|_| {
                     BackendError::Validation(format!(
-                        "{}: variant {:?} targets unknown harness {h:?}", spec.id, v.label
+                        "{}: variant {:?} targets unknown harness {h:?}",
+                        spec.id, v.label
                     ))
                 })?;
             }
             if let Some(s) = &applies.scope {
                 if s != "global" && s != "project" {
                     return Err(BackendError::Validation(format!(
-                        "{}: variant {:?} has invalid scope {s:?}", spec.id, v.label
+                        "{}: variant {:?} has invalid scope {s:?}",
+                        spec.id, v.label
                     )));
                 }
             }
@@ -158,8 +162,12 @@ fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
         let inv_transport = v.transport.unwrap_or(spec.transport);
         let inv_command = v.command.clone().or_else(|| spec.command.clone());
         let inv_url = v.url.clone().or_else(|| spec.url.clone());
-        check_transport_fields(inv_transport, &inv_command, &inv_url,
-            &format!("{} variant {:?}", spec.id, v.label))?;
+        check_transport_fields(
+            inv_transport,
+            &inv_command,
+            &inv_url,
+            &format!("{} variant {:?}", spec.id, v.label),
+        )?;
     }
     Ok(())
 }
@@ -187,41 +195,52 @@ pub fn resolve_effective(
     scope: &str,
     variant_label: Option<&str>,
 ) -> BackendResult<EffectiveInvocation> {
-    let variant: Option<&McpVariant> = match variant_label {
-        Some(label) => Some(
-            spec.variants
-                .iter()
-                .find(|v| v.label == label)
-                .ok_or_else(|| {
+    resolve_effective_selection(spec, harness_id, scope, variant_label).map(|(inv, _)| inv)
+}
+
+/// Like [`resolve_effective`], but also returns the label of the variant that
+/// was selected for this target (`None` = canonical fields). Reconcile uses
+/// this to detect when drift on a target is controlled by a variant, where a
+/// blind adopt into the canonical fields would leave the variant overriding.
+pub fn resolve_effective_selection(
+    spec: &McpServerSpec,
+    harness_id: &str,
+    scope: &str,
+    variant_label: Option<&str>,
+) -> BackendResult<(EffectiveInvocation, Option<String>)> {
+    let variant: Option<&McpVariant> =
+        match variant_label {
+            Some(label) => Some(spec.variants.iter().find(|v| v.label == label).ok_or_else(
+                || {
                     BackendError::NotFound(format!(
                         "Variant {label:?} not found on server {:?}",
                         spec.id
                     ))
-                })?,
-        ),
-        None => spec
-            .variants
-            .iter()
-            .filter_map(|v| {
-                let applies = v.applies_to.as_ref()?;
-                let mut score = 0;
-                if let Some(h) = &applies.harness {
-                    if h != harness_id {
-                        return None;
+                },
+            )?),
+            None => spec
+                .variants
+                .iter()
+                .filter_map(|v| {
+                    let applies = v.applies_to.as_ref()?;
+                    let mut score = 0;
+                    if let Some(h) = &applies.harness {
+                        if h != harness_id {
+                            return None;
+                        }
+                        score += 2;
                     }
-                    score += 2;
-                }
-                if let Some(s) = &applies.scope {
-                    if s != scope {
-                        return None;
+                    if let Some(s) = &applies.scope {
+                        if s != scope {
+                            return None;
+                        }
+                        score += 1;
                     }
-                    score += 1;
-                }
-                (score > 0).then_some((score, v))
-            })
-            .max_by_key(|(score, _)| *score)
-            .map(|(_, v)| v),
-    };
+                    (score > 0).then_some((score, v))
+                })
+                .max_by_key(|(score, _)| *score)
+                .map(|(_, v)| v),
+        };
 
     let mut inv = EffectiveInvocation {
         transport: spec.transport,
@@ -252,7 +271,8 @@ pub fn resolve_effective(
         }
     }
     check_transport_fields(inv.transport, &inv.command, &inv.url, &spec.id)?;
-    Ok(inv)
+    let selected = variant.map(|v| v.label.clone());
+    Ok((inv, selected))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -279,7 +299,13 @@ pub async fn load_library(app_home: &Path) -> BackendResult<Vec<McpServerSpec>> 
 
 pub async fn save_library(app_home: &Path, servers: &[McpServerSpec]) -> BackendResult<()> {
     let path = library_path(app_home);
-    write_json_atomic(&path, &LibraryFile { servers: servers.to_vec() }).await
+    write_json_atomic(
+        &path,
+        &LibraryFile {
+            servers: servers.to_vec(),
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -292,7 +318,10 @@ mod tests {
             id: "context7".into(),
             name: "Context7".into(),
             description: None,
-            source: McpSource { kind: "manual".into(), url: None },
+            source: McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
             transport: McpTransport::Stdio,
             command: Some("npx".into()),
             args: vec!["-y".into(), "@upstash/context7-mcp".into()],
@@ -348,17 +377,28 @@ mod tests {
                 label: "http".into(),
                 applies_to: None,
                 transport: Some(McpTransport::Http),
-                command: None, args: None, env: None,
+                command: None,
+                args: None,
+                env: None,
                 url: Some("https://mcp.context7.com/mcp".into()),
                 headers: None,
             },
             McpVariant {
                 label: "codex-tweak".into(),
-                applies_to: Some(McpAppliesTo { harness: Some("codex".into()), scope: None }),
+                applies_to: Some(McpAppliesTo {
+                    harness: Some("codex".into()),
+                    scope: None,
+                }),
                 transport: None,
                 command: None,
-                args: Some(vec!["-y".into(), "@upstash/context7-mcp".into(), "--codex".into()]),
-                env: None, url: None, headers: None,
+                args: Some(vec![
+                    "-y".into(),
+                    "@upstash/context7-mcp".into(),
+                    "--codex".into(),
+                ]),
+                env: None,
+                url: None,
+                headers: None,
             },
         ];
         // Explicit label wins.
@@ -370,7 +410,10 @@ mod tests {
         assert_eq!(inv.args.last().map(String::as_str), Some("--codex"));
         // ...but not for cursor (falls back to canonical).
         let inv = resolve_effective(&s, "cursor", "global", None).unwrap();
-        assert_eq!(inv.args.last().map(String::as_str), Some("@upstash/context7-mcp"));
+        assert_eq!(
+            inv.args.last().map(String::as_str),
+            Some("@upstash/context7-mcp")
+        );
         // Unknown label errors.
         assert!(resolve_effective(&s, "claude", "global", Some("nope")).is_err());
     }
@@ -381,17 +424,29 @@ mod tests {
         s.variants = vec![
             McpVariant {
                 label: "scope-only".into(),
-                applies_to: Some(McpAppliesTo { harness: None, scope: Some("project".into()) }),
-                transport: None, command: None,
+                applies_to: Some(McpAppliesTo {
+                    harness: None,
+                    scope: Some("project".into()),
+                }),
+                transport: None,
+                command: None,
                 args: Some(vec!["scope".into()]),
-                env: None, url: None, headers: None,
+                env: None,
+                url: None,
+                headers: None,
             },
             McpVariant {
                 label: "both".into(),
-                applies_to: Some(McpAppliesTo { harness: Some("claude".into()), scope: Some("project".into()) }),
-                transport: None, command: None,
+                applies_to: Some(McpAppliesTo {
+                    harness: Some("claude".into()),
+                    scope: Some("project".into()),
+                }),
+                transport: None,
+                command: None,
                 args: Some(vec!["both".into()]),
-                env: None, url: None, headers: None,
+                env: None,
+                url: None,
+                headers: None,
             },
         ];
         // Full match beats partial.
@@ -401,7 +456,10 @@ mod tests {
         let inv = resolve_effective(&s, "gemini", "project", None).unwrap();
         assert_eq!(inv.args, vec!["scope".to_string()]);
         let inv = resolve_effective(&s, "gemini", "global", None).unwrap();
-        assert_eq!(inv.args, vec!["-y".to_string(), "@upstash/context7-mcp".to_string()]);
+        assert_eq!(
+            inv.args,
+            vec!["-y".to_string(), "@upstash/context7-mcp".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -419,39 +477,83 @@ mod tests {
     fn validate_rejects_bad_variants() {
         // empty label
         assert!(validate_spec(&spec_with_variant(McpVariant {
-            label: "".into(), applies_to: None, transport: None, command: None,
-            args: None, env: None, url: None, headers: None,
-        })).is_err());
+            label: "".into(),
+            applies_to: None,
+            transport: None,
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        }))
+        .is_err());
         // duplicate labels
         let mut s = stdio_spec();
-        let v = McpVariant { label: "x".into(), applies_to: None, transport: None,
-            command: None, args: None, env: None, url: None, headers: None };
+        let v = McpVariant {
+            label: "x".into(),
+            applies_to: None,
+            transport: None,
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        };
         s.variants = vec![v.clone(), v];
         assert!(validate_spec(&s).is_err());
         // unknown harness in applies_to
         assert!(validate_spec(&spec_with_variant(McpVariant {
             label: "a".into(),
-            applies_to: Some(McpAppliesTo { harness: Some("emacs".into()), scope: None }),
-            transport: None, command: None, args: None, env: None, url: None, headers: None,
-        })).is_err());
+            applies_to: Some(McpAppliesTo {
+                harness: Some("emacs".into()),
+                scope: None
+            }),
+            transport: None,
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        }))
+        .is_err());
         // bad scope
         assert!(validate_spec(&spec_with_variant(McpVariant {
             label: "a".into(),
-            applies_to: Some(McpAppliesTo { harness: None, scope: Some("universe".into()) }),
-            transport: None, command: None, args: None, env: None, url: None, headers: None,
-        })).is_err());
+            applies_to: Some(McpAppliesTo {
+                harness: None,
+                scope: Some("universe".into())
+            }),
+            transport: None,
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        }))
+        .is_err());
         // variant flips to http without url -> unusable effective invocation
         assert!(validate_spec(&spec_with_variant(McpVariant {
-            label: "broken-remote".into(), applies_to: None,
+            label: "broken-remote".into(),
+            applies_to: None,
             transport: Some(McpTransport::Http),
-            command: None, args: None, env: None, url: None, headers: None,
-        })).is_err());
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        }))
+        .is_err());
         // valid variant still passes
         assert!(validate_spec(&spec_with_variant(McpVariant {
-            label: "remote".into(), applies_to: None,
+            label: "remote".into(),
+            applies_to: None,
             transport: Some(McpTransport::Http),
-            command: None, args: None, env: None,
-            url: Some("https://x/mcp".into()), headers: None,
-        })).is_ok());
+            command: None,
+            args: None,
+            env: None,
+            url: Some("https://x/mcp".into()),
+            headers: None,
+        }))
+        .is_ok());
     }
 }

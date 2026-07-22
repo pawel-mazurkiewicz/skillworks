@@ -12,3 +12,5 @@ mod url;
 
 pub use assembly::{extract_drafts, ExtractionResult};
 pub use url::{source_for_url, FetchPlan};
+
+pub(crate) use assembly::{placeholder_warnings, slugify};

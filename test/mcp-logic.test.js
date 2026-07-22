@@ -57,10 +57,10 @@ test("slugifyId mirrors the Rust slugify (lowercase, collapse, trim, ascii-only)
   assert.equal(slugifyId("Already-Slugified"), "already-slugified");
 });
 
-test("buildMcpRoutes contains all 9 MCP-servers-tab routes", async () => {
+test("buildMcpRoutes contains all 10 MCP-servers-tab routes", async () => {
   const { buildMcpRoutes } = await loadLogic();
   const routes = buildMcpRoutes();
-  assert.equal(routes.length, 9);
+  assert.equal(routes.length, 10);
   const commands = routes.map((r) => r[2]).sort();
   assert.deepEqual(commands, [
     "mcp_activate",
@@ -69,10 +69,19 @@ test("buildMcpRoutes contains all 9 MCP-servers-tab routes", async () => {
     "mcp_deactivate",
     "mcp_discover",
     "mcp_list_library",
+    "mcp_reconcile",
     "mcp_remove_server",
     "mcp_status",
     "mcp_update_server",
   ]);
+});
+
+test("buildMcpRoutes exposes reconcile route", async () => {
+  const { buildMcpRoutes } = await loadLogic();
+  const routes = buildMcpRoutes();
+  const hit = routes.find((r) => "/api/mcp/servers/reconcile".match(r[1]));
+  assert.ok(hit, "reconcile route present");
+  assert.equal(hit[2], "mcp_reconcile");
 });
 
 test("buildMcpRoutes arg builders produce exact camelCase payloads", async () => {
@@ -469,4 +478,31 @@ test("activeTargetsOf returns only active targets for the given server", async (
   assert.deepEqual(activeTargetsOf("srv-missing", statuses), []);
   assert.deepEqual(activeTargetsOf("srv-1", []), []);
   assert.deepEqual(activeTargetsOf("srv-1", undefined), []);
+});
+
+test("foundInSummary lists harness/scope pairs", async () => {
+  const { foundInSummary } = await loadLogic();
+  const s = foundInSummary([
+    { harness: "claude", scope: "global" },
+    { harness: "cursor", scope: "project" },
+  ]);
+  assert.match(s, /Claude Code/);
+  assert.match(s, /global/);
+  assert.match(s, /cursor|Cursor/);
+});
+
+test("formatDiffValue renders empty/undefined as an explicit dash", async () => {
+  const { formatDiffValue } = await loadLogic();
+  assert.equal(formatDiffValue(undefined), "—");
+  assert.equal(formatDiffValue(""), "—");
+  assert.equal(formatDiffValue("npx"), "npx");
+});
+
+test("splitReconcile tolerates missing fields", async () => {
+  const { splitReconcile } = await loadLogic();
+  const r = splitReconcile(null);
+  assert.deepEqual(r, { imports: [], conflicts: [], warnings: [] });
+  const r2 = splitReconcile({ imports: [{ key: "x" }] });
+  assert.equal(r2.imports.length, 1);
+  assert.deepEqual(r2.conflicts, []);
 });

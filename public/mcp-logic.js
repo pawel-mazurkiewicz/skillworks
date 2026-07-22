@@ -70,6 +70,10 @@ export function buildMcpRoutes() {
       projectPath: url.searchParams.get("project") || undefined,
     })],
 
+    ["GET", /^\/api\/mcp\/servers\/reconcile$/, "mcp_reconcile", (url) => ({
+      projectPath: url.searchParams.get("project") || undefined,
+    })],
+
     ["POST", /^\/api\/mcp\/servers$/, "mcp_add_manual", (_url, body) => ({
       spec: body && body.spec,
     })],
@@ -319,4 +323,32 @@ export function groupDiscoveredByHarness(entries) {
     groups.get(harness).push(entry);
   }
   return Array.from(groups.entries()).map(([harness, items]) => ({ harness, items }));
+}
+
+// Human summary of a candidate's foundIn list, e.g.
+// "Claude Code / global · Cursor / project".
+export function foundInSummary(foundIn) {
+  const items = Array.isArray(foundIn) ? foundIn : [];
+  return items
+    .map((t) => {
+      const label = (MCP_HARNESSES.find((h) => h.id === t.harness) || {}).label || t.harness;
+      return `${label} / ${t.scope}`;
+    })
+    .join(" · ");
+}
+
+// Drift diff cells: render an absent/empty value as an explicit em dash so
+// "added" vs "removed" reads clearly in the table.
+export function formatDiffValue(value) {
+  return value === undefined || value === null || value === "" ? "—" : String(value);
+}
+
+// Normalize an mcp_reconcile response into stable arrays.
+export function splitReconcile(response) {
+  const r = response || {};
+  return {
+    imports: Array.isArray(r.imports) ? r.imports : [],
+    conflicts: Array.isArray(r.conflicts) ? r.conflicts : [],
+    warnings: Array.isArray(r.warnings) ? r.warnings : [],
+  };
 }
