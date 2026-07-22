@@ -2125,6 +2125,20 @@ pub async fn fetch_marketplace_skills(
     super::marketplace::fetch_marketplace_skills(q, view, page, per_page).await
 }
 
+/// `POST /api/marketplace/descriptions` → Tauri command.
+///
+/// Lazily resolves skill detail-page meta descriptions, cached on disk
+/// under the app home so each skill is fetched at most once ever.
+#[tauri::command]
+pub async fn marketplace_descriptions(
+    ids: Vec<String>,
+) -> BackendResult<std::collections::BTreeMap<String, String>> {
+    let home_dir = require_home_dir()?;
+    let app_home = resolve_app_home(&home_dir, None);
+    let cache_path = app_home.join("marketplace-descriptions.json");
+    super::marketplace::fetch_marketplace_descriptions(ids, &cache_path).await
+}
+
 // ---------------------------------------------------------------------------
 // MCP server registration.
 // ---------------------------------------------------------------------------

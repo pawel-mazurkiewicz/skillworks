@@ -8,6 +8,7 @@
 //! can inject a deterministic mock without spinning up a real server.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -700,6 +701,94 @@ pub fn decode_html(value: &str) -> String {
         .replace("&gt;", ">")
 }
 
+static META_DESCRIPTION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<meta[^>]*\bname="description"[^>]*\bcontent="([^"]*)""#)
+        .expect("valid meta description regex")
+});
+static META_DESCRIPTION_PATTERN_REVERSED: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<meta[^>]*\bcontent="([^"]*)"[^>]*\bname="description""#)
+        .expect("valid reversed meta description regex")
+});
+static SKILL_ID_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    // Segments must start with an alphanumeric so dot-only segments
+    // (`..`) can never reach the fetch URL.
+    Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+        .expect("valid skill id regex")
+});
+
+const MAX_DESCRIPTION_IDS: usize = 100;
+
+/// Pull the `<meta name="description">` content out of a skill detail
+/// page. Handles both attribute orders (Next.js emits name-first today,
+/// but the order is not contractual).
+pub fn extract_meta_description(html: &str) -> Option<String> {
+    META_DESCRIPTION_PATTERN
+        .captures(html)
+        .or_else(|| META_DESCRIPTION_PATTERN_REVERSED.captures(html))
+        .and_then(|cap| cap.get(1))
+        .map(|m| decode_html(m.as_str()).trim().to_string())
+}
+
+/// Production wrapper for `fetch_marketplace_descriptions_with`.
+pub async fn fetch_marketplace_descriptions(
+    ids: Vec<String>,
+    cache_path: &Path,
+) -> BackendResult<BTreeMap<String, String>> {
+    let client = ReqwestHttpClient::new()?;
+    fetch_marketplace_descriptions_with(&client, ids, cache_path).await
+}
+
+/// Resolve descriptions for skills.sh skill ids (`owner/repo/slug`),
+/// backed by a JSON disk cache so each skill is fetched at most once
+/// ever. A page that yields no meta description caches an empty string
+/// (prevents a refetch loop); a network/HTTP failure caches nothing so a
+/// later call retries. Ids that don't look like `owner/repo/slug` are
+/// skipped without a request.
+pub async fn fetch_marketplace_descriptions_with<C: HttpClient + ?Sized>(
+    client: &C,
+    ids: Vec<String>,
+    cache_path: &Path,
+) -> BackendResult<BTreeMap<String, String>> {
+    let mut cache: BTreeMap<String, String> = match tokio::fs::read_to_string(cache_path).await {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => BTreeMap::new(),
+    };
+
+    let mut dirty = false;
+    for id in ids.iter().take(MAX_DESCRIPTION_IDS) {
+        if cache.contains_key(id) || !SKILL_ID_PATTERN.is_match(id) {
+            continue;
+        }
+        let url = format!("{}/{}", BASE_URL, id);
+        let response = match client
+            .get(&url, &[("accept", "text/html"), ("user-agent", USER_AGENT)])
+            .await
+        {
+            Ok(response) if response.is_ok() => response,
+            _ => continue,
+        };
+        cache.insert(
+            id.clone(),
+            extract_meta_description(&response.body).unwrap_or_default(),
+        );
+        dirty = true;
+    }
+
+    if dirty {
+        if let Some(parent) = cache_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        if let Ok(text) = serde_json::to_string_pretty(&cache) {
+            let _ = tokio::fs::write(cache_path, text).await;
+        }
+    }
+
+    Ok(ids
+        .iter()
+        .filter_map(|id| cache.get(id).map(|desc| (id.clone(), desc.clone())))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -900,6 +989,101 @@ mod tests {
         assert_eq!(decode_html("&lt;tag&gt;"), "<tag>");
         // Anything we don't know about should pass through unchanged.
         assert_eq!(decode_html("&nbsp;"), "&nbsp;");
+    }
+
+    #[test]
+    fn extract_meta_description_handles_both_attribute_orders() {
+        assert_eq!(
+            extract_meta_description(
+                r#"<head><meta name="description" content="Guidance for design &amp; UI."/></head>"#
+            ),
+            Some("Guidance for design & UI.".to_string())
+        );
+        assert_eq!(
+            extract_meta_description(
+                r#"<meta content="Reversed order" name="description"/>"#
+            ),
+            Some("Reversed order".to_string())
+        );
+        assert_eq!(extract_meta_description("<head><title>x</title></head>"), None);
+    }
+
+    #[tokio::test]
+    async fn descriptions_fetch_uncached_and_reuse_disk_cache() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("cache").join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![HttpResponse {
+            status: 200,
+            body: r#"<meta name="description" content="Rust patterns."/>"#.to_string(),
+        }]);
+
+        let ids = vec!["owner/repo/rust".to_string()];
+        let result = fetch_marketplace_descriptions_with(&client, ids.clone(), &cache_path)
+            .await
+            .expect("fetch");
+        assert_eq!(result.get("owner/repo/rust").map(String::as_str), Some("Rust patterns."));
+        assert_eq!(
+            client.calls.lock().unwrap().as_slice(),
+            ["https://skills.sh/owner/repo/rust"]
+        );
+
+        // Second call: served from the disk cache, no further HTTP calls
+        // (MockClient would error on an unexpected extra call).
+        let again = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("cached fetch");
+        assert_eq!(again.get("owner/repo/rust").map(String::as_str), Some("Rust patterns."));
+        assert_eq!(client.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn descriptions_cache_empty_on_parse_miss_but_not_on_http_failure() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![
+            HttpResponse {
+                status: 200,
+                body: "<html>no meta here</html>".to_string(),
+            },
+            HttpResponse {
+                status: 500,
+                body: String::new(),
+            },
+        ]);
+
+        let ids = vec!["o/r/nometa".to_string(), "o/r/failed".to_string()];
+        let result = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("fetch");
+        // Parse miss → cached (and returned) as empty string.
+        assert_eq!(result.get("o/r/nometa").map(String::as_str), Some(""));
+        // HTTP failure → not cached, absent from the result.
+        assert!(!result.contains_key("o/r/failed"));
+
+        let cache: BTreeMap<String, String> = serde_json::from_str(
+            &std::fs::read_to_string(&cache_path).unwrap(),
+        )
+        .unwrap();
+        assert!(cache.contains_key("o/r/nometa"));
+        assert!(!cache.contains_key("o/r/failed"));
+    }
+
+    #[tokio::test]
+    async fn descriptions_skip_invalid_ids_without_requests() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![]);
+
+        let ids = vec![
+            "not-three-segments".to_string(),
+            "owner/repo/slug/extra".to_string(),
+            "owner/../etc".to_string(),
+        ];
+        let result = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("fetch");
+        assert!(result.is_empty());
+        assert!(client.calls.lock().unwrap().is_empty());
     }
 
     #[test]

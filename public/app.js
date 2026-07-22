@@ -33,6 +33,7 @@ const state = {
     pagination: null,
     loaded: false,
     error: "",
+    descriptions: {},
   },
   mcp: {
     harnesses: [],
@@ -1175,6 +1176,39 @@ function renderMarketplace() {
   elements.marketplaceResults.querySelectorAll("[data-marketplace-open]").forEach((button) => {
     button.addEventListener("click", () => openExternalUrl(button.dataset.marketplaceOpen));
   });
+  hydrateMarketplaceDescriptions(items);
+}
+
+// Fire-and-forget: fetch cached/scraped descriptions for the rendered
+// cards and patch them in place (no re-render, no scroll jump). Failures
+// are silent — the muted placeholder simply stays.
+async function hydrateMarketplaceDescriptions(items) {
+  const ids = items
+    .filter((skill) => skill.id && !skill.description && state.marketplace.descriptions[skill.id] === undefined)
+    .map((skill) => skill.id);
+  if (!ids.length) {
+    return;
+  }
+  let result;
+  try {
+    result = await api("/api/marketplace/descriptions", { method: "POST", body: { ids } });
+  } catch (_error) {
+    return;
+  }
+  for (const id of ids) {
+    if (result && typeof result[id] === "string") {
+      state.marketplace.descriptions[id] = result[id];
+    }
+  }
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-desc]").forEach((node) => {
+    const description = String(
+      state.marketplace.descriptions[node.dataset.marketplaceDesc] || "",
+    ).trim();
+    if (description) {
+      node.textContent = description;
+      node.classList.remove("marketplace-desc-empty");
+    }
+  });
 }
 
 async function openExternalUrl(url) {
@@ -1211,14 +1245,18 @@ async function openExternalUrl(url) {
 function renderMarketplaceSkill(skill) {
   const installed = isMarketplaceInstalled(skill);
   const installCount = Number(skill.installs);
+  const description = String(
+    skill.description || state.marketplace.descriptions[skill.id] || "",
+  ).trim();
   return `
     <article class="marketplace-card">
       <div class="marketplace-card-main">
         <header>
           <strong>${escapeHtml(skill.name || skill.slug || skill.id)}</strong>
+          ${installed ? `<span class="marketplace-installed">Installed</span>` : ""}
           <span>${escapeHtml(skill.source || "")}</span>
         </header>
-        <p>${escapeHtml(skill.description || skill.id || "")}</p>
+        <p class="marketplace-desc${description ? "" : " marketplace-desc-empty"}" data-marketplace-desc="${escapeAttr(skill.id)}">${description ? escapeHtml(description) : "No description available."}</p>
         <div class="marketplace-card-meta">
           ${Number.isFinite(installCount) ? `<span>${installCount.toLocaleString()} installs</span>` : ""}
           <span>${escapeHtml(skill.sourceType || "source")}</span>

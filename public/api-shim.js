@@ -257,6 +257,12 @@ const ROUTES = [
       perPage: url.searchParams.get("per_page") || undefined,
     })],
 
+  // silent: background description hydration must never toast on failure.
+  ["POST", /^\/api\/marketplace\/descriptions$/, "marketplace_descriptions",
+    (_url, body) => ({
+      ids: body.ids,
+    }), null, true],
+
   ["POST", /^\/api\/create-skill$/, "create_skill", (_url, body) => ({
     name: body.name,
     description: body.description,

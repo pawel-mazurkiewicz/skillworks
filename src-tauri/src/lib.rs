@@ -37,6 +37,7 @@ pub fn run() {
             backend::commands::apply_set,
             backend::commands::set_project_pinned_sets,
             backend::commands::fetch_marketplace_skills,
+            backend::commands::marketplace_descriptions,
             backend::commands::create_skill,
             backend::commands::mcp_registration_status,
             backend::commands::register_mcp_server,

@@ -1727,6 +1727,29 @@ body.skill-editor-locked {
   line-height: 1.4;
 }
 
+.marketplace-card-main header .marketplace-installed {
+  flex: none;
+  overflow: visible;
+  font-family: inherit;
+  font-size: 0.69rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.marketplace-card-main p.marketplace-desc {
+  color: var(--ink-soft);
+}
+
+.marketplace-card-main p.marketplace-desc-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .marketplace-card-meta {
   display: flex;
   flex-wrap: wrap;
