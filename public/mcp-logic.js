@@ -359,3 +359,59 @@ export function splitReconcile(response) {
     warnings: Array.isArray(r.warnings) ? r.warnings : [],
   };
 }
+
+
+export function uniqueVariantLabel(base, variants) {
+  const labels = new Set((variants || []).map((v) => v.label));
+  if (!labels.has(base)) return base;
+  let n = 2;
+  while (labels.has(`${base} (${n})`)) n += 1;
+  return `${base} (${n})`;
+}
+
+// Field groups a variant can model. `enabled`/`tools` are renderer-owned
+// discriminants with no variant representation — diffs touching only those
+// cannot be captured, hence the null return.
+const VARIANT_GROUPS = ["transport", "command", "args", "url", "env", "headers"];
+
+function driftedGroups(diff) {
+  const groups = new Set();
+  for (const d of Array.isArray(diff) ? diff : []) {
+    const field = String(d.field || "");
+    if (field.startsWith("env.")) groups.add("env");
+    else if (field.startsWith("headers.")) groups.add("headers");
+    else if (VARIANT_GROUPS.includes(field)) groups.add(field);
+  }
+  return groups;
+}
+
+// Build the server's next variants array for a drift row. Variant overrides
+// replace whole fields (see resolve_effective in spec.rs), so each drifted
+// group takes the FULL observed value from observedSpec.
+export function variantFromConflict(conflict, server) {
+  const groups = driftedGroups(conflict.diff);
+  if (!groups.size) return null;
+  const spec = conflict.observedSpec || {};
+  const overrides = {};
+  if (groups.has("transport")) overrides.transport = spec.transport;
+  if (groups.has("command")) overrides.command = spec.command;
+  if (groups.has("args")) overrides.args = Array.isArray(spec.args) ? [...spec.args] : [];
+  if (groups.has("url")) overrides.url = spec.url;
+  if (groups.has("env")) overrides.env = { ...(spec.env || {}) };
+  if (groups.has("headers")) overrides.headers = { ...(spec.headers || {}) };
+
+  const variants = Array.isArray(server.variants) ? server.variants : [];
+  if (conflict.adoptable === false && conflict.variantLabel) {
+    const idx = variants.findIndex((v) => v.label === conflict.variantLabel);
+    if (idx === -1) return null;
+    const next = variants.map((v, i) => (i === idx ? { ...v, ...overrides } : v));
+    return { variants: next, action: "update", label: conflict.variantLabel };
+  }
+  const label = uniqueVariantLabel(`${conflict.harness} (${conflict.scope})`, variants);
+  const variant = {
+    label,
+    appliesTo: { harness: conflict.harness, scope: conflict.scope },
+    ...overrides,
+  };
+  return { variants: [...variants, variant], action: "add", label };
+}

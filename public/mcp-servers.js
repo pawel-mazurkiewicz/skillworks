@@ -33,6 +33,7 @@ import {
   splitReconcile,
   foundInSummary,
   formatDiffValue,
+  variantFromConflict,
 } from "./mcp-logic.js";
 
 const VARIANT_FIELD_LABELS = {
@@ -1427,6 +1428,15 @@ function renderConflictEntry(conflict, index) {
         )}" — edit that variant to change it.</p>`
       : "";
 
+  const server = state.servers.find((s) => s.id === conflict.serverId);
+  const variantPlan = server ? variantFromConflict(conflict, server) : null;
+  const variantPending = state.reconcilePending.has(`variant:${index}`);
+  const variantBtnLabel = variantPending
+    ? "Saving variant…"
+    : conflict.adoptable === false && conflict.variantLabel
+      ? `Update variant "${escapeHtml(conflict.variantLabel)}"`
+      : "Add as variant";
+
   return `
     <li class="mcp-servers-reconcile-row" data-mcp-conflict-row="${index}">
       <div class="mcp-servers-reconcile-row-main">
@@ -1446,6 +1456,7 @@ function renderConflictEntry(conflict, index) {
       <div class="button-row">
         <button type="button" class="button" data-mcp-reapply="${index}" ${reapplyPending ? "disabled" : ""}>${reapplyPending ? "Reapplying…" : "Reapply library"}</button>
         <button type="button" class="button ghost" data-mcp-adopt="${index}" ${adoptPending || !adoptable ? "disabled" : ""}>${adoptPending ? "Adopting…" : "Adopt into library"}</button>
+        <button type="button" class="button ghost" data-mcp-adopt-variant="${index}" ${variantPending || !variantPlan ? "disabled" : ""}>${variantBtnLabel}</button>
       </div>
     </li>`;
 }
@@ -1633,6 +1644,43 @@ async function handleReconcileAdopt(index) {
   }
 }
 
+
+async function handleReconcileAdoptVariant(index) {
+  const conflict = state.conflicts[index];
+  if (!conflict) return;
+  const server = state.servers.find((s) => s.id === conflict.serverId);
+  if (!server) return;
+  const plan = variantFromConflict(conflict, server);
+  if (!plan) return;
+  if (
+    plan.action === "update" &&
+    !window.confirm(
+      `Update variant "${plan.label}" with the on-disk values for ${libraryServerName(conflict.serverId)}?`
+    )
+  ) {
+    return;
+  }
+  const key = `variant:${index}`;
+  state.reconcilePending.add(key);
+  renderReconcile();
+  try {
+    const spec = specWithVariants(server, plan.variants);
+    const response = await api("/api/mcp/servers", { method: "PATCH", body: { spec } });
+    const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+    state.servers = servers;
+    fireToastLocal(
+      plan.action === "update"
+        ? `Updated variant "${plan.label}".`
+        : `Added variant "${plan.label}" to ${libraryServerName(conflict.serverId)}.`
+    );
+  } catch (err) {
+    console.error("[mcp-servers] adopt-as-variant failed", err);
+  } finally {
+    state.reconcilePending.delete(key);
+    await refreshAll();
+  }
+}
+
 // ---------- DOM event wiring (bound once, from initDom()) ----------
 
 function bindDomEvents() {
@@ -1714,6 +1762,11 @@ if (els.discovered) {
     const adoptBtn = event.target.closest("[data-mcp-adopt]");
     if (adoptBtn) {
       handleReconcileAdopt(Number(adoptBtn.dataset.mcpAdopt));
+      return;
+    }
+    const adoptVariantBtn = event.target.closest("[data-mcp-adopt-variant]");
+    if (adoptVariantBtn) {
+      handleReconcileAdoptVariant(Number(adoptVariantBtn.dataset.mcpAdoptVariant));
     }
   });
 }

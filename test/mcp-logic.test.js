@@ -519,3 +519,81 @@ test("splitReconcile tolerates missing fields", async () => {
   assert.equal(r2.imports.length, 1);
   assert.deepEqual(r2.conflicts, []);
 });
+
+test("uniqueVariantLabel suffixes on collision", async () => {
+  const { uniqueVariantLabel } = await loadLogic();
+  assert.equal(uniqueVariantLabel("kiro (global)", []), "kiro (global)");
+  assert.equal(
+    uniqueVariantLabel("kiro (global)", [{ label: "kiro (global)" }]),
+    "kiro (global) (2)"
+  );
+  assert.equal(
+    uniqueVariantLabel("kiro (global)", [{ label: "kiro (global)" }, { label: "kiro (global) (2)" }]),
+    "kiro (global) (3)"
+  );
+});
+
+test("variantFromConflict adds a scoped variant with only drifted groups", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = {
+    id: "ctx", transport: "stdio", command: "npx",
+    args: ["-y", "pkg"], env: { A: "1" }, headers: {}, variants: [],
+  };
+  const conflict = {
+    serverId: "ctx", harness: "kiro", scope: "global", adoptable: true,
+    diff: [
+      { field: "args", expected: "-y pkg", observed: "-y pkg --flag" },
+      { field: "env.B", observed: "2" },
+    ],
+    observedSpec: {
+      ...server, args: ["-y", "pkg", "--flag"], env: { A: "1", B: "2" },
+    },
+  };
+  const out = variantFromConflict(conflict, server);
+  assert.equal(out.action, "add");
+  assert.equal(out.variants.length, 1);
+  const v = out.variants[0];
+  assert.equal(v.label, "kiro (global)");
+  assert.deepEqual(v.appliesTo, { harness: "kiro", scope: "global" });
+  assert.deepEqual(v.args, ["-y", "pkg", "--flag"]);
+  assert.deepEqual(v.env, { A: "1", B: "2" });
+  assert.equal(v.command, undefined);
+  assert.equal(v.transport, undefined);
+});
+
+test("variantFromConflict updates the controlling variant in place", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = {
+    id: "ctx", transport: "stdio", command: "npx",
+    args: ["-y", "pkg"], env: {}, headers: {},
+    variants: [
+      { label: "kiro tweak", appliesTo: { harness: "kiro" }, args: ["-y", "pkg", "--old"] },
+      { label: "other", appliesTo: { harness: "cursor" } },
+    ],
+  };
+  const conflict = {
+    serverId: "ctx", harness: "kiro", scope: "global", adoptable: false,
+    variantLabel: "kiro tweak",
+    diff: [{ field: "args", expected: "-y pkg --old", observed: "-y pkg --new" }],
+    observedSpec: { ...server, args: ["-y", "pkg", "--new"] },
+  };
+  const out = variantFromConflict(conflict, server);
+  assert.equal(out.action, "update");
+  assert.equal(out.label, "kiro tweak");
+  assert.equal(out.variants.length, 2);
+  const updated = out.variants.find((v) => v.label === "kiro tweak");
+  assert.deepEqual(updated.args, ["-y", "pkg", "--new"]);
+  // Untouched override fields and appliesTo survive.
+  assert.deepEqual(updated.appliesTo, { harness: "kiro" });
+});
+
+test("variantFromConflict returns null when nothing is modelable", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = { id: "ctx", transport: "stdio", command: "npx", args: [], env: {}, headers: {}, variants: [] };
+  const conflict = {
+    serverId: "ctx", harness: "opencode", scope: "global", adoptable: true,
+    diff: [{ field: "enabled", expected: "true", observed: "false" }],
+    observedSpec: server,
+  };
+  assert.equal(variantFromConflict(conflict, server), null);
+});

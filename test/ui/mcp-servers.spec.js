@@ -20,7 +20,9 @@ const SERVERS = [
     args: ["-y", "@modelcontextprotocol/server-everything"],
     env: {},
     headers: {},
-    variants: [],
+    // Task 7: this variant controls the "kiro" harness — the RECONCILE_FIXTURE
+    // drift entry against "everything"/kiro is what "Update variant" targets.
+    variants: [{ label: "kiro tweak", appliesTo: { harness: "kiro" }, args: ["-y", "@modelcontextprotocol/server-everything", "--old"] }],
   },
   {
     id: "weather-api",
@@ -31,6 +33,21 @@ const SERVERS = [
     args: [],
     env: {},
     url: "https://weather.example.com/mcp",
+    headers: {},
+    variants: [],
+  },
+  {
+    // Task 7: already in the library (unlike the earlier "server not yet
+    // adopted" scenario this fixture also exercises) so the RECONCILE_FIXTURE
+    // drift entry against it can be captured as an "Add as variant" row.
+    id: "context7",
+    name: "Context7",
+    description: "Reference server used to exercise reconcile drift.",
+    source: { kind: "manual" },
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "a"],
+    env: {},
     headers: {},
     variants: [],
   },
@@ -109,6 +126,35 @@ const RECONCILE_FIXTURE = {
         transport: "stdio",
         command: "npx",
         args: ["-y", "a", "--v"],
+        env: {},
+        headers: {},
+        variants: [],
+      },
+    },
+    // Task 7: variant-controlled drift — "everything"/kiro is already
+    // covered by the SERVERS "kiro tweak" variant, so this row offers
+    // "Update variant" instead of "Adopt into library".
+    {
+      serverId: "everything",
+      harness: "kiro",
+      scope: "global",
+      configPath: "/tmp/kiro-everything.json",
+      adoptable: false,
+      variantLabel: "kiro tweak",
+      diff: [
+        {
+          field: "args",
+          expected: "-y @modelcontextprotocol/server-everything --old",
+          observed: "-y @modelcontextprotocol/server-everything --new",
+        },
+      ],
+      observedSpec: {
+        id: "everything",
+        name: "Everything (stdio demo)",
+        source: { kind: "manual" },
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything", "--new"],
         env: {},
         headers: {},
         variants: [],
@@ -456,12 +502,16 @@ try {
     await expect(page.getByText("Unmanaged servers")).toBeVisible();
     await expect(page.locator(".mcp-servers-reconcile-key", { hasText: "ctx" })).toBeVisible();
 
-    // Section B: needs attention (drift entries) — "context7" isn't in the
-    // mocked library, so the row falls back to the raw serverId.
+    // Section B: needs attention (drift entries) — "context7" is in the
+    // mocked library (Task 7 fixture addition), so the row shows its name.
     await expect(page.getByText("Needs attention")).toBeVisible();
     await expect(page.locator(".mcp-servers-reconcile-key", { hasText: "context7" })).toBeVisible();
 
     await page.screenshot({ path: "test-results/mcp-reconcile-panel.png" });
+
+    // Two conflict rows now (context7 drift + the "kiro tweak" variant-
+    // controlled drift added for Task 7) — scope reapply/adopt to row 0.
+    const conflictRow0 = page.locator("[data-mcp-conflict-row]").first();
 
     // Import opens the existing review card, prefilled from suggestedSpec.
     // Fixture now carries multiple candidates (ctx, unityMCP, atlassian), so
@@ -478,7 +528,7 @@ try {
     const reapplyRequest = page.waitForRequest(
       (req) => req.method() === "POST" && /\/activate$/.test(new URL(req.url()).pathname)
     );
-    await page.locator("[data-mcp-reapply]").click();
+    await conflictRow0.locator("[data-mcp-reapply]").click();
     const activateReq = await reapplyRequest;
     expect(new URL(activateReq.url()).pathname).toBe("/api/mcp/servers/context7/activate");
 
@@ -487,7 +537,7 @@ try {
     const adoptRequest = page.waitForRequest(
       (req) => req.method() === "PATCH" && new URL(req.url()).pathname === "/api/mcp/servers"
     );
-    await page.locator("[data-mcp-adopt]").click();
+    await conflictRow0.locator("[data-mcp-adopt]").click();
     const patchReq = await adoptRequest;
     expect(patchReq.postDataJSON().spec).toMatchObject({ id: "context7", command: "npx" });
   });
@@ -561,6 +611,38 @@ try {
       fingerprint: "fp-unity",
       targets: [{ harness: "kiro", scope: "global" }],
     });
+  });
+
+  test("drift row offers Add as variant and saves a scoped variant", async ({ page }) => {
+    await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    // Row 0: context7/cursor/global drift — context7 is in the mocked
+    // library (SERVERS) with variants: [], so this is the adoptable row.
+    const row = page.locator("[data-mcp-conflict-row]").first();
+    const patchRequest = page.waitForRequest(
+      (req) => req.method() === "PATCH" && new URL(req.url()).pathname === "/api/mcp/servers"
+    );
+    await row.locator("[data-mcp-adopt-variant]").click();
+    const patchReq = await patchRequest;
+    const spec = patchReq.postDataJSON().spec;
+    expect(spec.variants.length).toBe(1);
+    expect(spec.variants[0].appliesTo).toEqual({ harness: "cursor", scope: "global" });
+    expect(spec.variants[0].label).toBe("cursor (global)");
+    expect(spec.variants[0].args).toEqual(["-y", "a", "--v"]);
+  });
+
+  test("variant-controlled drift row offers Update variant and disables Adopt", async ({ page }) => {
+    await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    // Row 1: everything/kiro drift, controlled by the "kiro tweak" variant
+    // already on the "everything" SERVERS entry.
+    const row = page.locator("[data-mcp-conflict-row]").nth(1);
+    await expect(row.locator("[data-mcp-adopt-variant]")).toHaveText(/Update variant "kiro tweak"/);
+    await expect(row.locator("[data-mcp-adopt]")).toBeDisabled();
   });
 
   test("plugin candidate shows managed note and plugin scope label", async ({ page }) => {
