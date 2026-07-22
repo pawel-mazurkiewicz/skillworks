@@ -162,3 +162,226 @@ test("configPathFor resolves global + project for every adapter", () => {
   assert.throws(() => mcp.configPathFor(mcp.adapterFor("claude"), "project", "/home/u"));
   assert.throws(() => mcp.configPathFor(mcp.adapterFor("claude"), "weird-scope", "/home/u"));
 });
+
+// --- Task 5: engine — render + JSON/TOML read/write/remove --------------
+
+const stdioInv = () => ({
+  transport: "stdio",
+  command: "npx",
+  args: ["-y", "pkg"],
+  env: { K: "V" },
+  url: null,
+  headers: {},
+});
+
+const httpInv = () => ({
+  transport: "http",
+  command: null,
+  args: [],
+  env: {},
+  url: "https://x.example/mcp",
+  headers: { Authorization: "Bearer t" },
+});
+
+test("render claude stdio + copilot tools + opencode shape", () => {
+  const inv = { transport: "stdio", command: "npx", args: ["-y", "p"], env: { K: "V" }, headers: {} };
+  assert.deepEqual(mcp.renderEntry(mcp.adapterFor("claude"), inv), {
+    type: "stdio",
+    command: "npx",
+    args: ["-y", "p"],
+    env: { K: "V" },
+  });
+  assert.deepEqual(mcp.renderEntry(mcp.adapterFor("copilot"), inv), {
+    type: "local",
+    command: "npx",
+    args: ["-y", "p"],
+    env: { K: "V" },
+    tools: ["*"],
+  });
+  assert.deepEqual(mcp.renderEntry(mcp.adapterFor("opencode"), inv), {
+    type: "local",
+    command: ["npx", "-y", "p"],
+    environment: { K: "V" },
+    enabled: true,
+  });
+});
+
+test("claude dialect: stdio + http", () => {
+  const a = mcp.adapterFor("claude");
+  assert.deepEqual(mcp.renderEntry(a, stdioInv()), {
+    type: "stdio",
+    command: "npx",
+    args: ["-y", "pkg"],
+    env: { K: "V" },
+  });
+  assert.deepEqual(mcp.renderEntry(a, httpInv()), {
+    type: "http",
+    url: "https://x.example/mcp",
+    headers: { Authorization: "Bearer t" },
+  });
+});
+
+test("cursor + kiro use the implicit (no type) dialect", () => {
+  for (const id of ["cursor", "kiro"]) {
+    const a = mcp.adapterFor(id);
+    assert.deepEqual(mcp.renderEntry(a, stdioInv()), { command: "npx", args: ["-y", "pkg"], env: { K: "V" } }, id);
+    assert.deepEqual(
+      mcp.renderEntry(a, httpInv()),
+      { url: "https://x.example/mcp", headers: { Authorization: "Bearer t" } },
+      id
+    );
+  }
+});
+
+test("opencode dialect: argv command, environment key, enabled, remote type", () => {
+  const a = mcp.adapterFor("opencode");
+  assert.deepEqual(mcp.renderEntry(a, stdioInv()), {
+    type: "local",
+    command: ["npx", "-y", "pkg"],
+    environment: { K: "V" },
+    enabled: true,
+  });
+  assert.deepEqual(mcp.renderEntry(a, httpInv()), {
+    type: "remote",
+    url: "https://x.example/mcp",
+    headers: { Authorization: "Bearer t" },
+    enabled: true,
+  });
+});
+
+test("gemini dialect splits the remote url field (httpUrl for http, url for sse)", () => {
+  const a = mcp.adapterFor("gemini");
+  assert.deepEqual(mcp.renderEntry(a, httpInv()), {
+    httpUrl: "https://x.example/mcp",
+    headers: { Authorization: "Bearer t" },
+  });
+  assert.deepEqual(mcp.renderEntry(a, { ...httpInv(), transport: "sse" }), {
+    url: "https://x.example/mcp",
+    headers: { Authorization: "Bearer t" },
+  });
+});
+
+test("copilot dialect: types + tools allow-all default", () => {
+  const a = mcp.adapterFor("copilot");
+  const local = mcp.renderEntry(a, stdioInv());
+  assert.equal(local.type, "local");
+  assert.deepEqual(local.tools, ["*"]);
+  const remote = mcp.renderEntry(a, httpInv());
+  assert.equal(remote.type, "http");
+  assert.deepEqual(remote.tools, ["*"]);
+});
+
+test("tools field is copilot-only", () => {
+  for (const id of ["claude", "cursor", "kiro", "opencode", "gemini"]) {
+    assert.ok(!("tools" in mcp.renderEntry(mcp.adapterFor(id), stdioInv())), id);
+  }
+});
+
+test("empty env and headers are omitted", () => {
+  const a = mcp.adapterFor("claude");
+  const withoutEnv = mcp.renderEntry(a, { ...stdioInv(), env: {} });
+  assert.ok(!("env" in withoutEnv));
+  const withoutHeaders = mcp.renderEntry(a, { ...httpInv(), headers: {} });
+  assert.ok(!("headers" in withoutHeaders));
+});
+
+test("codex TOML dialect renders env as a literal env key and headers as http_headers", () => {
+  const a = mcp.adapterFor("codex");
+  const stdio = mcp.renderEntry(a, stdioInv());
+  assert.equal(stdio.command, "npx");
+  assert.deepEqual(stdio.args, ["-y", "pkg"]);
+  assert.deepEqual(stdio.env, { K: "V" });
+  const remote = mcp.renderEntry(a, httpInv());
+  assert.equal(remote.url, "https://x.example/mcp");
+  assert.deepEqual(remote.http_headers, { Authorization: "Bearer t" });
+});
+
+test("write/read/remove preserves siblings (cursor JSON)", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-"));
+  const p = path.join(dir, "mcp.json");
+  await fs.writeFile(p, JSON.stringify({ mcpServers: { other: { command: "x" } }, custom: 1 }));
+  const a = mcp.adapterFor("cursor");
+  await mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: [], env: {}, headers: {} });
+  // Idempotent re-write.
+  await mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: [], env: {}, headers: {} });
+  const entries = await mcp.readEntries(p, a);
+  assert.deepEqual(new Set(entries.map(([k]) => k)), new Set(["other", "context7"]));
+  assert.equal(entries.length, 2);
+  assert.equal(JSON.parse(await fs.readFile(p, "utf8")).custom, 1);
+  assert.equal(await mcp.removeEntry(p, a, "context7"), true);
+  assert.equal(await mcp.removeEntry(p, a, "context7"), false); // second time: nothing to do
+  assert.equal((await mcp.readEntries(p, a)).length, 1);
+});
+
+test("write creates missing file and parent directories", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-mkdir-"));
+  const a = mcp.adapterFor("kiro");
+  const p = path.join(dir, ".kiro", "settings", "mcp.json");
+  await mcp.writeEntry(p, a, "s1", stdioInv());
+  const entries = await mcp.readEntries(p, a);
+  assert.equal(entries[0][0], "s1");
+});
+
+test("malformed JSON config errors without clobbering the original file", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-bad-"));
+  const p = path.join(dir, "mcp.json");
+  await fs.writeFile(p, "{ not json");
+  const a = mcp.adapterFor("cursor");
+  await assert.rejects(() => mcp.writeEntry(p, a, "s1", stdioInv()));
+  assert.equal(await fs.readFile(p, "utf8"), "{ not json");
+});
+
+test("mutation writes a timestamped skillworks-backup sibling", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-backup-"));
+  const p = path.join(dir, "mcp.json");
+  await fs.writeFile(p, JSON.stringify({ mcpServers: {} }));
+  const a = mcp.adapterFor("cursor");
+  await mcp.writeEntry(p, a, "s1", stdioInv());
+  const names = await fs.readdir(dir);
+  assert.ok(names.some((n) => n.includes(".skillworks-backup-")), names.join(", "));
+});
+
+test("readEntries on a missing file is empty", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-missing-"));
+  const a = mcp.adapterFor("claude");
+  assert.deepEqual(await mcp.readEntries(path.join(dir, "nope.json"), a), []);
+});
+
+test("codex TOML round trip", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, 'model = "gpt-5"\n[mcp_servers.other]\ncommand = "x"\n');
+  const a = mcp.adapterFor("codex");
+  await mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: ["-y", "p"], env: { K: "V" }, headers: {} });
+  // Idempotent re-write.
+  await mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: ["-y", "p"], env: { K: "V" }, headers: {} });
+  const entries = await mcp.readEntries(p, a);
+  assert.equal(entries.length, 2);
+  const ctx = entries.find(([k]) => k === "context7")[1];
+  assert.equal(ctx.command, "npx");
+  const text = await fs.readFile(p, "utf8");
+  assert.match(text, /gpt-5/); // sibling scalar preserved
+  assert.match(text, /\[mcp_servers\.other\]/); // sibling table preserved
+
+  assert.equal(await mcp.removeEntry(p, a, "context7"), true);
+  const after = await fs.readFile(p, "utf8");
+  assert.match(after, /\[mcp_servers\.other\]/);
+  assert.doesNotMatch(after, /context7/);
+});
+
+if (process.platform !== "win32") {
+  test("removeEntry propagates permission errors instead of reporting a missing file", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-perm-"));
+    const locked = path.join(dir, "locked");
+    await fs.mkdir(locked, { recursive: true });
+    const p = path.join(locked, "mcp.json");
+    const a = mcp.adapterFor("claude");
+    if (process.getuid && process.getuid() === 0) return; // root ignores dir perms
+    await fs.chmod(locked, 0o000);
+    try {
+      await assert.rejects(() => mcp.removeEntry(p, a, "s1"));
+    } finally {
+      await fs.chmod(locked, 0o755);
+    }
+  });
+}
