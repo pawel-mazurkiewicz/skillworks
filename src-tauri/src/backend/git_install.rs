@@ -266,6 +266,7 @@ async fn build_plan_for_root(
 
         plan.push(GitInstallCandidate {
             name: desired_name,
+            description: candidate.metadata.description.clone(),
             source_path: candidate.entry_path.to_string_lossy().into_owned(),
             real_source_path: candidate.real_path.to_string_lossy().into_owned(),
             source_key,
@@ -507,6 +508,12 @@ mod tests {
         let names: HashSet<String> = plan.candidates.iter().map(|c| c.name.clone()).collect();
         assert!(names.contains("SwiftUI"));
         assert!(names.contains("React"));
+        let swiftui = plan
+            .candidates
+            .iter()
+            .find(|c| c.name == "SwiftUI")
+            .expect("SwiftUI candidate");
+        assert_eq!(swiftui.description, "x");
     }
 
     #[tokio::test]

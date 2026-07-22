@@ -444,6 +444,8 @@ pub struct ImportSuggestedResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GitInstallCandidate {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub source_path: String,
     pub real_source_path: String,
     pub source_key: String,
