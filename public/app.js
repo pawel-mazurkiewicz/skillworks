@@ -1359,29 +1359,39 @@ function renderInstallPreview(plan, options = {}) {
 
   const summary = plan.summary;
   const allTargets = (state.data && state.data.targets) || [];
+  const tagLabels = { move: "New", dedupe: "Already installed", skip: "Skipped" };
+  const pillLabel = (action, selected) => {
+    if (action === "dedupe") {
+      return selected ? "✓ Reinstalling" : "Reinstall";
+    }
+    return selected ? "✓ Installing" : "Install";
+  };
   const rows = plan.candidates
     .map((candidate) => {
-      const actionLabel = candidate.action === "move"
-        ? `Move to <code>${escapeHtml(candidate.vaultDestination)}</code>`
-        : candidate.action === "dedupe"
-          ? `Dedupe against <code>${escapeHtml(candidate.vaultDestination)}</code>`
-          : `Skip: ${escapeHtml(candidate.skipReason || "")}`;
       const isSelected = Boolean(
         state.preview && state.preview.selectedKeys && state.preview.selectedKeys.has(candidate.sourceKey),
       );
-      const installToggle = candidate.action === "skip"
+      const installPill = candidate.action === "skip"
         ? ""
         : `
-          <label class="preview-install-toggle">
-            <input
-              type="checkbox"
-              data-install-key="${escapeHtml(candidate.sourceKey)}"
-              ${isSelected ? "checked" : ""}
-            />
-            <span>Install</span>
-          </label>
+          <button
+            type="button"
+            class="preview-install-pill${isSelected ? " selected" : ""}"
+            data-install-key="${escapeHtml(candidate.sourceKey)}"
+            data-install-action="${escapeHtml(candidate.action)}"
+            aria-pressed="${isSelected ? "true" : "false"}"
+          >${pillLabel(candidate.action, isSelected)}</button>
         `;
-      let targetGrid = "";
+      const descriptionText = String(candidate.description || "").trim();
+      const description = descriptionText
+        ? `<p class="preview-desc">${escapeHtml(descriptionText)}</p>`
+        : candidate.action === "skip"
+          ? ""
+          : `<p class="preview-desc preview-desc-empty">No description provided.</p>`;
+      const skipLine = candidate.action === "skip"
+        ? `<div class="preview-detail">Skipped: ${escapeHtml(candidate.skipReason || "")}</div>`
+        : "";
+      let targetBlock = "";
       if (candidate.action !== "skip") {
         const checked = new Set(
           (state.preview && state.preview.perSkillTargets[candidate.sourceKey]) || [],
@@ -1403,21 +1413,30 @@ function renderInstallPreview(plan, options = {}) {
             `;
           })
           .join("");
-        targetGrid = `<fieldset class="target-checkboxes preview-target-grid">
-            <legend>Targets for ${escapeHtml(candidate.name)}</legend>
-            ${items || `<p class="empty-copy">No targets configured.</p>`}
-          </fieldset>`;
+        const vaultLine = candidate.action === "dedupe"
+          ? `Reuses existing vault copy at <code>${escapeHtml(candidate.vaultDestination)}</code>`
+          : `Vault: <code>${escapeHtml(candidate.vaultDestination)}</code>`;
+        targetBlock = `<details class="preview-targets">
+            <summary>Targets · <span data-target-count="${escapeHtml(candidate.sourceKey)}">${checked.size} of ${allTargets.length}</span></summary>
+            <div class="preview-vault-line">${vaultLine}</div>
+            <fieldset class="target-checkboxes preview-target-grid">
+              <legend>Targets for ${escapeHtml(candidate.name)}</legend>
+              ${items || `<p class="empty-copy">No targets configured.</p>`}
+            </fieldset>
+          </details>`;
       }
       return `
         <article class="preview-item${candidate.action !== "skip" && !isSelected ? " deselected" : ""}" data-source-key="${escapeHtml(candidate.sourceKey)}">
           <header>
-            <strong>${escapeHtml(candidate.name)}</strong>
-            ${installToggle}
-            <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${escapeHtml(candidate.action)}</span>
+            <div class="preview-item-title">
+              <strong>${escapeHtml(candidate.name)}</strong>
+              <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${tagLabels[candidate.action] || escapeHtml(candidate.action)}</span>
+            </div>
+            ${installPill}
           </header>
-          <div class="preview-detail">${actionLabel}</div>
-          <div class="preview-source">From: <code>${escapeHtml(candidate.sourcePath)}</code></div>
-          ${targetGrid}
+          ${description}
+          ${skipLine}
+          ${targetBlock}
         </article>
       `;
     })
@@ -1428,14 +1447,28 @@ function renderInstallPreview(plan, options = {}) {
     <div class="preview-summary">
       <strong>Plan:</strong>
       <span>${summary.candidates} candidate${summary.candidates === 1 ? "" : "s"}</span>
-      <span>${summary.toMove} move</span>
-      <span>${summary.toDedupe} dedupe</span>
-      <span>${summary.toSkip} skip</span>
+      <span>${summary.toMove} new</span>
+      <span>${summary.toDedupe} already installed</span>
+      <span>${summary.toSkip} skipped</span>
       <span id="previewSelectedCount"></span>
       <button class="button ghost" type="button" id="clearPreviewButton">Clear preview</button>
     </div>
     <div class="preview-list">${rows || `<p class="empty-copy">No skills discovered.</p>`}</div>
   `;
+
+  const updateTargetCount = (key) => {
+    if (!state.preview) {
+      return;
+    }
+    const span = Array.from(
+      elements.gitPreviewResult.querySelectorAll("[data-target-count]"),
+    ).find((el) => el.dataset.targetCount === key);
+    if (!span) {
+      return;
+    }
+    const count = (state.preview.perSkillTargets[key] || []).length;
+    span.textContent = `${count} of ${allTargets.length}`;
+  };
 
   elements.gitPreviewResult.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -1450,25 +1483,30 @@ function renderInstallPreview(plan, options = {}) {
         current.delete(input.value);
       }
       state.preview.perSkillTargets[key] = Array.from(current);
+      updateTargetCount(key);
     });
   });
 
-  elements.gitPreviewResult.querySelectorAll("input[type=checkbox][data-install-key]").forEach((input) => {
-    input.addEventListener("change", () => {
+  elements.gitPreviewResult.querySelectorAll("button[data-install-key]").forEach((button) => {
+    button.addEventListener("click", () => {
       if (!state.preview) {
         return;
       }
-      const key = input.dataset.installKey;
-      if (input.checked) {
+      const key = button.dataset.installKey;
+      const selected = !state.preview.selectedKeys.has(key);
+      if (selected) {
         state.preview.selectedKeys.add(key);
       } else {
         state.preview.selectedKeys.delete(key);
       }
-      const article = input.closest(".preview-item");
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      button.classList.toggle("selected", selected);
+      button.textContent = pillLabel(button.dataset.installAction, selected);
+      const article = button.closest(".preview-item");
       if (article) {
-        article.classList.toggle("deselected", !input.checked);
+        article.classList.toggle("deselected", !selected);
         article.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((target) => {
-          target.disabled = !input.checked;
+          target.disabled = !selected;
         });
       }
       updatePreviewSelectedCount();

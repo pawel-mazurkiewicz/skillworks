@@ -1597,10 +1597,9 @@ body.skill-editor-locked {
   color: var(--muted);
 }
 
-.preview-detail,
-.preview-source {
+.preview-detail {
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--ink-soft);
 }
 
 .preview-links {
@@ -3141,9 +3140,7 @@ textarea::placeholder {
 .project-path,
 .discovery-path,
 .discovery-samples,
-.unmanaged-path,
-.preview-detail,
-.preview-source {
+.unmanaged-path {
   font-family: var(--mono-font);
   font-size: 0.74rem;
 }
@@ -5835,23 +5832,98 @@ body {
 }
 
 /* Git install preview: per-skill install selection */
-.preview-item header .preview-install-toggle {
-  display: inline-flex;
+.preview-item-title {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.preview-install-pill {
   margin-left: auto;
-  font-size: 0.85rem;
-  color: var(--ink);
+  padding: 5px 14px;
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--green);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 90ms ease;
 }
-.preview-item header .preview-install-toggle input {
-  accent-color: var(--green);
+.preview-install-pill:hover {
+  background: var(--green-soft);
 }
+.preview-install-pill:active {
+  transform: scale(0.94);
+}
+.preview-install-pill.selected {
+  background: var(--green);
+  color: var(--on-ink);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--green) 35%, transparent);
+}
+.preview-install-pill.selected:hover {
+  background: color-mix(in srgb, var(--green) 88%, var(--ink));
+}
+.preview-install-pill:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.preview-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.preview-desc-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.preview-targets > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 4px 0;
+  user-select: none;
+}
+.preview-targets > summary:hover {
+  color: var(--green);
+}
+.preview-targets[open] > summary {
+  margin-bottom: 4px;
+}
+.preview-vault-line {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+.preview-vault-line code {
+  font-size: 0.74rem;
+}
+
+.preview-item.deselected .preview-desc,
 .preview-item.deselected .preview-detail,
-.preview-item.deselected .preview-source,
-.preview-item.deselected .preview-target-grid {
+.preview-item.deselected .preview-targets {
   opacity: 0.45;
 }
-.preview-item.deselected .preview-target-grid {
+.preview-item.deselected .preview-targets {
   pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-install-pill {
+    transition: none;
+  }
+  .preview-install-pill:active {
+    transform: none;
+  }
 }

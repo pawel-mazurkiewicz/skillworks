@@ -50,6 +50,7 @@ const PLAN = {
   candidates: [
     {
       name: "Rust Best Practices",
+      description: "Idiomatic Rust patterns and common pitfalls.",
       sourcePath: "/tmp/clone/skills/rust-best-practices",
       realSourcePath: "/tmp/clone/skills/rust-best-practices",
       sourceKey: "skills/rust-best-practices",
@@ -63,6 +64,7 @@ const PLAN = {
     },
     {
       name: "Apollo Connectors",
+      description: "Connect REST services to your graph.",
       sourcePath: "/tmp/clone/skills/apollo-connectors",
       realSourcePath: "/tmp/clone/skills/apollo-connectors",
       sourceKey: "skills/apollo-connectors",
@@ -156,21 +158,43 @@ try {
       await installApiMocks(page);
     });
 
-    test("preview renders install checkboxes and unchecking updates count and greys the target grid", async ({ page }) => {
+    test("preview renders install pills, descriptions, and collapsed target blocks", async ({ page }) => {
       await openFromGitTab(page);
       await page.locator("#gitRepoInput").fill(REPO_URL);
       await page.locator("#gitPreviewButton").click();
 
       const items = page.locator(".preview-item");
       await expect(items).toHaveCount(2);
-      const toggles = page.locator("input[data-install-key]");
-      await expect(toggles).toHaveCount(2);
-      await expect(toggles.nth(0)).toBeChecked();
-      await expect(toggles.nth(1)).toBeChecked();
+      const pills = page.locator("button[data-install-key]");
+      await expect(pills).toHaveCount(2);
+      await expect(pills.nth(0)).toHaveAttribute("aria-pressed", "true");
+      await expect(pills.nth(0)).toHaveText("✓ Installing");
       await expect(page.locator("#previewSelectedCount")).toHaveText("installing 2 of 2");
+      await expect(page.locator(".preview-summary")).toContainText("2 new");
 
-      // Uncheck the Apollo skill.
-      await page.locator('input[data-install-key="skills/apollo-connectors"]').uncheck();
+      // Plain-language tag and the frontmatter description on the card face.
+      const rustItem = page.locator('.preview-item[data-source-key="skills/rust-best-practices"]');
+      await expect(rustItem.locator(".preview-action")).toHaveText("New");
+      await expect(rustItem.locator(".preview-desc")).toHaveText(
+        "Idiomatic Rust patterns and common pitfalls.",
+      );
+
+      // Targets are tucked into a collapsed <details>; expanding reveals the
+      // grid and the vault destination, and the summary count tracks edits.
+      const details = rustItem.locator("details.preview-targets");
+      await expect(details.locator(".preview-target-grid")).toBeHidden();
+      await details.locator("summary").click();
+      await expect(details.locator(".preview-target-grid")).toBeVisible();
+      await expect(details.locator(".preview-vault-line")).toContainText("/mock/vault/rust-best-practices");
+      await expect(details.locator("summary")).toContainText("Targets · 2 of 2");
+      await details.locator("input[data-skill-key]").first().uncheck();
+      await expect(details.locator("summary")).toContainText("Targets · 1 of 2");
+
+      // Deselect the Apollo skill via its pill.
+      const apolloPill = page.locator('button[data-install-key="skills/apollo-connectors"]');
+      await apolloPill.click();
+      await expect(apolloPill).toHaveAttribute("aria-pressed", "false");
+      await expect(apolloPill).toHaveText("Install");
       await expect(page.locator("#previewSelectedCount")).toHaveText("installing 1 of 2");
       const apolloItem = page.locator('.preview-item[data-source-key="skills/apollo-connectors"]');
       await expect(apolloItem).toHaveClass(/deselected/);
@@ -188,7 +212,7 @@ try {
       await page.locator("#gitPreviewButton").click();
       await expect(page.locator("#previewSelectedCount")).toHaveText("installing 2 of 2");
 
-      await page.locator('input[data-install-key="skills/apollo-connectors"]').uncheck();
+      await page.locator('button[data-install-key="skills/apollo-connectors"]').click();
       await page.locator('#gitInstallForm button[type="submit"]').click();
 
       await expect.poll(() => installCalls.length).toBe(1);
@@ -203,8 +227,8 @@ try {
       await page.locator("#gitRepoInput").fill(REPO_URL);
       await page.locator("#gitPreviewButton").click();
 
-      await page.locator('input[data-install-key="skills/rust-best-practices"]').uncheck();
-      await page.locator('input[data-install-key="skills/apollo-connectors"]').uncheck();
+      await page.locator('button[data-install-key="skills/rust-best-practices"]').click();
+      await page.locator('button[data-install-key="skills/apollo-connectors"]').click();
       await expect(page.locator("#previewSelectedCount")).toHaveText("installing 0 of 2");
       await page.locator('#gitInstallForm button[type="submit"]').click();
 
@@ -255,11 +279,11 @@ try {
       await expect(page.locator("#gitRepoInput")).toHaveValue(REPO_URL);
       await expect(page.locator("#previewSelectedCount")).toHaveText("installing 1 of 2");
       await expect(
-        page.locator('input[data-install-key="skills/rust-best-practices"]'),
-      ).toBeChecked();
+        page.locator('button[data-install-key="skills/rust-best-practices"]'),
+      ).toHaveAttribute("aria-pressed", "true");
       await expect(
-        page.locator('input[data-install-key="skills/apollo-connectors"]'),
-      ).not.toBeChecked();
+        page.locator('button[data-install-key="skills/apollo-connectors"]'),
+      ).toHaveAttribute("aria-pressed", "false");
 
       await page.locator('#gitInstallForm button[type="submit"]').click();
       await expect.poll(() => installCalls.length).toBe(1);
