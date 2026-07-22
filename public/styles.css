@@ -5783,6 +5783,26 @@ body {
   }
 }
 
+.mcp-servers-draft-card.is-highlighted {
+  animation: mcp-card-flash 1.2s ease;
+}
+
+@keyframes mcp-card-flash {
+  0% {
+    box-shadow: 0 0 0 3px var(--green);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcp-servers-draft-card.is-highlighted {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--green);
+  }
+}
+
 .mcp-servers-card-error {
   margin: 0;
   border: 1px solid var(--red);

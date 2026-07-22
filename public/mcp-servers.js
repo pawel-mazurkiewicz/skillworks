@@ -92,6 +92,7 @@ function newAddCard(spec, evidence) {
 
 const ADDED_CARD_LINGER_MS = 2500;
 const ADDED_CARD_FADE_MS = 280;
+const HIGHLIGHT_MS = 1200;
 
 function removeAddCard(cardKey) {
   const before = state.add.cards.length;
@@ -1495,8 +1496,19 @@ function renderReconcile() {
 function handleImportCandidate(index) {
   const candidate = state.imports[index];
   if (!candidate) return;
-  state.add.cards.push(newAddCard(candidate.suggestedSpec, []));
+  const card = newAddCard(candidate.suggestedSpec, []);
+  state.add.cards.push(card);
   renderAdd();
+  // The add panel sits above the reconcile panel — without moving the
+  // viewport the click looks like a no-op.
+  requestAnimationFrame(() => {
+    const el = els.add && els.add.querySelector(`[data-mcp-card="${cssAttrEscape(card.key)}"]`);
+    if (!el) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    el.classList.add("is-highlighted");
+    window.setTimeout(() => el.classList.remove("is-highlighted"), HIGHLIGHT_MS);
+  });
 }
 
 async function handleReconcileLink(index) {

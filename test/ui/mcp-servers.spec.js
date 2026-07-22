@@ -492,6 +492,21 @@ try {
     expect(patchReq.postDataJSON().spec).toMatchObject({ id: "context7", command: "npx" });
   });
 
+  test("import scrolls the new draft card into view and highlights it", async ({ page }) => {
+    await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    // Fixture carries multiple candidates (ctx, unityMCP, atlassian); scope
+    // to the "ctx" row's own Import button to satisfy strict mode.
+    const ctxRow = page.locator("[data-mcp-import-row]", { hasText: "ctx" }).first();
+    await ctxRow.locator("[data-mcp-import]").click();
+
+    const card = page.locator(".mcp-servers-draft-card");
+    await expect(card).toHaveClass(/is-highlighted/);
+    await expect(card).toBeInViewport();
+  });
+
   test("matched candidate offers Link and Dismiss, not Import", async ({ page }) => {
     await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
     await page.goto("/");
