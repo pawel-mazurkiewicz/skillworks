@@ -93,6 +93,29 @@ test("validateSpec rejects bad variants", () => {
   );
 });
 
+test("validateSpec rejects two variants that target the same harness/scope", () => {
+  // Same appliesTo → ambiguous automatic selection.
+  assert.throws(() =>
+    mcp.validateSpec({
+      ...stdioSpec(),
+      variants: [
+        { label: "a", appliesTo: { harness: "codex" } },
+        { label: "b", appliesTo: { harness: "codex" } },
+      ],
+    })
+  );
+  // Distinct appliesTo (different scope) is unambiguous and accepted.
+  assert.doesNotThrow(() =>
+    mcp.validateSpec({
+      ...stdioSpec(),
+      variants: [
+        { label: "a", appliesTo: { harness: "codex" } },
+        { label: "b", appliesTo: { harness: "codex", scope: "project" } },
+      ],
+    })
+  );
+});
+
 test("library round-trips and missing file is empty", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-lib-"));
   assert.deepEqual(await mcp.loadLibrary(dir), []);

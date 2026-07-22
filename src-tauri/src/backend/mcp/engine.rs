@@ -493,27 +493,47 @@ pub async fn read_entries(
     match adapter.format {
         ConfigFormat::Json => {
             let doc = read_json_doc(path).await?;
-            let mut current: Option<&serde_json::Map<String, Value>> = Some(&doc);
+            // A missing key path is a legitimately empty config, but a key that
+            // is *present* with the wrong type (array/scalar instead of an
+            // object) is malformed — treating it as empty would report tracked
+            // servers inactive and drop the "still active" removal warning.
+            // Mirror `write_entry`/`json_servers_mut`'s validation.
+            let mut current: &serde_json::Map<String, Value> = &doc;
             for key in adapter.key_path {
-                current = current
-                    .and_then(|m| m.get(*key))
-                    .and_then(|v| v.as_object());
+                match current.get(*key) {
+                    None => return Ok(Vec::new()),
+                    Some(Value::Object(m)) => current = m,
+                    Some(_) => {
+                        return Err(BackendError::Validation(format!(
+                            "Config key {key:?} in {} is not an object",
+                            path.display()
+                        )))
+                    }
+                }
             }
             Ok(current
-                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default())
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
         }
         ConfigFormat::Toml => {
             let doc = read_toml_doc(path).await?;
-            Ok(doc
-                .get(adapter.key_path[0])
-                .and_then(|i| i.as_table())
-                .map(|t| {
-                    t.iter()
+            match doc.get(adapter.key_path[0]) {
+                None => Ok(Vec::new()),
+                Some(item) => {
+                    let table = item.as_table().ok_or_else(|| {
+                        BackendError::Validation(format!(
+                            "Config key {:?} in {} is not a table",
+                            adapter.key_path[0],
+                            path.display()
+                        ))
+                    })?;
+                    Ok(table
+                        .iter()
                         .map(|(k, v)| (k.to_string(), toml_item_to_json(v)))
-                        .collect()
-                })
-                .unwrap_or_default())
+                        .collect())
+                }
+            }
         }
     }
 }
@@ -783,6 +803,28 @@ mod tests {
             .await
             .unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_entries_rejects_malformed_json_section() {
+        // A present-but-wrong-type server section (array instead of object)
+        // must error, not read as empty — otherwise status reports tracked
+        // servers inactive and removal drops the "still active" warning.
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("claude").unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"mcpServers": []}"#).await.unwrap();
+        assert!(read_entries(&path, a).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_entries_rejects_malformed_toml_section() {
+        let dir = TempDir::new().unwrap();
+        let a = adapter_for("codex").unwrap();
+        let path = dir.path().join("config.toml");
+        // `mcp_servers` present but a string, not a table.
+        fs::write(&path, "mcp_servers = \"oops\"\n").await.unwrap();
+        assert!(read_entries(&path, a).await.is_err());
     }
 
     /// Regression test: `remove_entry` used to collapse every `try_exists`

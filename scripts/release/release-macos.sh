@@ -29,6 +29,7 @@ check_env \
 check_cmd gh
 check_cmd node
 check_cmd npx
+check_cmd cargo
 
 cd "$REPO_ROOT"
 
