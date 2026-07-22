@@ -5833,3 +5833,25 @@ body {
   display: grid;
   gap: 2px;
 }
+
+/* Git install preview: per-skill install selection */
+.preview-item header .preview-install-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+.preview-item header .preview-install-toggle input {
+  accent-color: var(--green);
+}
+.preview-item.deselected .preview-detail,
+.preview-item.deselected .preview-source,
+.preview-item.deselected .preview-target-grid {
+  opacity: 0.45;
+}
+.preview-item.deselected .preview-target-grid {
+  pointer-events: none;
+}

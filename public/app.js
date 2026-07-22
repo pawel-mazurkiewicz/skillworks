@@ -376,7 +376,16 @@ async function bootstrap() {
         projectPath: elements.projectInput.value,
       };
       if (state.preview && state.preview.repoUrl === repoUrl) {
-        body.perSkillTargets = state.preview.perSkillTargets;
+        const selected = Array.from(state.preview.selectedKeys || []);
+        if (!selected.length) {
+          showToast("No skills selected");
+          return;
+        }
+        body.selectedSourceKeys = selected;
+        body.perSkillTargets = {};
+        for (const key of selected) {
+          body.perSkillTargets[key] = state.preview.perSkillTargets[key] || [];
+        }
       }
       const result = await api("/api/install-git", {
         method: "POST",
@@ -1282,15 +1291,15 @@ function renderInstallPreview(plan, options = {}) {
 
   if (options.resetSelection !== false) {
     const perSkillTargets = {};
-    for (const candidate of plan.candidates) {
-      if (candidate.action !== "skip") {
-        perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
-      }
+    const installable = plan.candidates.filter((c) => c.action !== "skip");
+    for (const candidate of installable) {
+      perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
     }
     state.preview = {
       repoUrl: options.repoUrl || "",
       plan,
       perSkillTargets,
+      selectedKeys: new Set(installable.map((c) => c.sourceKey)),
     };
   } else if (state.preview) {
     state.preview.plan = plan;
@@ -1305,6 +1314,21 @@ function renderInstallPreview(plan, options = {}) {
         : candidate.action === "dedupe"
           ? `Dedupe against <code>${escapeHtml(candidate.vaultDestination)}</code>`
           : `Skip: ${escapeHtml(candidate.skipReason || "")}`;
+      const isSelected = Boolean(
+        state.preview && state.preview.selectedKeys && state.preview.selectedKeys.has(candidate.sourceKey),
+      );
+      const installToggle = candidate.action === "skip"
+        ? ""
+        : `
+          <label class="preview-install-toggle">
+            <input
+              type="checkbox"
+              data-install-key="${escapeHtml(candidate.sourceKey)}"
+              ${isSelected ? "checked" : ""}
+            />
+            <span>Install</span>
+          </label>
+        `;
       let targetGrid = "";
       if (candidate.action !== "skip") {
         const checked = new Set(
@@ -1320,6 +1344,7 @@ function renderInstallPreview(plan, options = {}) {
                   value="${escapeHtml(target.id)}"
                   data-skill-key="${escapeHtml(candidate.sourceKey)}"
                   ${isChecked}
+                  ${isSelected ? "" : "disabled"}
                 />
                 <span>${escapeHtml(target.label)}</span>
               </label>
@@ -1332,9 +1357,10 @@ function renderInstallPreview(plan, options = {}) {
           </fieldset>`;
       }
       return `
-        <article class="preview-item" data-source-key="${escapeHtml(candidate.sourceKey)}">
+        <article class="preview-item${candidate.action !== "skip" && !isSelected ? " deselected" : ""}" data-source-key="${escapeHtml(candidate.sourceKey)}">
           <header>
             <strong>${escapeHtml(candidate.name)}</strong>
+            ${installToggle}
             <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${escapeHtml(candidate.action)}</span>
           </header>
           <div class="preview-detail">${actionLabel}</div>
@@ -1353,6 +1379,7 @@ function renderInstallPreview(plan, options = {}) {
       <span>${summary.toMove} move</span>
       <span>${summary.toDedupe} dedupe</span>
       <span>${summary.toSkip} skip</span>
+      <span id="previewSelectedCount"></span>
       <button class="button ghost" type="button" id="clearPreviewButton">Clear preview</button>
     </div>
     <div class="preview-list">${rows || `<p class="empty-copy">No skills discovered.</p>`}</div>
@@ -1374,6 +1401,29 @@ function renderInstallPreview(plan, options = {}) {
     });
   });
 
+  elements.gitPreviewResult.querySelectorAll("input[type=checkbox][data-install-key]").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!state.preview) {
+        return;
+      }
+      const key = input.dataset.installKey;
+      if (input.checked) {
+        state.preview.selectedKeys.add(key);
+      } else {
+        state.preview.selectedKeys.delete(key);
+      }
+      const article = input.closest(".preview-item");
+      if (article) {
+        article.classList.toggle("deselected", !input.checked);
+        article.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((target) => {
+          target.disabled = !input.checked;
+        });
+      }
+      updatePreviewSelectedCount();
+    });
+  });
+  updatePreviewSelectedCount();
+
   const clearButton = elements.gitPreviewResult.querySelector("#clearPreviewButton");
   if (clearButton) {
     clearButton.addEventListener("click", () => {
@@ -1382,6 +1432,15 @@ function renderInstallPreview(plan, options = {}) {
       elements.gitPreviewResult.innerHTML = "";
     });
   }
+}
+
+function updatePreviewSelectedCount() {
+  const el = elements.gitPreviewResult.querySelector("#previewSelectedCount");
+  if (!el || !state.preview) {
+    return;
+  }
+  const total = state.preview.plan.candidates.filter((c) => c.action !== "skip").length;
+  el.textContent = `installing ${state.preview.selectedKeys.size} of ${total}`;
 }
 
 function renderBulkTargets() {
