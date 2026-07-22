@@ -2782,6 +2782,80 @@ fn adopt_spec(
     s
 }
 
+const PLUGIN_MANAGED_NOTE: &str =
+    "Managed by a Claude Code plugin — Skillworks won't modify it.";
+
+/// Scan Claude Code plugin manifests for MCP servers. Returns
+/// (key, observed, config_path, pseudo_scope) tuples plus warnings.
+/// Import-only by design: callers must not drift-check these entries.
+async fn scan_claude_plugin_mcps(
+    home_dir: &std::path::Path,
+) -> (Vec<(String, ObservedInvocation, String, String)>, Vec<String>) {
+    let mut found = Vec::new();
+    let mut warnings = Vec::new();
+    let manifest_path = home_dir.join(".claude/plugins/installed_plugins.json");
+    let bytes = match tokio::fs::read(&manifest_path).await {
+        Ok(b) => b,
+        Err(_) => return (found, warnings), // no plugins installed — normal
+    };
+    let doc: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            warnings.push(format!("claude plugins manifest: {e}"));
+            return (found, warnings);
+        }
+    };
+    let adapter = match adapter_for("claude") {
+        Ok(a) => a,
+        Err(_) => return (found, warnings),
+    };
+    let plugins = match doc.get("plugins").and_then(|p| p.as_object()) {
+        Some(p) => p,
+        None => return (found, warnings),
+    };
+    for (plugin_key, installs) in plugins {
+        let short_name = plugin_key.split('@').next().unwrap_or(plugin_key);
+        let scope = format!("plugin:{short_name}");
+        let Some(installs) = installs.as_array() else {
+            continue;
+        };
+        for install in installs {
+            let Some(install_path) = install.get("installPath").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let mcp_path = std::path::Path::new(install_path).join(".mcp.json");
+            let bytes = match tokio::fs::read(&mcp_path).await {
+                Ok(b) => b,
+                Err(_) => continue, // plugin without MCP servers — normal
+            };
+            let doc: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    warnings.push(format!("claude plugin \"{short_name}\": {e}"));
+                    continue;
+                }
+            };
+            let Some(servers) = doc.get("mcpServers").and_then(|v| v.as_object()) else {
+                continue;
+            };
+            for (key, value) in servers {
+                match parse_entry(adapter, value) {
+                    Ok(obs) => found.push((
+                        key.clone(),
+                        obs,
+                        mcp_path.to_string_lossy().into_owned(),
+                        scope.clone(),
+                    )),
+                    Err(e) => {
+                        warnings.push(format!("claude plugin \"{short_name}\" \"{key}\": {e}"))
+                    }
+                }
+            }
+        }
+    }
+    (found, warnings)
+}
+
 /// Reconcile every harness config against the library: report drift for
 /// entries the library already tracks, and classify unmanaged entries as
 /// import candidates (deduped across targets with identical invocations).
@@ -3008,8 +3082,62 @@ pub async fn mcp_reconcile_impl(
         }
     }
 
+    // Claude Code plugin MCPs — import-only (spec §5).
+    let mut plugin_groups: Vec<ImportGroup> = Vec::new();
+    {
+        let (plugin_entries, plugin_warnings) = scan_claude_plugin_mcps(&home_dir).await;
+        warnings.extend(plugin_warnings);
+        for (key, observed, config_path, scope) in plugin_entries {
+            // Suppress when the library already covers it: id match or
+            // invocation-equal expected rendering (any library server).
+            if library.iter().any(|s| s.id == key) {
+                continue;
+            }
+            let adapter = adapter_for("claude")?;
+            if library.iter().any(|s| {
+                expected_observed(adapter, s, &scope)
+                    .map(|(exp, _)| invocation_eq(&exp, &observed))
+                    .unwrap_or(false)
+            }) {
+                continue;
+            }
+            let fp = super::mcp::dismissed::fingerprint(&observed);
+            if dismissed.iter().any(|d| {
+                d.key == key && d.harness == "claude" && d.scope == scope && d.fingerprint == fp
+            }) {
+                continue;
+            }
+            let target_ref = ReconcileTargetRef {
+                harness: "claude".to_string(),
+                scope,
+                config_path,
+            };
+            match plugin_groups
+                .iter_mut()
+                .find(|g| g.key == key && invocation_eq(&g.observed, &observed))
+            {
+                Some(g) => g.found_in.push(target_ref),
+                None => plugin_groups.push(ImportGroup {
+                    key,
+                    observed,
+                    found_in: vec![target_ref],
+                    matches: None,
+                }),
+            }
+        }
+    }
+
     let mut imports = Vec::new();
-    for g in groups {
+    let groups_with_note: Vec<(ImportGroup, Option<String>)> = groups
+        .into_iter()
+        .map(|g| (g, None))
+        .chain(
+            plugin_groups
+                .into_iter()
+                .map(|g| (g, Some(PLUGIN_MANAGED_NOTE.to_string()))),
+        )
+        .collect();
+    for (g, managed_note) in groups_with_note {
         let id = slugify(&g.key);
         if id.is_empty() {
             warnings.push(format!("\"{}\": cannot derive a valid id — skipped", g.key));
@@ -3034,6 +3162,7 @@ pub async fn mcp_reconcile_impl(
             matches_library_id: g.matches,
             warnings: cand_warnings,
             fingerprint: super::mcp::dismissed::fingerprint(&g.observed),
+            managed_note,
         });
     }
 
@@ -5745,6 +5874,125 @@ mod tests {
             mcp_add_from_url_impl("https://example.com/big.md".into(), &client)
                 .await
                 .is_err()
+        );
+    }
+
+    async fn seed_claude_plugin(home: &std::path::Path, plugin_key: &str, mcp_json: &str) {
+        // installed_plugins.json v2 shape observed on real machines:
+        // { "version": 2, "plugins": { "name@marketplace": [ { "scope": "user",
+        //   "installPath": "...", ... } ] } }
+        let install = home.join(format!(".claude/plugins/cache/{plugin_key}"));
+        tokio::fs::create_dir_all(&install).await.unwrap();
+        tokio::fs::write(install.join(".mcp.json"), mcp_json)
+            .await
+            .unwrap();
+        let manifest_path = home.join(".claude/plugins/installed_plugins.json");
+        let existing = tokio::fs::read_to_string(&manifest_path).await.ok();
+        let mut doc: serde_json::Value = existing
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({"version": 2, "plugins": {}}));
+        doc["plugins"][plugin_key] = serde_json::json!([
+            {"scope": "user", "installPath": install.to_string_lossy(), "version": "1.0.0"}
+        ]);
+        tokio::fs::create_dir_all(home.join(".claude/plugins"))
+            .await
+            .unwrap();
+        tokio::fs::write(&manifest_path, doc.to_string()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconcile_surfaces_plugin_mcps_import_only() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+        seed_claude_plugin(
+            &home,
+            "atlassian@claude-plugins-official",
+            r#"{"mcpServers":{"atlassian":{"type":"http","url":"https://mcp.atlassian.com/v1/mcp/authv2"}}}"#,
+        )
+        .await;
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        let cand = out.imports.iter().find(|c| c.key == "atlassian").unwrap();
+        assert_eq!(cand.found_in.len(), 1);
+        assert_eq!(cand.found_in[0].harness, "claude");
+        assert_eq!(cand.found_in[0].scope, "plugin:atlassian");
+        assert!(cand.managed_note.is_some());
+        assert!(cand.matches_library_id.is_none());
+        assert!(out.conflicts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconcile_suppresses_plugin_mcps_already_in_library() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(&home).await.unwrap();
+
+        // Library already has an id-matching server (different invocation).
+        let mut by_id = test_spec("atlassian");
+        by_id.transport = crate::backend::mcp::spec::McpTransport::Stdio;
+        // And an invocation-equal server under a different id.
+        let by_inv = McpServerSpec {
+            id: "jira".into(),
+            name: "Jira".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: crate::backend::mcp::spec::McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: Default::default(),
+            url: Some("https://mcp.example.com/mcp".into()),
+            headers: Default::default(),
+            variants: vec![],
+        };
+        seed_library(&app_home, &[by_id, by_inv]).await;
+
+        seed_claude_plugin(
+            &home,
+            "atlassian@claude-plugins-official",
+            r#"{"mcpServers":{"atlassian":{"type":"http","url":"https://x.example.com/mcp"}}}"#,
+        )
+        .await;
+        seed_claude_plugin(
+            &home,
+            "jira-plugin@claude-plugins-official",
+            r#"{"mcpServers":{"jira-remote":{"type":"http","url":"https://mcp.example.com/mcp"}}}"#,
+        )
+        .await;
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        // id "atlassian" exists in library -> suppressed even though invocation differs.
+        assert!(out.imports.iter().all(|c| c.key != "atlassian"));
+        // "jira-remote" matches "jira" by invocation -> suppressed.
+        assert!(out.imports.iter().all(|c| c.key != "jira-remote"));
+        // And plugin entries never produce drift.
+        assert!(out.conflicts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconcile_warns_on_malformed_plugin_manifest() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        seed_claude_plugin(&home, "broken@mp", "{ not json").await;
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        assert!(out.imports.is_empty());
+        assert!(
+            out.warnings.iter().any(|w| w.contains("broken")),
+            "warnings: {:?}",
+            out.warnings
         );
     }
 }

@@ -802,6 +802,10 @@ pub struct McpImportCandidate {
     /// (grouping is by invocation equality). Passed back verbatim by the
     /// frontend when dismissing.
     pub fingerprint: String,
+    /// Present on entries owned by an external manager (e.g. a Claude Code
+    /// plugin). Import-only: no link, no drift, no reapply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
