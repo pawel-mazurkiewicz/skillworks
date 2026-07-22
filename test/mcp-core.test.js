@@ -453,6 +453,73 @@ test("codex TOML round trip", async () => {
   assert.doesNotMatch(after, /context7/);
 });
 
+// --- Important #1: guard Codex TOML values smol-toml would mangle/reject --
+
+test("writeEntry refuses a Codex TOML config with an integer-valued float outside the target entry", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-guard-float-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, 'foo = 1.0\n[mcp_servers.other]\ncommand = "x"\n');
+  const a = mcp.adapterFor("codex");
+  await assert.rejects(
+    () => mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: [], env: {}, headers: {} }),
+    /can't safely edit/
+  );
+  // Original file must be untouched -- refusing the write is not a partial write.
+  assert.equal(await fs.readFile(p, "utf8"), 'foo = 1.0\n[mcp_servers.other]\ncommand = "x"\n');
+});
+
+test("writeEntry refuses a Codex TOML config with an integer beyond Number.MAX_SAFE_INTEGER", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-guard-bigint-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, "big = 9007199254740993\n[mcp_servers.other]\ncommand = \"x\"\n");
+  const a = mcp.adapterFor("codex");
+  await assert.rejects(
+    () => mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: [], env: {}, headers: {} }),
+    /can't safely edit/
+  );
+});
+
+test("writeEntry still succeeds on a clean Codex TOML config (no false positives)", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-guard-clean-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, 'model = "gpt-5"\ntimeout_ms = 5000\n[mcp_servers.other]\ncommand = "x"\n');
+  const a = mcp.adapterFor("codex");
+  await mcp.writeEntry(p, a, "context7", {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "p"],
+    env: {},
+    headers: {},
+  });
+  const entries = await mcp.readEntries(p, a);
+  assert.equal(entries.length, 2);
+  const text = await fs.readFile(p, "utf8");
+  assert.match(text, /gpt-5/);
+  assert.match(text, /5000/);
+});
+
+test("writeEntry does not refuse for a big integer/float value already inside the entry being overwritten", async () => {
+  // A value INSIDE `[mcp_servers.context7]` is about to be replaced anyway,
+  // so it shouldn't trip the guard -- only values elsewhere in the file
+  // (which would otherwise be silently corrupted by the TOML round-trip)
+  // should.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-guard-ownblock-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, '[mcp_servers.context7]\ncommand = "old"\nport = 1.0\n');
+  const a = mcp.adapterFor("codex");
+  await mcp.writeEntry(p, a, "context7", { transport: "stdio", command: "npx", args: [], env: {}, headers: {} });
+  const entries = await mcp.readEntries(p, a);
+  assert.equal(entries.find(([k]) => k === "context7")[1].command, "npx");
+});
+
+test("removeEntry also refuses a Codex TOML config with an unsafe numeric value elsewhere", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-toml-guard-remove-"));
+  const p = path.join(dir, "config.toml");
+  await fs.writeFile(p, 'foo = 1.0\n[mcp_servers.context7]\ncommand = "npx"\n');
+  const a = mcp.adapterFor("codex");
+  await assert.rejects(() => mcp.removeEntry(p, a, "context7"), /can't safely edit/);
+});
+
 if (process.platform !== "win32") {
   test("removeEntry propagates permission errors instead of reporting a missing file", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-eng-perm-"));

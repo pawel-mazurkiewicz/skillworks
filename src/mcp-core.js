@@ -371,9 +371,14 @@ async function readJsonDoc(p) {
 }
 
 // smol-toml drops comments and reflows formatting on every write — unlike
-// `toml_edit` on the Rust side, which preserves them. Acceptable per the
-// plan (see Task 5 brief): Codex configs may lose hand-written comments
-// across an activate/deactivate cycle, but every value round-trips intact.
+// `toml_edit` on the Rust side, which preserves them. Accepted per the plan
+// (see Task 5 brief): Codex configs may lose hand-written comments across an
+// activate/deactivate cycle. What is NOT acceptable is silently corrupting a
+// *value*: smol-toml also (a) throws when parsing an integer literal beyond
+// `Number.MAX_SAFE_INTEGER`, and (b) round-trips an integer-valued float
+// (`1.0`, `2.0`, `1.0e3`, ...) back out as a bare integer, silently changing
+// its declared TOML type. `assertTomlWriteIsSafe` below guards every write
+// against both cases instead of letting either one through.
 async function readTomlDoc(p) {
   let raw;
   try {
@@ -385,6 +390,102 @@ async function readTomlDoc(p) {
   try {
     return TOML.parse(raw);
   } catch (e) {
+    throw new Error(`Invalid TOML in ${p}: ${e.message}`);
+  }
+}
+
+const CODEX_TOML_SAFETY_MESSAGE =
+  "This Codex config contains values Skillworks' agent tools can't safely edit " +
+  "(large integers or integer-valued floats). Edit it with the Skillworks desktop app instead.";
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Heuristic scan (not a real TOML parser) for value literals smol-toml's
+// parse/stringify round-trip would mangle or reject:
+//   - integers whose magnitude exceeds Number.MAX_SAFE_INTEGER (2^53 - 1) —
+//     smol-toml parses TOML integers into JS numbers, so these either lose
+//     precision silently or throw outright depending on the value.
+//   - floats with an all-zero fractional part (`1.0`, `2.00`, `1.0e3`) —
+//     smol-toml's stringifier writes these back out as bare integers,
+//     silently flipping the declared type from float to integer.
+// This is intentionally conservative: it errs toward refusing a write over
+// risking either kind of corruption. False positives (refusing a config
+// that would have been fine) are an acceptable cost; false negatives are not.
+const TOML_BIG_INT_RE = /=\s*(-?[0-9][0-9_]*)(?![.\d])(?=\s*(?:,|\]|\}|#|$))/gm;
+const TOML_INT_VALUED_FLOAT_RE = /=\s*-?[0-9][0-9_]*\.0+(?:[eE][+-]?[0-9]+)?\s*(?:,|\]|\}|#|$)/m;
+
+function containsUnsafeTomlNumeric(text) {
+  TOML_BIG_INT_RE.lastIndex = 0;
+  let m;
+  while ((m = TOML_BIG_INT_RE.exec(text))) {
+    const digits = m[1].replace(/_/g, "");
+    let value;
+    try {
+      value = BigInt(digits);
+    } catch {
+      continue; // not a plain integer literal after all; ignore
+    }
+    const abs = value < 0n ? -value : value;
+    if (abs > BigInt(Number.MAX_SAFE_INTEGER)) return true;
+  }
+  return TOML_INT_VALUED_FLOAT_RE.test(text);
+}
+
+// Range (as [start, end) character offsets) of the `[<rootKey>.<id>]` table
+// and any `[<rootKey>.<id>.*]` subtables in raw TOML text — the section
+// we're about to overwrite anyway, so unsafe-looking numerics inside it
+// don't need to block the write. Returns null when the entry has no table
+// of its own yet (nothing to exclude).
+function tomlEntryBlockRange(text, id, rootKey) {
+  const headerRe = new RegExp(`^\\[${escapeRegExp(rootKey)}\\.${escapeRegExp(id)}(?:\\.[^\\]]*)?\\]`, "m");
+  const startMatch = headerRe.exec(text);
+  if (!startMatch) return null;
+  const start = startMatch.index;
+  const ownPrefix = `${rootKey}.${id}`;
+  const headerLineRe = /^\[([^\]]*)\]/gm;
+  const firstLineEnd = text.indexOf("\n", start);
+  headerLineRe.lastIndex = firstLineEnd === -1 ? text.length : firstLineEnd + 1;
+  let end = text.length;
+  let m;
+  while ((m = headerLineRe.exec(text))) {
+    const name = m[1];
+    if (name !== ownPrefix && !name.startsWith(`${ownPrefix}.`)) {
+      end = m.index;
+      break;
+    }
+  }
+  return [start, end];
+}
+
+// Refuse to rewrite a Codex TOML config whose existing content (outside the
+// entry we're about to overwrite) contains a value smol-toml's round-trip
+// would mangle or reject. No-op when the file doesn't exist yet (a fresh
+// registration creating the file has nothing to preserve).
+async function readTomlDocForWrite(p, id, rootKey) {
+  let raw;
+  try {
+    raw = await fs.readFile(p, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") return {};
+    throw e;
+  }
+  const range = tomlEntryBlockRange(raw, id, rootKey);
+  const outsideEntry = range ? raw.slice(0, range[0]) + raw.slice(range[1]) : raw;
+  if (containsUnsafeTomlNumeric(outsideEntry)) {
+    throw new Error(`${CODEX_TOML_SAFETY_MESSAGE} (${p})`);
+  }
+  try {
+    return TOML.parse(raw);
+  } catch (e) {
+    // smol-toml can outright fail to parse a value our regex heuristic
+    // missed (e.g. an integer just past what it can represent) — in that
+    // case still surface the friendly guard message instead of its raw
+    // parser error, when the raw text looks like the cause.
+    if (containsUnsafeTomlNumeric(raw)) {
+      throw new Error(`${CODEX_TOML_SAFETY_MESSAGE} (${p})`);
+    }
     throw new Error(`Invalid TOML in ${p}: ${e.message}`);
   }
 }
@@ -435,8 +536,8 @@ async function writeEntry(p, adapter, id, inv) {
     await backupExisting(p);
     await writeFileAtomic(p, `${JSON.stringify(doc, null, 2)}\n`);
   } else if (adapter.format === "toml") {
-    const doc = await readTomlDoc(p);
     const rootKey = adapter.keyPath[0];
+    const doc = await readTomlDocForWrite(p, id, rootKey);
     if (doc[rootKey] === undefined) doc[rootKey] = {};
     if (!isPlainObject(doc[rootKey])) throw new Error(`${rootKey} is not a table`);
     doc[rootKey][id] = renderEntry(adapter, inv);
@@ -476,8 +577,9 @@ async function removeEntry(p, adapter, id) {
     return removed;
   }
   if (adapter.format === "toml") {
-    const doc = await readTomlDoc(p);
-    const table = doc[adapter.keyPath[0]];
+    const rootKey = adapter.keyPath[0];
+    const doc = await readTomlDocForWrite(p, id, rootKey);
+    const table = doc[rootKey];
     const removed = isPlainObject(table) && Object.prototype.hasOwnProperty.call(table, id);
     if (removed) {
       delete table[id];
