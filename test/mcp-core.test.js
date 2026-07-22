@@ -117,6 +117,34 @@ test("loadLibrary rejects a present-but-wrong-typed servers field instead of sil
   // A missing `servers` key (as opposed to a wrong-typed one) still -> [].
   await fs.writeFile(libPath, JSON.stringify({ other: 1 }));
   assert.deepEqual(await mcp.loadLibrary(dir), []);
+
+  // A valid-but-empty object still -> [].
+  await fs.writeFile(libPath, JSON.stringify({}));
+  assert.deepEqual(await mcp.loadLibrary(dir), []);
+});
+
+test("loadLibrary rejects a non-object root document instead of silently treating it as empty", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-lib-badroot-"));
+  const libPath = mcp.libraryPath(dir);
+  await fs.mkdir(path.dirname(libPath), { recursive: true });
+
+  // A top-level array has no `.servers` property either -- same as a
+  // missing key -- so this used to fall through to "empty library" and let
+  // `add_mcp_server` silently overwrite (and lose) the corrupted file.
+  await fs.writeFile(libPath, JSON.stringify([{ id: "leftover" }]));
+  await assert.rejects(() => mcp.loadLibrary(dir), /root must be a JSON object/);
+
+  await fs.writeFile(libPath, JSON.stringify("not an object"));
+  await assert.rejects(() => mcp.loadLibrary(dir), /root must be a JSON object/);
+
+  await fs.writeFile(libPath, JSON.stringify(42));
+  await assert.rejects(() => mcp.loadLibrary(dir), /root must be a JSON object/);
+
+  await fs.writeFile(libPath, JSON.stringify(true));
+  await assert.rejects(() => mcp.loadLibrary(dir), /root must be a JSON object/);
+
+  await fs.writeFile(libPath, JSON.stringify(null));
+  await assert.rejects(() => mcp.loadLibrary(dir), /root must be a JSON object/);
 });
 
 // --- Part C fix 1: null vs undefined on variant command/url --------------

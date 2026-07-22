@@ -264,6 +264,16 @@ async function loadLibrary(appHome) {
   try {
     const raw = await fs.readFile(libraryPath(appHome), "utf8");
     const parsed = JSON.parse(raw);
+    // The parsed root itself must be a plain object. A top-level JSON array,
+    // string, number, or boolean has no `.servers` property either — same as
+    // a missing key — so without this check it silently fell through to the
+    // "empty library" case below. That's a corrupted/legacy file, not an
+    // empty one: a subsequent `add_mcp_server` would then save `[]` plus the
+    // new server, permanently overwriting whatever was actually on disk.
+    // Mirrors the Rust side's hard type error on a non-object root.
+    if (!isPlainObject(parsed)) {
+      throw new Error(`Invalid library at ${libraryPath(appHome)}: root must be a JSON object`);
+    }
     if (parsed.servers === undefined) return [];
     // A present-but-wrong-typed `servers` field is a corrupted library file,
     // not an empty one — mirror the Rust side's hard type error instead of
