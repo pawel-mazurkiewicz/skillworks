@@ -440,24 +440,6 @@ test("appliesToSummary renders plain-English harness/scope combinations", async 
   assert.equal(appliesToSummary({ harness: "unknown-harness" }), "unknown-harness, any scope");
 });
 
-test("groupDiscoveredByHarness groups entries by harness, preserving first-seen order", async () => {
-  const { groupDiscoveredByHarness } = await loadLogic();
-  const entries = [
-    { harness: "claude", scope: "global", key: "a" },
-    { harness: "codex", scope: "global", key: "b" },
-    { harness: "claude", scope: "project", key: "c" },
-  ];
-  const grouped = groupDiscoveredByHarness(entries);
-  assert.deepEqual(
-    grouped.map((g) => g.harness),
-    ["claude", "codex"]
-  );
-  assert.equal(grouped[0].items.length, 2);
-  assert.equal(grouped[1].items.length, 1);
-  assert.deepEqual(groupDiscoveredByHarness([]), []);
-  assert.deepEqual(groupDiscoveredByHarness(undefined), []);
-});
-
 test("VARIANT_FIELD_KEYS matches the six overlayable McpVariant fields", async () => {
   const { VARIANT_FIELD_KEYS } = await loadLogic();
   assert.deepEqual(VARIANT_FIELD_KEYS, ["transport", "command", "args", "env", "url", "headers"]);

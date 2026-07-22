@@ -14,15 +14,18 @@
 # generates correctly and which loads fine on every supported macOS version.
 #
 # Remove this once a non-beta Command Line Tools / Xcode with a fixed linker is
-# in use. `[build]` covers host proc-macros & build scripts; `[target.*]` cover
-# the target artifacts. This is sufficient for native (no `--target`) builds
-# such as `npm run desktop:build`.
+# in use. The `cfg(target_os = "macos")` block covers host proc-macros & build
+# scripts on macOS hosts (a native, no-`--target` build compiles everything for
+# the host triple, so this cfg matches); the explicit `[target.<triple>]` blocks
+# cover the target artifacts. Scoping to macOS keeps Linux/Windows builds from
+# inheriting this Apple-`ld64`-only linker flag, which their linkers reject. This
+# is sufficient for native (no `--target`) builds such as `npm run desktop:build`.
 #
 # NOTE: when an explicit `--target` is passed (the universal-apple-darwin release
 # build), cargo does NOT apply these rustflags to *host* proc-macros, so they
 # still fail. The release scripts work around that with a RUSTC_WRAPPER — see
 # scripts/release/rustc-wrapper.sh and scripts/release/common.sh.
-[build]
+[target.'cfg(target_os = "macos")']
 rustflags = ["-C", "link-arg=-Wl,-no_fixup_chains"]
 
 [target.aarch64-apple-darwin]

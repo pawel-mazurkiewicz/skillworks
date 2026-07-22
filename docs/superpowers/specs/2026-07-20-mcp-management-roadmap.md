@@ -1,6 +1,6 @@
 # MCP Server Management — Roadmap
 
-**Status:** Living document. Phases A + B + D implemented on `feature/mcp-management-phase-a` (reviewed, all tests green); C, E, F pending.
+**Status:** Living document. Phases A–E implemented and merged onto `release/0.3.0` (reviewed, all tests green); F (deferred harnesses) pending — needs real-machine verification.
 **Date:** 2026-07-20
 
 ## Ultimate goal
@@ -32,9 +32,9 @@ once (with per-harness/per-scope invocation variants), then toggled anywhere.
 |---|---|---|
 | **A — Library + engine** | `McpServerSpec`/variants, `<appHome>/mcp/servers.json`, adapter table (7 harnesses), generic JSON/TOML engine, activate/deactivate/status/discover-read commands, `mcp_register.rs` refactored onto engine | **Done** (spec + plan + implementation, final review passed) |
 | **B — URL ingestion** | `parse.rs` heuristics: fetch GitHub/README/instruction URL; extract fenced ```json `mcpServers` blocks, `npx`/`uvx`/`docker run` command lines, `claude mcp add …` lines; produce draft spec for user review; `mcp_add_from_url` command | **Done** (spec `2026-07-20-mcp-management-phase-b-design.md`, final review passed; D pre-work items below) |
-| **C — Discovery reconciliation** | Promote Phase A's read-only `mcp_discover` into full reconciliation: match unmanaged entries to library specs, "import to library" flow (source.kind = "discovered"), conflict handling when an entry diverges from its spec | Not started |
+| **C — Discovery reconciliation** | Promote Phase A's read-only `mcp_discover` into full reconciliation: match unmanaged entries to library specs, "import to library" flow (source.kind = "discovered"), conflict handling when an entry diverges from its spec | **Done** (spec `2026-07-21-mcp-management-phase-c-design.md`, invocation-aware matching + drift/adopt + review-card import, final review passed) |
 | **D — Frontend UI** | "MCP Servers" surface mirroring the skills grid: library list, per-harness×scope activation matrix, add-from-URL form, discovered-servers panel, variant editor. Follows design tokens + workshop aesthetic | **Done** (spec `2026-07-21-mcp-management-phase-d-design.md`, Tasks 1–10 complete incl. Playwright smoke + full gate) |
-| **E — Agent-assisted tools** | Node MCP server (`src/mcp-server.js` + `core.js`) mirror: `add_mcp_server`, `add_mcp_server_from_url`, `activate_mcp_server`, `deactivate_mcp_server`, `list_mcp_servers` tools so the user's coding agent can parse prose pages and manage servers. Shares the library file + adapter semantics with the Rust side (keep in lockstep like `targets.rs` ↔ `core.js`) | Not started |
+| **E — Agent-assisted tools** | Node MCP server (`src/mcp-server.js` + `core.js`) mirror: `add_mcp_server`, `add_mcp_server_from_url`, `activate_mcp_server`, `deactivate_mcp_server`, `list_mcp_servers` tools so the user's coding agent can parse prose pages and manage servers. Shares the library file + adapter semantics with the Rust side (keep in lockstep like `targets.rs` ↔ `core.js`) | **Done** (spec `2026-07-22-mcp-management-phase-e-design.md`, SDK migration + `mcp-core.js` mirror + 5 MCP tools; `add_mcp_server_from_url` deferred — agent parses; final review passed) |
 | **F — Deferred harnesses** | Add medium/low-confidence harnesses behind an "experimental" flag once verified on a real machine (see below) | Not started |
 
 Recommended order: A → B → D (usable end-to-end at that point) → C → E → F.
@@ -50,6 +50,7 @@ opencode, gemini, copilot (CLI), kiro — global + project each.
 These were researched but cut from v1. Verify on a real machine before enabling.
 
 ### Antigravity (medium confidence)
+
 - Global: `~/.gemini/config/mcp_config.json`, key `mcpServers`, strict JSON.
 - Project: `.agents/mcp_config.json` at workspace root.
 - Remote entries use **`serverUrl`** (not `url`/`httpUrl`); optional
@@ -59,6 +60,7 @@ These were researched but cut from v1. Verify on a real machine before enabling.
   sources. Community report of buggy env-var substitution.
 
 ### CodeBuddy (medium confidence)
+
 - Global priority order (read first existing, write highest-priority):
   `~/.codebuddy/.mcp.json` (recommended) > `~/.codebuddy/mcp.json` (deprecated)
   > `~/.codebuddy.json` (legacy). Key `mcpServers`.
@@ -70,6 +72,7 @@ These were researched but cut from v1. Verify on a real machine before enabling.
 - Editor must check all 3 legacy global paths before writing.
 
 ### OpenClaw (medium confidence)
+
 - Global only: `~/.openclaw/openclaw.json`, key path **`mcp.servers`** (nested,
   NOT `mcpServers`). No project scope.
 - stdio: `command`/`args`/`env`/`cwd`. Remote: `url` + `transport:
@@ -79,6 +82,7 @@ These were researched but cut from v1. Verify on a real machine before enabling.
 - NOT a Claude Code fork (different product category — messaging gateway).
 
 ### Trae (LOW confidence — re-verify everything)
+
 - Claimed: `~/.trae/mcp.json` global, `.trae/mcp.json` project, key
   `mcpServers`, three transports, `disabled` bool — but **official docs are a
   client-rendered SPA that returned no content**; details come from conflicting
@@ -87,6 +91,7 @@ These were researched but cut from v1. Verify on a real machine before enabling.
   server via its UI.
 
 ### Qoder (LOW confidence — re-verify everything)
+
 - Key `mcpServers` corroborated; stdio + sse schemas known.
 - Global config path NOT officially documented (conflicting third-party claims:
   `~/.qoder/settings.json` vs `mcp-settings.json` variants).
@@ -96,12 +101,14 @@ These were researched but cut from v1. Verify on a real machine before enabling.
 - Separate `qodercli` may read different config than the IDE.
 
 ### Excluded permanently (unless the world changes)
+
 - **Agents (AGENTS.md / `.agents/` skills convention):** no MCP concept in the
   spec (pure markdown instructions). The `agentsstandard.com`
   `~/.agents/mcp-settings.json` proposal is third-party, unadopted by any
   shipping harness — do not build against it.
 
 ### Adjacent, not in the harness list
+
 - **Copilot in VS Code** uses `.vscode/mcp.json` / user-profile `mcp.json` with
   key **`servers`** (not `mcpServers`) and explicit `type` — a distinct target
   if VS Code support is ever wanted.
@@ -135,6 +142,7 @@ Non-blocking; landed Phase D but flagged for a later pass:
   variant kv rows; dedupe `renderKvRows`/`renderVariantKvRows`.
 
 ## Open questions (carried forward)
+
 - JSONC comment preservation for OpenCode configs (dropped in A).
 - Copilot project path: `.mcp.json` chosen; `.github/mcp.json` also exists.
 - Claude/Codex project-scope trust approval: surfaced as a note only; could

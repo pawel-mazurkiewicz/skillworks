@@ -126,6 +126,11 @@ fn check_transport_fields(
 
 fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
     let mut seen = Vec::new();
+    // Two variants that target the same (harness, scope) would score equally in
+    // automatic selection, so `resolve_effective_selection` would pick between
+    // them by declaration order — reordering a variant could silently change
+    // activation. Reject the ambiguity here instead.
+    let mut seen_applies: Vec<(Option<String>, Option<String>)> = Vec::new();
     for v in &spec.variants {
         if v.label.trim().is_empty() {
             return Err(BackendError::Validation(format!(
@@ -157,6 +162,14 @@ fn validate_variants(spec: &McpServerSpec) -> BackendResult<()> {
                     )));
                 }
             }
+            let key = (applies.harness.clone(), applies.scope.clone());
+            if seen_applies.contains(&key) {
+                return Err(BackendError::Validation(format!(
+                    "{}: variant {:?} targets the same harness/scope as an earlier variant (harness={:?}, scope={:?}); automatic selection would be ambiguous — use distinct appliesTo or pick one by explicit label",
+                    spec.id, v.label, applies.harness, applies.scope
+                )));
+            }
+            seen_applies.push(key);
         }
         // effective invocation must be valid
         let inv_transport = v.transport.unwrap_or(spec.transport);
@@ -360,6 +373,37 @@ mod tests {
         let mut s = stdio_spec();
         s.transport = McpTransport::Http; // http without url
         assert!(validate_spec(&s).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_variant_applies_to() {
+        let mk = |label: &str| McpVariant {
+            label: label.into(),
+            applies_to: Some(McpAppliesTo {
+                harness: Some("codex".into()),
+                scope: None,
+            }),
+            transport: None,
+            command: None,
+            args: None,
+            env: None,
+            url: None,
+            headers: None,
+        };
+        // Two variants targeting the same harness/scope → ambiguous auto-select.
+        let mut s = spec_with_variant(mk("a"));
+        s.variants.push(mk("b"));
+        assert!(validate_spec(&s).is_err());
+
+        // Distinct appliesTo (different scope) is unambiguous and accepted.
+        let mut b = mk("b");
+        b.applies_to = Some(McpAppliesTo {
+            harness: Some("codex".into()),
+            scope: Some("project".into()),
+        });
+        let mut s = spec_with_variant(mk("a"));
+        s.variants.push(b);
+        validate_spec(&s).unwrap();
     }
 
     #[test]

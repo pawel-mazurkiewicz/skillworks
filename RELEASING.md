@@ -40,10 +40,15 @@ npx tauri signer generate -w ~/.tauri/skillworks.key
 
 You will be prompted for a passphrase (you can leave it empty). The command prints a **public key**. Open `src-tauri/tauri.conf.json` and replace the placeholder in `plugins.updater.pubkey` with it.
 
-Then open `.env.release` and set **both** of these:
+Then open `.env.release` and set **both** of these. Point the key variable at
+the **absolute path** of the key file, not its contents: `.env.release` is
+sourced by bash on macOS/Linux and parsed line-by-line on Windows, and Tauri
+accepts either a path or the raw key — so a single-line path is the only form
+that is safe in both. (Pasting the raw key breaks the file: it is two lines and
+its `untrusted comment:` header contains spaces.)
 
-```
-TAURI_SIGNING_PRIVATE_KEY=<full contents of ~/.tauri/skillworks.key>
+```dotenv
+TAURI_SIGNING_PRIVATE_KEY=/absolute/path/to/.tauri/skillworks.key
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<the passphrase you just chose, or empty>
 ```
 
@@ -130,7 +135,7 @@ Run `./scripts/release/release-macos.sh` with `set -x` temporarily at the top to
 
 **`.app.tar.gz.sig` not found after build**
 First make sure updater artifacts are enabled: `bundle.createUpdaterArtifacts` must be `true` in `src-tauri/tauri.conf.json` (otherwise the `.tar.gz`/`.sig` are never produced). Then confirm the signing key is picked up:
-- `TAURI_SIGNING_PRIVATE_KEY` in `.env.release` holds the full raw contents of `~/.tauri/skillworks.key` (both lines, including the leading `untrusted comment:` header).
+- `TAURI_SIGNING_PRIVATE_KEY` in `.env.release` holds the **absolute path** to `~/.tauri/skillworks.key` (Tauri reads the key from that file). A path is used rather than the raw key because `.env.release` is sourced by bash and parsed line-by-line on Windows, and the key's two-line contents can't be embedded safely in either.
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is set to the passphrase you chose when generating the key (leave empty only if the key has no passphrase). Watch the variable name — it is easy to accidentally write `TAURI_SIGNING_PRIVATE_KEY` twice, which silently overwrites the key with the password.
 - The `pubkey` in `tauri.conf.json` must be the public key matching that private key (not the `REPLACE_WITH_...` placeholder).
 

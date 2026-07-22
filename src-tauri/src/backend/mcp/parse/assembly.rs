@@ -37,6 +37,20 @@ pub(crate) fn slugify(name: &str) -> String {
     out
 }
 
+/// Three-step slug resolution shared by name-grouping and final draft-id
+/// assignment: slugify `raw`, fall back to the slugified `fallback_name`, and
+/// finally the literal `"server"` when both are empty.
+fn resolve_slug(raw: &str, fallback_name: &str) -> String {
+    let mut slug = slugify(raw);
+    if slug.is_empty() {
+        slug = slugify(fallback_name);
+    }
+    if slug.is_empty() {
+        slug = "server".to_string();
+    }
+    slug
+}
+
 fn variant_label(c: &Candidate) -> String {
     match (&c.transport, c.command.as_deref()) {
         (McpTransport::Http, _) => "remote-http".to_string(),
@@ -92,6 +106,7 @@ pub(crate) fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
         check("url", u);
     }
     if let Some(cmd) = &spec.command {
+        check("command", cmd);
         if looks_like_shell_reference(cmd) {
             out.push(format!(
                 "{}: command references a shell variable or home path ({cmd}) — verify the path before activating",
@@ -127,6 +142,7 @@ pub(crate) fn placeholder_warnings(spec: &McpServerSpec) -> Vec<String> {
             check_variant("url", u);
         }
         if let Some(cmd) = &variant.command {
+            check_variant("command", cmd);
             if looks_like_shell_reference(cmd) {
                 out.push(format!(
                     "{} (variant {}): command references a shell variable or home path ({cmd}) — verify the path before activating",
@@ -169,13 +185,7 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
     let mut groups: std::collections::BTreeMap<String, Vec<Candidate>> = Default::default();
     for c in candidates {
         let raw = c.name.clone().unwrap_or_else(|| fallback_name.to_string());
-        let mut slug = slugify(&raw);
-        if slug.is_empty() {
-            slug = slugify(fallback_name);
-        }
-        if slug.is_empty() {
-            slug = "server".to_string();
-        }
+        let slug = resolve_slug(&raw, fallback_name);
         if !groups.contains_key(&slug) {
             order.push(slug.clone());
         }
@@ -252,13 +262,7 @@ pub fn extract_drafts(markdown: &str, fallback_name: &str, source_url: &str) -> 
             .name
             .clone()
             .unwrap_or_else(|| fallback_name.to_string());
-        let mut slug = slugify(&raw);
-        if slug.is_empty() {
-            slug = slugify(fallback_name);
-        }
-        if slug.is_empty() {
-            slug = "server".to_string();
-        }
+        let slug = resolve_slug(&raw, fallback_name);
         let mut evidence = vec![canonical.evidence.clone()];
         if !canonical.ignored_keys.is_empty() {
             evidence.push(format!("ignored: {}", canonical.ignored_keys.join(", ")));

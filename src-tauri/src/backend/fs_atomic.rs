@@ -108,12 +108,23 @@ pub async fn backup_existing(path: &Path) -> BackendResult<Option<PathBuf>> {
     if !fs::try_exists(path).await.unwrap_or(false) {
         return Ok(None);
     }
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    // Millisecond precision keeps the name readable while letting same-second
+    // mutations (e.g. a bulk activate/deactivate from the UI) produce distinct
+    // backup filenames. A trailing counter guards the residual
+    // same-millisecond case so an earlier recovery point is never silently
+    // overwritten by `fs::copy`.
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "config".to_string());
-    let backup_path = path.with_file_name(format!("{file_name}.skillworks-backup-{timestamp}"));
+    let base = format!("{file_name}.skillworks-backup-{timestamp}");
+    let mut backup_path = path.with_file_name(&base);
+    let mut n = 2;
+    while fs::try_exists(&backup_path).await.unwrap_or(false) {
+        backup_path = path.with_file_name(format!("{base}-{n}"));
+        n += 1;
+    }
     fs::copy(path, &backup_path).await?;
     Ok(Some(backup_path))
 }

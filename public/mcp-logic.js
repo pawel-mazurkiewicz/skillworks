@@ -313,18 +313,6 @@ export function appliesToSummary(appliesTo) {
   return `${harnessLabel}, ${scopeLabel}`;
 }
 
-// Groups mcp_discover's flat entry list by harness, preserving each
-// harness's first-seen order (spec §4.6).
-export function groupDiscoveredByHarness(entries) {
-  const groups = new Map();
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const harness = (entry && entry.harness) || "unknown";
-    if (!groups.has(harness)) groups.set(harness, []);
-    groups.get(harness).push(entry);
-  }
-  return Array.from(groups.entries()).map(([harness, items]) => ({ harness, items }));
-}
-
 // Human summary of a candidate's foundIn list, e.g.
 // "Claude Code / global · Cursor / project".
 export function foundInSummary(foundIn) {

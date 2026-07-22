@@ -35,7 +35,7 @@ self-registration becoming one more caller of the same engine.
   translating a canonical spec into each harness's dialect, touching only our
   entry, preserving unknown keys (and comments where the format allows),
   backing up + writing atomically.
-- Tauri commands: `mcp_list_library`, `mcp_add_manual`, `mcp_remove`,
+- Tauri commands: `mcp_list_library`, `mcp_add_manual`, `mcp_remove_server`,
   `mcp_activate`, `mcp_deactivate`, `mcp_status`, `mcp_discover` (read-only).
 - Refactor `mcp_register.rs` to sit on the engine (no behavior change).
 - Unit tests per adapter (round-trip, preserve-others, idempotent, remove).
@@ -169,8 +169,8 @@ single place harness quirks live and the primary unit-test surface.
 
 - `mcp_list_library() -> Vec<McpServerSpec>`
 - `mcp_add_manual(spec) -> McpServerSpec` — validate + persist to library.
-- `mcp_remove(id) -> ()` — remove from library (does NOT deactivate; returns a
-  warning list of targets where it is still active).
+- `mcp_remove_server(id) -> ()` — remove from library (does NOT deactivate;
+  returns a warning list of targets where it is still active).
 - `mcp_activate(id, harness, scope, variant_label?) -> ActivationResult` —
   resolve effective spec, engine `write_entry`, return path + trust note.
 - `mcp_deactivate(id, harness, scope) -> ()` — engine `remove_entry`.
