@@ -1,6 +1,10 @@
 //! Per-harness MCP config descriptors — the data table that drives
 //! `engine.rs`. Mirrors the style of `targets.rs::HARNESS_TARGETS`.
 //! Sources: research 2026-07-20, see the Phase A spec §4.
+//!
+//! Mirror — keep in lockstep; the Node parity test "adapter table matches
+//! the Rust table" (`test/mcp-core.test.js`, `ADAPTERS` in
+//! `src/mcp-core.js`) must be updated in the same PR as any change here.
 
 use std::path::{Path, PathBuf};
 

@@ -12,13 +12,128 @@ const fs = require("node:fs/promises");
 const TRANSPORTS = new Set(["stdio", "http", "sse"]);
 const SCOPES = new Set(["global", "project"]);
 
-// --- Task 4 will replace this stand-in with the real adapter table below;
-// validateSpec only needs a harness-id existence check at this stage. ---
-const KNOWN_HARNESSES = new Set(["claude", "codex", "cursor", "opencode", "gemini", "copilot", "kiro"]);
+// Per-harness MCP config descriptors — the data table that drives the
+// engine below. Mirror of `src-tauri/src/backend/mcp/adapters.rs::ADAPTERS`
+// — keep in lockstep; the Node parity test "adapter table matches the Rust
+// table" must be updated in the same PR as any `adapters.rs` change.
+const ADAPTERS = [
+  {
+    harnessId: "claude",
+    label: "Claude Code",
+    format: "json",
+    globalPathParts: [".claude.json"],
+    projectPathParts: [".mcp.json"],
+    keyPath: ["mcpServers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "claudeTypes",
+    remoteUrlField: "url",
+    projectTrustNote: true,
+  },
+  {
+    harnessId: "codex",
+    label: "Codex",
+    format: "toml",
+    globalPathParts: [".codex", "config.toml"],
+    projectPathParts: [".codex", "config.toml"],
+    keyPath: ["mcp_servers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "none",
+    remoteUrlField: "url",
+    projectTrustNote: true,
+  },
+  {
+    harnessId: "cursor",
+    label: "Cursor",
+    format: "json",
+    globalPathParts: [".cursor", "mcp.json"],
+    projectPathParts: [".cursor", "mcp.json"],
+    keyPath: ["mcpServers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "none",
+    remoteUrlField: "url",
+    projectTrustNote: false,
+  },
+  {
+    harnessId: "opencode",
+    label: "OpenCode",
+    format: "json",
+    globalPathParts: [".config", "opencode", "opencode.json"],
+    projectPathParts: ["opencode.json"],
+    keyPath: ["mcp"],
+    commandStyle: "argvArray",
+    envField: "environment",
+    discriminator: "openCodeTypes",
+    remoteUrlField: "url",
+    projectTrustNote: false,
+  },
+  {
+    harnessId: "gemini",
+    label: "Gemini CLI",
+    format: "json",
+    globalPathParts: [".gemini", "settings.json"],
+    projectPathParts: [".gemini", "settings.json"],
+    keyPath: ["mcpServers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "none",
+    remoteUrlField: "geminiSplit",
+    projectTrustNote: false,
+  },
+  {
+    harnessId: "copilot",
+    label: "Copilot CLI",
+    format: "json",
+    globalPathParts: [".copilot", "mcp-config.json"],
+    projectPathParts: [".mcp.json"],
+    keyPath: ["mcpServers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "copilotTypes",
+    remoteUrlField: "url",
+    projectTrustNote: false,
+  },
+  {
+    harnessId: "kiro",
+    label: "Kiro",
+    format: "json",
+    globalPathParts: [".kiro", "settings", "mcp.json"],
+    projectPathParts: [".kiro", "settings", "mcp.json"],
+    keyPath: ["mcpServers"],
+    commandStyle: "separateArgs",
+    envField: "env",
+    discriminator: "none",
+    remoteUrlField: "url",
+    projectTrustNote: false,
+  },
+];
+
+function adapters() {
+  return ADAPTERS;
+}
+
 function adapterFor(id, soft) {
-  if (KNOWN_HARNESSES.has(id)) return { harnessId: id };
-  if (!soft) throw new Error(`Unsupported MCP harness: ${id}`);
-  return null;
+  const a = ADAPTERS.find((x) => x.harnessId === id);
+  if (!a && !soft) throw new Error(`Unsupported MCP harness: ${id}`);
+  return a || null;
+}
+
+function configPathFor(adapter, scope, homeDir, projectRoot) {
+  let base;
+  let parts;
+  if (scope === "global") {
+    base = homeDir;
+    parts = adapter.globalPathParts;
+  } else if (scope === "project") {
+    if (!projectRoot) throw new Error("Project scope requires an active project");
+    base = projectRoot;
+    parts = adapter.projectPathParts;
+  } else {
+    throw new Error(`Unknown scope: ${scope} (expected "global" or "project")`);
+  }
+  return path.join(base, ...parts);
 }
 
 function validId(id) {
@@ -159,6 +274,8 @@ module.exports = {
   libraryPath,
   loadLibrary,
   saveLibrary,
+  adapters,
   adapterFor,
+  configPathFor,
   writeFileAtomic,
 };

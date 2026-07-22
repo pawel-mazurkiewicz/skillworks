@@ -100,3 +100,65 @@ test("library round-trips and missing file is empty", async () => {
   assert.deepEqual(await mcp.loadLibrary(dir), [stdioSpec()]);
   assert.ok(mcp.libraryPath(dir).endsWith(path.join("mcp", "servers.json")));
 });
+
+// --- Task 4: adapter table + parity guard --------------------------------
+
+const EXPECTED_ADAPTERS = [
+  ["claude", "json", [".claude.json"], [".mcp.json"], ["mcpServers"], "separateArgs", "env", "claudeTypes", "url", true],
+  ["codex", "toml", [".codex", "config.toml"], [".codex", "config.toml"], ["mcp_servers"], "separateArgs", "env", "none", "url", true],
+  ["cursor", "json", [".cursor", "mcp.json"], [".cursor", "mcp.json"], ["mcpServers"], "separateArgs", "env", "none", "url", false],
+  ["opencode", "json", [".config", "opencode", "opencode.json"], ["opencode.json"], ["mcp"], "argvArray", "environment", "openCodeTypes", "url", false],
+  ["gemini", "json", [".gemini", "settings.json"], [".gemini", "settings.json"], ["mcpServers"], "separateArgs", "env", "none", "geminiSplit", false],
+  ["copilot", "json", [".copilot", "mcp-config.json"], [".mcp.json"], ["mcpServers"], "separateArgs", "env", "copilotTypes", "url", false],
+  ["kiro", "json", [".kiro", "settings", "mcp.json"], [".kiro", "settings", "mcp.json"], ["mcpServers"], "separateArgs", "env", "none", "url", false],
+];
+
+test("adapter table matches the Rust table (lockstep parity)", () => {
+  const got = mcp.adapters().map((a) => [
+    a.harnessId,
+    a.format,
+    a.globalPathParts,
+    a.projectPathParts,
+    a.keyPath,
+    a.commandStyle,
+    a.envField,
+    a.discriminator,
+    a.remoteUrlField,
+    a.projectTrustNote,
+  ]);
+  assert.deepEqual(got, EXPECTED_ADAPTERS);
+});
+
+test("adapterFor rejects unknown harnesses (hard) and tolerates soft lookups", () => {
+  assert.throws(() => mcp.adapterFor("emacs"));
+  assert.equal(mcp.adapterFor("emacs", true), null);
+  assert.equal(mcp.adapterFor("claude").harnessId, "claude");
+});
+
+test("configPathFor resolves global + project for every adapter", () => {
+  const home = path.join("/home", "u");
+  const proj = path.join("/repo");
+  const cases = [
+    ["claude", path.join(home, ".claude.json"), path.join(proj, ".mcp.json")],
+    ["codex", path.join(home, ".codex", "config.toml"), path.join(proj, ".codex", "config.toml")],
+    ["cursor", path.join(home, ".cursor", "mcp.json"), path.join(proj, ".cursor", "mcp.json")],
+    ["opencode", path.join(home, ".config", "opencode", "opencode.json"), path.join(proj, "opencode.json")],
+    ["gemini", path.join(home, ".gemini", "settings.json"), path.join(proj, ".gemini", "settings.json")],
+    ["copilot", path.join(home, ".copilot", "mcp-config.json"), path.join(proj, ".mcp.json")],
+    ["kiro", path.join(home, ".kiro", "settings", "mcp.json"), path.join(proj, ".kiro", "settings", "mcp.json")],
+  ];
+  for (const [id, global, project] of cases) {
+    const a = mcp.adapterFor(id);
+    assert.equal(mcp.configPathFor(a, "global", home), global, `${id} global`);
+    assert.equal(mcp.configPathFor(a, "project", home, proj), project, `${id} project`);
+  }
+
+  const a = mcp.adapterFor("opencode");
+  assert.equal(
+    mcp.configPathFor(a, "global", "/home/u"),
+    path.join("/home/u", ".config", "opencode", "opencode.json")
+  );
+  assert.equal(mcp.configPathFor(a, "project", "/home/u", "/repo"), path.join("/repo", "opencode.json"));
+  assert.throws(() => mcp.configPathFor(mcp.adapterFor("claude"), "project", "/home/u"));
+  assert.throws(() => mcp.configPathFor(mcp.adapterFor("claude"), "weird-scope", "/home/u"));
+});
