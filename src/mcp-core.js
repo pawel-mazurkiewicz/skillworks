@@ -172,8 +172,12 @@ function validateSpec(spec) {
       }
     }
     const invTransport = v.transport || spec.transport;
-    const invCommand = v.command !== undefined ? v.command : spec.command;
-    const invUrl = v.url !== undefined ? v.url : spec.url;
+    // Nullish (not just undefined) coalescing: JSON `null` and an absent
+    // field both mean "inherit the canonical value" — mirrors Rust's
+    // `Option::None`, which collapses both `null` and a missing key on the
+    // wire to the same in-memory state.
+    const invCommand = v.command ?? spec.command;
+    const invUrl = v.url ?? spec.url;
     checkTransportFields(invTransport, invCommand, invUrl, `${spec.id} variant ${v.label}`);
   }
 }
@@ -222,10 +226,14 @@ function resolveEffective(spec, harnessId, scope, variantLabel) {
   };
   if (variant) {
     if (variant.transport) inv.transport = variant.transport;
-    if (variant.command !== undefined) inv.command = variant.command;
+    // `!= null` (not `!== undefined`): an explicit `command: null`/`url:
+    // null` on the variant must fall back to the canonical spec field, the
+    // same as an absent field — mirrors Rust's `Option::None`, which does
+    // not distinguish JSON `null` from a missing key.
+    if (variant.command != null) inv.command = variant.command;
     if (variant.args) inv.args = [...variant.args];
     if (variant.env) inv.env = { ...variant.env };
-    if (variant.url !== undefined) inv.url = variant.url;
+    if (variant.url != null) inv.url = variant.url;
     if (variant.headers) inv.headers = { ...variant.headers };
   }
   checkTransportFields(inv.transport, inv.command, inv.url, spec.id);
@@ -256,7 +264,14 @@ async function loadLibrary(appHome) {
   try {
     const raw = await fs.readFile(libraryPath(appHome), "utf8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed.servers) ? parsed.servers : [];
+    if (parsed.servers === undefined) return [];
+    // A present-but-wrong-typed `servers` field is a corrupted library file,
+    // not an empty one — mirror the Rust side's hard type error instead of
+    // silently discarding it as `[]`.
+    if (!Array.isArray(parsed.servers)) {
+      throw new Error(`Invalid library at ${libraryPath(appHome)}: "servers" must be an array`);
+    }
+    return parsed.servers;
   } catch (e) {
     if (e.code === "ENOENT") return [];
     throw e;
@@ -482,6 +497,52 @@ async function readEntries(p, adapter) {
   throw new Error(`Unknown config format: ${adapter.format}`);
 }
 
+// Shown alongside a `project` scope row for any harness whose config the
+// harness itself gates behind a first-run approval prompt (e.g. Claude Code,
+// Codex). Mirrors `commands.rs::PROJECT_TRUST_NOTE` verbatim.
+const PROJECT_TRUST_NOTE =
+  "This harness requires first-run approval of project-scope MCP servers inside the tool.";
+
+// Report activation status of every library server against every harness's
+// global scope (and project scope, when `projectRoot` is given). Mirrors
+// `commands.rs::mcp_status_impl`: reads each harness target's config file
+// once, then marks every library server id found in it — a malformed or
+// unreadable target is recorded as an `error` on its rows (active: false)
+// rather than aborting the whole survey.
+async function mcpStatus(appHome, homeDir, projectRoot) {
+  const servers = await loadLibrary(appHome);
+  const out = [];
+  for (const adapter of ADAPTERS) {
+    const targets = [["global", configPathFor(adapter, "global", homeDir)]];
+    if (projectRoot) {
+      targets.push(["project", configPathFor(adapter, "project", homeDir, projectRoot)]);
+    }
+    for (const [scope, targetPath] of targets) {
+      const trustNote = adapter.projectTrustNote && scope === "project" ? PROJECT_TRUST_NOTE : undefined;
+      let entries = null;
+      let error;
+      try {
+        entries = await readEntries(targetPath, adapter);
+      } catch (e) {
+        error = e.message;
+      }
+      for (const spec of servers) {
+        const row = {
+          serverId: spec.id,
+          harness: adapter.harnessId,
+          scope,
+          configPath: targetPath,
+          active: entries ? entries.some(([id]) => id === spec.id) : false,
+        };
+        if (trustNote) row.trustNote = trustNote;
+        if (error) row.error = error;
+        out.push(row);
+      }
+    }
+  }
+  return out;
+}
+
 module.exports = {
   validateSpec,
   resolveEffective,
@@ -496,4 +557,6 @@ module.exports = {
   removeEntry,
   readEntries,
   writeFileAtomic,
+  mcpStatus,
+  PROJECT_TRUST_NOTE,
 };

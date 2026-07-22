@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const path = require("node:path");
 const { createManager } = require("./core");
+const mcpCore = require("./mcp-core");
 
 const MCP_SERVER_NAME = "skillworks";
 
@@ -26,6 +27,26 @@ const HARNESS_PROJECT_TARGETS = {
   cursor: "cursor-project",
 };
 
+// `appHome`/`homeDir` for the MCP-server-management tools (mcp-core.js),
+// resolved the same way `manager` resolved them (it was built from
+// `args["app-home"]`/`args.home` above). `appHome` in particular can involve
+// a legacy-directory fallback check that only `core.js` knows about, so we
+// ask the manager for its resolved value (via `getState`, which always
+// returns the fixed `appHome` it was constructed with) instead of
+// re-implementing that resolution here. Memoized: both values are fixed for
+// the lifetime of this process.
+let mcpHomesPromise = null;
+function resolveMcpHomes() {
+  if (!mcpHomesPromise) {
+    mcpHomesPromise = (async () => {
+      const state = await manager.getState(activeProject);
+      const homeDir = path.resolve(expandHomePath(args.home || require("node:os").homedir()));
+      return { appHome: state.appHome, homeDir };
+    })();
+  }
+  return mcpHomesPromise;
+}
+
 // --- SDK bootstrap -----------------------------------------------------
 // The MCP SDK ships as ESM; src/ stays CommonJS, so the SDK is loaded via
 // dynamic import() inside this async bootstrap (no repo-wide ESM switch).
@@ -37,7 +58,7 @@ async function main() {
 
   const server = new McpServer({ name: MCP_SERVER_NAME, version: readVersion() });
   registerSkillTools(server, z);
-  // registerMcpTools(server, z); // added in Part 2 (Task 6)
+  registerMcpTools(server, z);
   await server.connect(new StdioServerTransport());
 }
 
@@ -320,6 +341,189 @@ function registerSkillTools(server, z) {
       enabledInTarget: target ? target.enabledSkillIds.length : undefined,
     });
   }
+}
+
+// Normalize an agent-assembled spec into mcp-core.js's canonical shape:
+// default `source.kind` to "manual" and coerce array/object fields to their
+// empty defaults (mirrors `McpServerSpec`'s `#[serde(default)]` fields in
+// `src-tauri/src/backend/mcp/spec.rs`).
+function normalizeMcpServerSpec(spec) {
+  const source = spec && spec.source && typeof spec.source === "object" ? spec.source : {};
+  return {
+    id: spec.id,
+    name: spec.name,
+    description: spec.description,
+    source: { kind: source.kind || "manual", url: source.url },
+    transport: spec.transport,
+    command: spec.command,
+    args: Array.isArray(spec.args) ? spec.args : [],
+    env: spec.env && typeof spec.env === "object" ? spec.env : {},
+    url: spec.url,
+    headers: spec.headers && typeof spec.headers === "object" ? spec.headers : {},
+    variants: Array.isArray(spec.variants) ? spec.variants : [],
+  };
+}
+
+// Registers the 5 MCP-server-management tools (add/list/activate/deactivate/
+// remove a library server), backed by mcp-core.js. Errors (unknown harness,
+// unknown scope, validation failures, unknown id) are thrown and surfaced by
+// the SDK as a tool error.
+function registerMcpTools(server, z) {
+  const mcpSourceShape = z.object({
+    kind: z.string(),
+    url: z.string().optional(),
+  });
+
+  server.registerTool(
+    "list_mcp_servers",
+    {
+      description:
+        "List every MCP server in the Skillworks library, plus its activation status (active/inactive, config path, trust notes) for every supported harness and scope.",
+      inputSchema: {
+        projectPath: z
+          .string()
+          .optional()
+          .describe("Project path to include project-scope status for. Defaults to the active project."),
+      },
+    },
+    async ({ projectPath }) => {
+      const { appHome, homeDir } = await resolveMcpHomes();
+      const resolvedProjectPath = normalizeProjectArg(projectPath);
+      const servers = await mcpCore.loadLibrary(appHome);
+      const status = await mcpCore.mcpStatus(appHome, homeDir, resolvedProjectPath);
+      return toContent({ servers, status });
+    },
+  );
+
+  server.registerTool(
+    "add_mcp_server",
+    {
+      description:
+        "Add an MCP server to the Skillworks library from a structured spec you assembled (e.g. after reading a README). Does not activate it.",
+      inputSchema: {
+        spec: z.object({
+          id: z.string(),
+          name: z.string(),
+          description: z.string().optional(),
+          source: mcpSourceShape.optional(),
+          transport: z.enum(["stdio", "http", "sse"]),
+          command: z.string().optional(),
+          args: z.array(z.string()).optional(),
+          env: z.record(z.string()).optional(),
+          url: z.string().optional(),
+          headers: z.record(z.string()).optional(),
+          variants: z.array(z.any()).optional(),
+        }),
+      },
+    },
+    async ({ spec }) => {
+      const { appHome } = await resolveMcpHomes();
+      const normalized = normalizeMcpServerSpec(spec);
+      mcpCore.validateSpec(normalized);
+      const servers = await mcpCore.loadLibrary(appHome);
+      if (servers.some((s) => s.id === normalized.id)) {
+        throw new Error(`A server with id ${JSON.stringify(normalized.id)} already exists in the library`);
+      }
+      servers.push(normalized);
+      await mcpCore.saveLibrary(appHome, servers);
+      return toContent({ server: normalized });
+    },
+  );
+
+  server.registerTool(
+    "activate_mcp_server",
+    {
+      description:
+        "Activate a library MCP server for a harness + scope, writing it into that harness's config file so the harness picks it up.",
+      inputSchema: {
+        id: z.string().describe("Library server id to activate."),
+        harness: z.string().describe("Harness id: claude, codex, cursor, opencode, gemini, copilot, or kiro."),
+        scope: z
+          .enum(["global", "project"])
+          .describe("Whether to write into the harness's global config or the active project's config."),
+        variantLabel: z
+          .string()
+          .optional()
+          .describe("Explicit variant label to use instead of automatic appliesTo matching."),
+        projectPath: z.string().optional().describe("Project path for project scope. Defaults to the active project."),
+      },
+    },
+    async ({ id, harness, scope, variantLabel, projectPath }) => {
+      const { appHome, homeDir } = await resolveMcpHomes();
+      const servers = await mcpCore.loadLibrary(appHome);
+      const spec = servers.find((s) => s.id === id);
+      if (!spec) {
+        throw new Error(`No library server with id ${JSON.stringify(id)}`);
+      }
+      const adapter = mcpCore.adapterFor(harness);
+      const resolvedProjectPath = normalizeProjectArg(projectPath);
+      const configPath = mcpCore.configPathFor(adapter, scope, homeDir, resolvedProjectPath);
+      const inv = mcpCore.resolveEffective(spec, harness, scope, variantLabel);
+      await mcpCore.writeEntry(configPath, adapter, id, inv);
+      const result = { configPath };
+      if (adapter.projectTrustNote && scope === "project") {
+        result.trustNote = mcpCore.PROJECT_TRUST_NOTE;
+      }
+      return toContent(result);
+    },
+  );
+
+  server.registerTool(
+    "deactivate_mcp_server",
+    {
+      description:
+        "Remove an MCP server entry from a harness + scope config, without touching the library. Works even if the id is no longer in the library.",
+      inputSchema: {
+        id: z.string().describe("Server id to remove from the target harness config."),
+        harness: z.string().describe("Harness id: claude, codex, cursor, opencode, gemini, copilot, or kiro."),
+        scope: z.enum(["global", "project"]).describe("Which config to remove it from."),
+        projectPath: z.string().optional().describe("Project path for project scope. Defaults to the active project."),
+      },
+    },
+    async ({ id, harness, scope, projectPath }) => {
+      const { homeDir } = await resolveMcpHomes();
+      const adapter = mcpCore.adapterFor(harness);
+      const resolvedProjectPath = normalizeProjectArg(projectPath);
+      const configPath = mcpCore.configPathFor(adapter, scope, homeDir, resolvedProjectPath);
+      const removed = await mcpCore.removeEntry(configPath, adapter, id);
+      return toContent({ removed, configPath });
+    },
+  );
+
+  server.registerTool(
+    "remove_mcp_server",
+    {
+      description:
+        "Remove a server from the Skillworks library. Warns (but does not deactivate) if the entry is still written into any harness's config.",
+      inputSchema: {
+        id: z.string().describe("Library server id to remove."),
+        projectPath: z
+          .string()
+          .optional()
+          .describe("Project path to check for project-scope activation warnings. Defaults to the active project."),
+      },
+    },
+    async ({ id, projectPath }) => {
+      const { appHome, homeDir } = await resolveMcpHomes();
+      const resolvedProjectPath = normalizeProjectArg(projectPath);
+      // Computed BEFORE the library removal below: mcpStatus derives its
+      // rows from the library, so the id must still be present in it to
+      // report whether it's still active anywhere.
+      const status = await mcpCore.mcpStatus(appHome, homeDir, resolvedProjectPath);
+      const stillActiveAt = status
+        .filter((row) => row.serverId === id && row.active)
+        .map((row) => ({ harness: row.harness, scope: row.scope, configPath: row.configPath }));
+
+      const servers = await mcpCore.loadLibrary(appHome);
+      const before = servers.length;
+      const remaining = servers.filter((s) => s.id !== id);
+      if (remaining.length === before) {
+        throw new Error(`No library server with id ${JSON.stringify(id)}`);
+      }
+      await mcpCore.saveLibrary(appHome, remaining);
+      return toContent({ removed: id, stillActiveAt });
+    },
+  );
 }
 
 function requireSetIdOrName(args) {

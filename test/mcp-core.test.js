@@ -101,6 +101,62 @@ test("library round-trips and missing file is empty", async () => {
   assert.ok(mcp.libraryPath(dir).endsWith(path.join("mcp", "servers.json")));
 });
 
+// --- Part C fix 2: loadLibrary hard-errors on a wrong-typed `servers` -----
+
+test("loadLibrary rejects a present-but-wrong-typed servers field instead of silently returning []", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-lib-badtype-"));
+  const libPath = mcp.libraryPath(dir);
+  await fs.mkdir(path.dirname(libPath), { recursive: true });
+
+  await fs.writeFile(libPath, JSON.stringify({ servers: { not: "an array" } }));
+  await assert.rejects(() => mcp.loadLibrary(dir), /servers.*must be an array/);
+
+  await fs.writeFile(libPath, JSON.stringify({ servers: "nope" }));
+  await assert.rejects(() => mcp.loadLibrary(dir), /servers.*must be an array/);
+
+  // A missing `servers` key (as opposed to a wrong-typed one) still -> [].
+  await fs.writeFile(libPath, JSON.stringify({ other: 1 }));
+  assert.deepEqual(await mcp.loadLibrary(dir), []);
+});
+
+// --- Part C fix 1: null vs undefined on variant command/url --------------
+
+test("validateSpec: a variant command/url of null falls back to the canonical value instead of rejecting", () => {
+  const spec = {
+    ...stdioSpec(),
+    variants: [{ label: "same-command", command: null }],
+  };
+  assert.doesNotThrow(() => mcp.validateSpec(spec));
+
+  const remoteSpec = {
+    ...stdioSpec(),
+    transport: "http",
+    command: undefined,
+    url: "https://x.example/mcp",
+    variants: [{ label: "same-url", transport: "http", url: null }],
+  };
+  assert.doesNotThrow(() => mcp.validateSpec(remoteSpec));
+});
+
+test("resolveEffective: a variant command/url of null inherits the canonical field (does not override to null)", () => {
+  const spec = {
+    ...stdioSpec(),
+    variants: [{ label: "null-command", command: null, args: ["-y", "other"] }],
+  };
+  const inv = mcp.resolveEffective(spec, "claude", "global", "null-command");
+  assert.equal(inv.command, spec.command);
+  assert.deepEqual(inv.args, ["-y", "other"]);
+
+  const remoteSpec = {
+    ...stdioSpec(),
+    transport: "http",
+    url: "https://canonical.example/mcp",
+    variants: [{ label: "null-url", transport: "http", url: null }],
+  };
+  const remoteInv = mcp.resolveEffective(remoteSpec, "claude", "global", "null-url");
+  assert.equal(remoteInv.url, "https://canonical.example/mcp");
+});
+
 // --- Task 4: adapter table + parity guard --------------------------------
 
 const EXPECTED_ADAPTERS = [
@@ -385,3 +441,67 @@ if (process.platform !== "win32") {
     }
   });
 }
+
+// --- Task 6: mcpStatus ----------------------------------------------------
+
+test("mcpStatus marks active: true only for the target it was written into, false elsewhere", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "sw-status-home-"));
+  const appHome = path.join(home, ".skillworks");
+  const spec = stdioSpec();
+  await mcp.saveLibrary(appHome, [spec]);
+
+  const claude = mcp.adapterFor("claude");
+  const claudeGlobalPath = mcp.configPathFor(claude, "global", home);
+  await mcp.writeEntry(claudeGlobalPath, claude, spec.id, {
+    transport: "stdio",
+    command: spec.command,
+    args: spec.args,
+    env: spec.env,
+    headers: spec.headers,
+  });
+
+  const rows = await mcp.mcpStatus(appHome, home);
+  assert.equal(rows.length, mcp.adapters().length); // one row per adapter, global-only (no projectRoot)
+
+  const claudeRow = rows.find((r) => r.harness === "claude" && r.scope === "global");
+  assert.equal(claudeRow.serverId, spec.id);
+  assert.equal(claudeRow.configPath, claudeGlobalPath);
+  assert.equal(claudeRow.active, true);
+  assert.equal(claudeRow.trustNote, undefined); // trustNote only applies to project scope
+
+  for (const row of rows) {
+    if (row.harness !== "claude") {
+      assert.equal(row.active, false, row.harness);
+    }
+  }
+});
+
+test("mcpStatus adds project-scope rows with a trustNote for harnesses that require one, tolerating a malformed target", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "sw-status-home2-"));
+  const appHome = path.join(home, ".skillworks");
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), "sw-status-proj-"));
+  const spec = stdioSpec();
+  await mcp.saveLibrary(appHome, [spec]);
+
+  // Malformed project-scope Cursor config: mcpStatus must not throw for the
+  // whole survey, just mark this row with an error.
+  const cursor = mcp.adapterFor("cursor");
+  const cursorProjectPath = mcp.configPathFor(cursor, "project", home, project);
+  await fs.mkdir(path.dirname(cursorProjectPath), { recursive: true });
+  await fs.writeFile(cursorProjectPath, "{ not json");
+
+  const rows = await mcp.mcpStatus(appHome, home, project);
+  // adapters * (global + project) rows, one per library server.
+  assert.equal(rows.length, mcp.adapters().length * 2);
+
+  const claudeProjectRow = rows.find((r) => r.harness === "claude" && r.scope === "project");
+  assert.equal(claudeProjectRow.active, false);
+  assert.equal(claudeProjectRow.trustNote, "This harness requires first-run approval of project-scope MCP servers inside the tool.");
+
+  const cursorGlobalRow = rows.find((r) => r.harness === "cursor" && r.scope === "global");
+  assert.equal(cursorGlobalRow.trustNote, undefined); // cursor has no trust note
+
+  const cursorProjectRow = rows.find((r) => r.harness === "cursor" && r.scope === "project");
+  assert.equal(cursorProjectRow.active, false);
+  assert.ok(cursorProjectRow.error, "malformed cursor project config should report an error");
+});
