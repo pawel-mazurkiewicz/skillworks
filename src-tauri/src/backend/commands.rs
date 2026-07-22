@@ -2831,6 +2831,61 @@ pub async fn mcp_reconcile_dismiss_impl(
     save_dismissed(&app_home, &entries).await
 }
 
+/// Resolve a matched import candidate: activate the library server on the
+/// candidate's target and, when the on-disk key differs from the library id,
+/// remove the old key (activation wrote the entry under the library id).
+#[tauri::command]
+pub async fn mcp_reconcile_link(
+    id: String,
+    harness: String,
+    scope: String,
+    key: String,
+    project_path: Option<String>,
+) -> BackendResult<McpActivationResult> {
+    mcp_reconcile_link_impl(id, harness, scope, key, project_path, None, None).await
+}
+
+pub async fn mcp_reconcile_link_impl(
+    id: String,
+    harness: String,
+    scope: String,
+    key: String,
+    project_path: Option<String>,
+    app_home_override: Option<PathBuf>,
+    home_dir_override: Option<PathBuf>,
+) -> BackendResult<McpActivationResult> {
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let servers = load_library(&app_home).await?;
+    let spec = servers
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| BackendError::NotFound(format!("No library server with id {id:?}")))?;
+
+    let adapter = adapter_for(&harness)?;
+    let home_dir = resolve_home_dir(home_dir_override)?;
+    let project_root = resolve_project_root(project_path)?;
+    let path = config_path_for(adapter, &scope, &home_dir, project_root.as_deref())?;
+
+    let inv = resolve_effective(spec, &harness, &scope, None)?;
+    {
+        let _guard = MCP_LIBRARY_LOCK.lock().await;
+        write_entry(&path, adapter, &id, &inv).await?;
+        if key != id {
+            remove_entry(&path, adapter, &key).await?;
+        }
+    }
+
+    Ok(McpActivationResult {
+        server_id: id,
+        harness,
+        scope: scope.clone(),
+        config_path: path.to_string_lossy().into_owned(),
+        active: true,
+        trust_note: (adapter.project_trust_note && scope == "project")
+            .then(|| PROJECT_TRUST_NOTE.to_string()),
+    })
+}
+
 pub async fn mcp_reconcile_impl(
     project_path: Option<String>,
     app_home_override: Option<PathBuf>,
@@ -5185,6 +5240,106 @@ mod tests {
         let cand = out.imports.iter().find(|c| c.key == "srv").unwrap();
         assert_eq!(cand.found_in.len(), 1);
         assert_eq!(cand.found_in[0].harness, "cursor");
+    }
+
+    #[tokio::test]
+    async fn reconcile_link_rewrites_key_and_clears_candidate() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+
+        // Library server "unity-mcp"; on disk the same invocation sits under
+        // key "unityMCP" in kiro/global.
+        let spec = McpServerSpec {
+            id: "unity-mcp".into(),
+            name: "Unity MCP".into(),
+            description: None,
+            source: crate::backend::mcp::spec::McpSource {
+                kind: "manual".into(),
+                url: None,
+            },
+            transport: crate::backend::mcp::spec::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "unity-mcp".into()],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+            variants: vec![],
+        };
+        seed_library(&app_home, &[spec]).await;
+        tokio::fs::write(
+            home.join(".kiro/settings/mcp.json"),
+            r#"{"mcpServers":{"unityMCP":{"command":"npx","args":["-y","unity-mcp"]}}}"#,
+        )
+        .await
+        .unwrap();
+
+        let before = mcp_reconcile_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await
+            .unwrap();
+        let cand = before.imports.iter().find(|c| c.key == "unityMCP").unwrap();
+        assert_eq!(cand.matches_library_id.as_deref(), Some("unity-mcp"));
+
+        let result = mcp_reconcile_link_impl(
+            "unity-mcp".into(),
+            "kiro".into(),
+            "global".into(),
+            "unityMCP".into(),
+            None,
+            Some(app_home.clone()),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(result.active);
+
+        // Old key gone, library id present.
+        let raw = tokio::fs::read_to_string(home.join(".kiro/settings/mcp.json"))
+            .await
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let servers = doc.get("mcpServers").unwrap().as_object().unwrap();
+        assert!(servers.get("unityMCP").is_none());
+        assert!(servers.get("unity-mcp").is_some());
+
+        // Fully reconciled: no candidate, no drift.
+        let after = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        assert!(after.imports.is_empty(), "imports: {:?}", after.imports);
+        assert!(after.conflicts.is_empty(), "conflicts: {:?}", after.conflicts);
+    }
+
+    #[tokio::test]
+    async fn reconcile_link_same_key_is_plain_activate() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        seed_library(&app_home, &[test_spec("context7")]).await;
+        tokio::fs::write(home.join(".cursor/mcp.json"), r#"{"mcpServers":{}}"#)
+            .await
+            .unwrap();
+
+        mcp_reconcile_link_impl(
+            "context7".into(),
+            "cursor".into(),
+            "global".into(),
+            "context7".into(),
+            None,
+            Some(app_home),
+            Some(home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let raw = tokio::fs::read_to_string(home.join(".cursor/mcp.json"))
+            .await
+            .unwrap();
+        assert!(raw.contains("\"context7\""));
     }
 
     #[tokio::test]
