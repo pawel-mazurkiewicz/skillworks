@@ -187,17 +187,97 @@ test("resolveEffective: a variant command/url of null inherits the canonical fie
 
 // --- Task 4: adapter table + parity guard --------------------------------
 
-const EXPECTED_ADAPTERS = [
-  ["claude", "json", [".claude.json"], [".mcp.json"], ["mcpServers"], "separateArgs", "env", "claudeTypes", "url", true],
-  ["codex", "toml", [".codex", "config.toml"], [".codex", "config.toml"], ["mcp_servers"], "separateArgs", "env", "none", "url", true],
-  ["cursor", "json", [".cursor", "mcp.json"], [".cursor", "mcp.json"], ["mcpServers"], "separateArgs", "env", "none", "url", false],
-  ["opencode", "json", [".config", "opencode", "opencode.json"], ["opencode.json"], ["mcp"], "argvArray", "environment", "openCodeTypes", "url", false],
-  ["gemini", "json", [".gemini", "settings.json"], [".gemini", "settings.json"], ["mcpServers"], "separateArgs", "env", "none", "geminiSplit", false],
-  ["copilot", "json", [".copilot", "mcp-config.json"], [".mcp.json"], ["mcpServers"], "separateArgs", "env", "copilotTypes", "url", false],
-  ["kiro", "json", [".kiro", "settings", "mcp.json"], [".kiro", "settings", "mcp.json"], ["mcpServers"], "separateArgs", "env", "none", "url", false],
-];
+// Minor #1: parse the actual Rust source instead of comparing against a
+// hard-coded JS fixture, so drift that only touches adapters.rs fails this
+// test instead of staying green (a hard-coded fixture can drift in lockstep
+// with nothing but itself). This is a targeted regex parse of one specific
+// struct-literal array -- not a general Rust parser -- so it is inherently
+// a bit fragile to unrelated formatting changes in adapters.rs; that's an
+// accepted trade-off for actually reading the source of truth. If this ever
+// proves too brittle, the fallback is reverting to a hard-coded fixture PLUS
+// a harness_id-count-and-set check against the Rust file (see git history
+// for the previous version of this test).
+const RUST_FORMAT = { Json: "json", Toml: "toml" };
+const RUST_COMMAND_STYLE = { SeparateArgs: "separateArgs", ArgvArray: "argvArray" };
+const RUST_DISCRIMINATOR = {
+  None: "none",
+  ClaudeTypes: "claudeTypes",
+  OpenCodeTypes: "openCodeTypes",
+  CopilotTypes: "copilotTypes",
+};
+const RUST_REMOTE_URL_FIELD = { Url: "url", GeminiSplit: "geminiSplit" };
 
-test("adapter table matches the Rust table (lockstep parity)", () => {
+function quotedStrings(s) {
+  return [...s.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+}
+
+function requireMatch(re, text, label, harnessId) {
+  const m = re.exec(text);
+  if (!m) {
+    throw new Error(`adapters.rs parity parser: could not find ${label} for ${harnessId || "an entry"}`);
+  }
+  return m;
+}
+
+// Parses `static ADAPTERS: &[McpAdapter] = &[ ... ];` in adapters.rs into the
+// same tuple shape used for the JS side, translating Rust enum spellings
+// (e.g. `ConfigFormat::Json` -> `"json"`, `Discriminator::OpenCodeTypes` ->
+// `"openCodeTypes"`) to the JS ADAPTERS table's strings.
+function parseRustAdapters(rustSource) {
+  const staticMatch = rustSource.match(/static ADAPTERS: &\[McpAdapter\] = &\[([\s\S]*?)\n\];/);
+  if (!staticMatch) {
+    throw new Error("adapters.rs parity parser: could not find the `static ADAPTERS` array literal");
+  }
+  // No entry contains a literal `{`/`}` of its own (every field is a string,
+  // slice-of-strings, bool, or a `Enum::Variant` path), so a non-nesting
+  // brace match is sufficient to split entries.
+  const entries = [...staticMatch[1].matchAll(/McpAdapter\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  if (entries.length === 0) {
+    throw new Error("adapters.rs parity parser: found the ADAPTERS array but no McpAdapter { ... } entries in it");
+  }
+  return entries.map((body) => {
+    const harnessId = requireMatch(/harness_id:\s*"([^"]*)"/, body, "harness_id")[1];
+    const format = RUST_FORMAT[requireMatch(/format:\s*ConfigFormat::(\w+)/, body, "format", harnessId)[1]];
+    const globalPathParts = quotedStrings(
+      requireMatch(/global_path_parts:\s*&\[([^\]]*)\]/, body, "global_path_parts", harnessId)[1]
+    );
+    const projectPathParts = quotedStrings(
+      requireMatch(/project_path_parts:\s*&\[([^\]]*)\]/, body, "project_path_parts", harnessId)[1]
+    );
+    const keyPath = quotedStrings(requireMatch(/key_path:\s*&\[([^\]]*)\]/, body, "key_path", harnessId)[1]);
+    const commandStyle =
+      RUST_COMMAND_STYLE[requireMatch(/command_style:\s*CommandStyle::(\w+)/, body, "command_style", harnessId)[1]];
+    const envField = requireMatch(/env_field:\s*"([^"]*)"/, body, "env_field", harnessId)[1];
+    const discriminator =
+      RUST_DISCRIMINATOR[
+        requireMatch(/discriminator:\s*Discriminator::(\w+)/, body, "discriminator", harnessId)[1]
+      ];
+    const remoteUrlField =
+      RUST_REMOTE_URL_FIELD[
+        requireMatch(/remote_url_field:\s*RemoteUrlField::(\w+)/, body, "remote_url_field", harnessId)[1]
+      ];
+    const projectTrustNote =
+      requireMatch(/project_trust_note:\s*(true|false)/, body, "project_trust_note", harnessId)[1] === "true";
+    return [
+      harnessId,
+      format,
+      globalPathParts,
+      projectPathParts,
+      keyPath,
+      commandStyle,
+      envField,
+      discriminator,
+      remoteUrlField,
+      projectTrustNote,
+    ];
+  });
+}
+
+test("adapter table matches the Rust table (lockstep parity, parsed from adapters.rs)", async () => {
+  const rustPath = path.join(__dirname, "..", "src-tauri", "src", "backend", "mcp", "adapters.rs");
+  const rustSource = await fs.readFile(rustPath, "utf8");
+  const expected = parseRustAdapters(rustSource);
+
   const got = mcp.adapters().map((a) => [
     a.harnessId,
     a.format,
@@ -210,7 +290,13 @@ test("adapter table matches the Rust table (lockstep parity)", () => {
     a.remoteUrlField,
     a.projectTrustNote,
   ]);
-  assert.deepEqual(got, EXPECTED_ADAPTERS);
+
+  assert.deepEqual(
+    got.map((row) => row[0]),
+    expected.map((row) => row[0]),
+    "harness_id order/set differs between src/mcp-core.js ADAPTERS and src-tauri/.../adapters.rs"
+  );
+  assert.deepEqual(got, expected, "JS ADAPTERS table has drifted from the Rust adapters.rs source of truth");
 });
 
 test("adapterFor rejects unknown harnesses (hard) and tolerates soft lookups", () => {
