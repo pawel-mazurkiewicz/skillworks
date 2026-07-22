@@ -51,6 +51,8 @@ pub fn run() {
             backend::commands::mcp_status,
             backend::commands::mcp_discover,
             backend::commands::mcp_reconcile,
+            backend::commands::mcp_reconcile_dismiss,
+            backend::commands::mcp_reconcile_link,
             backend::commands::mcp_add_from_url,
         ])
         .run(tauri::generate_context!())

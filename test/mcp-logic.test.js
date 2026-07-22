@@ -57,10 +57,10 @@ test("slugifyId mirrors the Rust slugify (lowercase, collapse, trim, ascii-only)
   assert.equal(slugifyId("Already-Slugified"), "already-slugified");
 });
 
-test("buildMcpRoutes contains all 10 MCP-servers-tab routes", async () => {
+test("buildMcpRoutes contains all 12 MCP-servers-tab routes", async () => {
   const { buildMcpRoutes } = await loadLogic();
   const routes = buildMcpRoutes();
-  assert.equal(routes.length, 10);
+  assert.equal(routes.length, 12);
   const commands = routes.map((r) => r[2]).sort();
   assert.deepEqual(commands, [
     "mcp_activate",
@@ -70,6 +70,8 @@ test("buildMcpRoutes contains all 10 MCP-servers-tab routes", async () => {
     "mcp_discover",
     "mcp_list_library",
     "mcp_reconcile",
+    "mcp_reconcile_dismiss",
+    "mcp_reconcile_link",
     "mcp_remove_server",
     "mcp_status",
     "mcp_update_server",
@@ -473,6 +475,35 @@ test("foundInSummary lists harness/scope pairs", async () => {
   assert.match(s, /cursor|Cursor/);
 });
 
+test("foundInSummary prettifies plugin pseudo-scope", async () => {
+  const { foundInSummary } = await loadLogic();
+  assert.equal(
+    foundInSummary([{ harness: "claude", scope: "plugin:atlassian" }]),
+    "Claude Code / plugin: atlassian"
+  );
+});
+
+test("buildMcpRoutes exposes reconcile link and dismiss routes", async () => {
+  const { buildMcpRoutes } = await loadLogic();
+  const routes = buildMcpRoutes();
+  const link = routes.find(([, , cmd]) => cmd === "mcp_reconcile_link");
+  const dismiss = routes.find(([, , cmd]) => cmd === "mcp_reconcile_dismiss");
+  assert.ok(link && link[0] === "POST" && link[1].test("/api/mcp/servers/reconcile/link"));
+  assert.ok(dismiss && dismiss[0] === "POST" && dismiss[1].test("/api/mcp/servers/reconcile/dismiss"));
+  assert.deepEqual(
+    link[3](new URL("http://x/api/mcp/servers/reconcile/link"), {
+      id: "unity-mcp", harness: "kiro", scope: "global", key: "unityMCP", projectPath: "/p",
+    }),
+    { id: "unity-mcp", harness: "kiro", scope: "global", key: "unityMCP", projectPath: "/p" }
+  );
+  assert.deepEqual(
+    dismiss[3](new URL("http://x/api/mcp/servers/reconcile/dismiss"), {
+      key: "srv", fingerprint: "fp", targets: [{ harness: "kiro", scope: "global" }],
+    }),
+    { key: "srv", fingerprint: "fp", targets: [{ harness: "kiro", scope: "global" }] }
+  );
+});
+
 test("formatDiffValue renders empty/undefined as an explicit dash", async () => {
   const { formatDiffValue } = await loadLogic();
   assert.equal(formatDiffValue(undefined), "—");
@@ -487,4 +518,82 @@ test("splitReconcile tolerates missing fields", async () => {
   const r2 = splitReconcile({ imports: [{ key: "x" }] });
   assert.equal(r2.imports.length, 1);
   assert.deepEqual(r2.conflicts, []);
+});
+
+test("uniqueVariantLabel suffixes on collision", async () => {
+  const { uniqueVariantLabel } = await loadLogic();
+  assert.equal(uniqueVariantLabel("kiro (global)", []), "kiro (global)");
+  assert.equal(
+    uniqueVariantLabel("kiro (global)", [{ label: "kiro (global)" }]),
+    "kiro (global) (2)"
+  );
+  assert.equal(
+    uniqueVariantLabel("kiro (global)", [{ label: "kiro (global)" }, { label: "kiro (global) (2)" }]),
+    "kiro (global) (3)"
+  );
+});
+
+test("variantFromConflict adds a scoped variant with only drifted groups", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = {
+    id: "ctx", transport: "stdio", command: "npx",
+    args: ["-y", "pkg"], env: { A: "1" }, headers: {}, variants: [],
+  };
+  const conflict = {
+    serverId: "ctx", harness: "kiro", scope: "global", adoptable: true,
+    diff: [
+      { field: "args", expected: "-y pkg", observed: "-y pkg --flag" },
+      { field: "env.B", observed: "2" },
+    ],
+    observedSpec: {
+      ...server, args: ["-y", "pkg", "--flag"], env: { A: "1", B: "2" },
+    },
+  };
+  const out = variantFromConflict(conflict, server);
+  assert.equal(out.action, "add");
+  assert.equal(out.variants.length, 1);
+  const v = out.variants[0];
+  assert.equal(v.label, "kiro (global)");
+  assert.deepEqual(v.appliesTo, { harness: "kiro", scope: "global" });
+  assert.deepEqual(v.args, ["-y", "pkg", "--flag"]);
+  assert.deepEqual(v.env, { A: "1", B: "2" });
+  assert.equal(v.command, undefined);
+  assert.equal(v.transport, undefined);
+});
+
+test("variantFromConflict updates the controlling variant in place", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = {
+    id: "ctx", transport: "stdio", command: "npx",
+    args: ["-y", "pkg"], env: {}, headers: {},
+    variants: [
+      { label: "kiro tweak", appliesTo: { harness: "kiro" }, args: ["-y", "pkg", "--old"] },
+      { label: "other", appliesTo: { harness: "cursor" } },
+    ],
+  };
+  const conflict = {
+    serverId: "ctx", harness: "kiro", scope: "global", adoptable: false,
+    variantLabel: "kiro tweak",
+    diff: [{ field: "args", expected: "-y pkg --old", observed: "-y pkg --new" }],
+    observedSpec: { ...server, args: ["-y", "pkg", "--new"] },
+  };
+  const out = variantFromConflict(conflict, server);
+  assert.equal(out.action, "update");
+  assert.equal(out.label, "kiro tweak");
+  assert.equal(out.variants.length, 2);
+  const updated = out.variants.find((v) => v.label === "kiro tweak");
+  assert.deepEqual(updated.args, ["-y", "pkg", "--new"]);
+  // Untouched override fields and appliesTo survive.
+  assert.deepEqual(updated.appliesTo, { harness: "kiro" });
+});
+
+test("variantFromConflict returns null when nothing is modelable", async () => {
+  const { variantFromConflict } = await loadLogic();
+  const server = { id: "ctx", transport: "stdio", command: "npx", args: [], env: {}, headers: {}, variants: [] };
+  const conflict = {
+    serverId: "ctx", harness: "opencode", scope: "global", adoptable: true,
+    diff: [{ field: "enabled", expected: "true", observed: "false" }],
+    observedSpec: server,
+  };
+  assert.equal(variantFromConflict(conflict, server), null);
 });

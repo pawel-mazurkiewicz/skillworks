@@ -5,6 +5,7 @@
 
 pub mod spec;
 pub mod adapters;
+pub mod dismissed;
 pub mod engine;
 pub mod net;
 pub mod parse;

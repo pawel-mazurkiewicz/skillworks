@@ -33,6 +33,7 @@ import {
   splitReconcile,
   foundInSummary,
   formatDiffValue,
+  variantFromConflict,
 } from "./mcp-logic.js";
 
 const VARIANT_FIELD_LABELS = {
@@ -88,6 +89,36 @@ function newAddCard(spec, evidence) {
     errorKind: null,
     added: false,
   };
+}
+
+const ADDED_CARD_LINGER_MS = 2500;
+const ADDED_CARD_FADE_MS = 280;
+const HIGHLIGHT_MS = 1200;
+
+function removeAddCard(cardKey) {
+  const before = state.add.cards.length;
+  state.add.cards = state.add.cards.filter((c) => c.key !== cardKey);
+  if (state.add.cards.length !== before) renderAdd();
+}
+
+// Post-add cards have no buttons (renderDraftCard hides the row once
+// card.added is set), so this timer is their only removal path.
+function scheduleAddedCardRemoval(cardKey) {
+  window.setTimeout(() => {
+    const card = state.add.cards.find((c) => c.key === cardKey);
+    if (!card) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      removeAddCard(cardKey);
+      return;
+    }
+    // Toggle the class on the live node — a full renderAdd() would recreate
+    // the article already at opacity 0 and the transition would never run.
+    card.leaving = true; // keeps the class through any unrelated mid-fade re-render
+    const el = els.add && els.add.querySelector(`[data-mcp-card="${cssAttrEscape(cardKey)}"]`);
+    if (el) el.classList.add("is-leaving");
+    window.setTimeout(() => removeAddCard(cardKey), ADDED_CARD_FADE_MS);
+  }, ADDED_CARD_LINGER_MS);
 }
 
 function blankManualSpec() {
@@ -1158,7 +1189,7 @@ function renderDraftCard(card) {
     ? card.errorKind === "validation"
     : Boolean(card.error) && /already exists/i.test(card.error);
   return `
-    <article class="mcp-servers-draft-card" data-mcp-card="${card.key}">
+    <article class="mcp-servers-draft-card${card.leaving ? " is-leaving" : ""}" data-mcp-card="${card.key}">
       ${card.added ? `<p class="mcp-servers-card-added">Added to your library.</p>` : ""}
       ${card.error ? `<p class="mcp-servers-card-error" role="alert">${escapeHtml(card.error)}</p>` : ""}
       <div class="field-stack">
@@ -1300,6 +1331,7 @@ async function handleAddCard(card) {
     const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
     state.servers = servers;
     card.added = true;
+    scheduleAddedCardRemoval(card.key);
     fireToastLocal(`Added ${card.spec.name || card.spec.id} to your library.`);
     await refreshAll();
   } catch (err) {
@@ -1328,19 +1360,30 @@ function libraryServerName(id) {
 
 function renderImportCandidate(candidate, index) {
   const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
-  const matchHint = candidate.matchesLibraryId
+  const matched = Boolean(candidate.matchesLibraryId);
+  const matchHint = matched
     ? `<p class="mcp-servers-hint">Looks like <strong>${escapeHtml(libraryServerName(candidate.matchesLibraryId))}</strong>, already in your library.</p>`
     : "";
+  const managedNote = candidate.managedNote
+    ? `<p class="mcp-servers-trust-note">${escapeHtml(candidate.managedNote)}</p>`
+    : "";
+  const linkPending = state.reconcilePending.has(`link:${index}`);
+  const dismissPending = state.reconcilePending.has(`dismiss:${index}`);
+  const primary = matched
+    ? `<button type="button" class="button primary" data-mcp-link="${index}" ${linkPending ? "disabled" : ""}>${linkPending ? "Linking…" : `Link to ${escapeHtml(libraryServerName(candidate.matchesLibraryId))}`}</button>`
+    : `<button type="button" class="button primary" data-mcp-import="${index}">Import</button>`;
   return `
     <li class="mcp-servers-reconcile-row" data-mcp-import-row="${index}">
       <div class="mcp-servers-reconcile-row-main">
         <span class="mcp-servers-reconcile-key">${escapeHtml(candidate.key)}</span>
         <p class="mcp-servers-hint">Found in: ${escapeHtml(foundInSummary(candidate.foundIn))}</p>
         ${matchHint}
+        ${managedNote}
         ${warnings.length ? `<ul class="mcp-servers-add-warnings">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
       </div>
       <div class="button-row">
-        <button type="button" class="button primary" data-mcp-import="${index}">Import</button>
+        ${primary}
+        <button type="button" class="button ghost" data-mcp-dismiss-candidate="${index}" ${dismissPending ? "disabled" : ""}>${dismissPending ? "Dismissing…" : "Dismiss"}</button>
       </div>
     </li>`;
 }
@@ -1385,6 +1428,15 @@ function renderConflictEntry(conflict, index) {
         )}" — edit that variant to change it.</p>`
       : "";
 
+  const server = state.servers.find((s) => s.id === conflict.serverId);
+  const variantPlan = server ? variantFromConflict(conflict, server) : null;
+  const variantPending = state.reconcilePending.has(`variant:${index}`);
+  const variantBtnLabel = variantPending
+    ? "Saving variant…"
+    : conflict.adoptable === false && conflict.variantLabel
+      ? `Update variant "${escapeHtml(conflict.variantLabel)}"`
+      : "Add as variant";
+
   return `
     <li class="mcp-servers-reconcile-row" data-mcp-conflict-row="${index}">
       <div class="mcp-servers-reconcile-row-main">
@@ -1404,6 +1456,7 @@ function renderConflictEntry(conflict, index) {
       <div class="button-row">
         <button type="button" class="button" data-mcp-reapply="${index}" ${reapplyPending ? "disabled" : ""}>${reapplyPending ? "Reapplying…" : "Reapply library"}</button>
         <button type="button" class="button ghost" data-mcp-adopt="${index}" ${adoptPending || !adoptable ? "disabled" : ""}>${adoptPending ? "Adopting…" : "Adopt into library"}</button>
+        <button type="button" class="button ghost" data-mcp-adopt-variant="${index}" ${variantPending || !variantPlan ? "disabled" : ""}>${variantBtnLabel}</button>
       </div>
     </li>`;
 }
@@ -1454,8 +1507,76 @@ function renderReconcile() {
 function handleImportCandidate(index) {
   const candidate = state.imports[index];
   if (!candidate) return;
-  state.add.cards.push(newAddCard(candidate.suggestedSpec, []));
+  const card = newAddCard(candidate.suggestedSpec, []);
+  state.add.cards.push(card);
   renderAdd();
+  // The add panel sits above the reconcile panel — without moving the
+  // viewport the click looks like a no-op.
+  requestAnimationFrame(() => {
+    const el = els.add && els.add.querySelector(`[data-mcp-card="${cssAttrEscape(card.key)}"]`);
+    if (!el) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    el.classList.add("is-highlighted");
+    window.setTimeout(() => el.classList.remove("is-highlighted"), HIGHLIGHT_MS);
+  });
+}
+
+async function handleReconcileLink(index) {
+  const candidate = state.imports[index];
+  if (!candidate || !candidate.matchesLibraryId) return;
+  const id = candidate.matchesLibraryId;
+  const name = libraryServerName(id);
+  const pendingKey = `link:${index}`;
+  state.reconcilePending.add(pendingKey);
+  renderReconcile();
+  try {
+    // Link every target the candidate was found in. Sequential on purpose:
+    // parallel writes to different harness configs are safe, but keeping it
+    // simple avoids interleaved error toasts.
+    for (const target of candidate.foundIn || []) {
+      await api("/api/mcp/servers/reconcile/link", {
+        method: "POST",
+        body: {
+          id,
+          harness: target.harness,
+          scope: target.scope,
+          key: candidate.key,
+          projectPath: target.scope === "project" ? projectPath() : undefined,
+        },
+      });
+    }
+    fireToastLocal(`Linked ${candidate.key} to ${name}.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile link failed", err);
+  } finally {
+    state.reconcilePending.delete(pendingKey);
+    await refreshAll();
+  }
+}
+
+async function handleReconcileDismiss(index) {
+  const candidate = state.imports[index];
+  if (!candidate) return;
+  const pendingKey = `dismiss:${index}`;
+  state.reconcilePending.add(pendingKey);
+  renderReconcile();
+  try {
+    await api("/api/mcp/servers/reconcile/dismiss", {
+      method: "POST",
+      body: {
+        key: candidate.key,
+        fingerprint: candidate.fingerprint,
+        targets: (candidate.foundIn || []).map((t) => ({ harness: t.harness, scope: t.scope })),
+      },
+    });
+    fireToastLocal(`Dismissed ${candidate.key}. It'll come back if its config changes.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile dismiss failed", err);
+  } finally {
+    state.reconcilePending.delete(pendingKey);
+    await refreshAll();
+  }
 }
 
 async function handleReconcileReapply(index) {
@@ -1517,6 +1638,42 @@ async function handleReconcileAdopt(index) {
     fireToastLocal(`Adopted ${name} into your library.`);
   } catch (err) {
     console.error("[mcp-servers] reconcile adopt failed", err);
+  } finally {
+    state.reconcilePending.delete(key);
+    await refreshAll();
+  }
+}
+
+async function handleReconcileAdoptVariant(index) {
+  const conflict = state.conflicts[index];
+  if (!conflict) return;
+  const server = state.servers.find((s) => s.id === conflict.serverId);
+  if (!server) return;
+  const plan = variantFromConflict(conflict, server);
+  if (!plan) return;
+  if (
+    plan.action === "update" &&
+    !window.confirm(
+      `Update variant "${plan.label}" with the on-disk values for ${libraryServerName(conflict.serverId)}?`
+    )
+  ) {
+    return;
+  }
+  const key = `variant:${index}`;
+  state.reconcilePending.add(key);
+  renderReconcile();
+  try {
+    const spec = specWithVariants(server, plan.variants);
+    const response = await api("/api/mcp/servers", { method: "PATCH", body: { spec } });
+    const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
+    state.servers = servers;
+    fireToastLocal(
+      plan.action === "update"
+        ? `Updated variant "${plan.label}".`
+        : `Added variant "${plan.label}" to ${libraryServerName(conflict.serverId)}.`
+    );
+  } catch (err) {
+    console.error("[mcp-servers] adopt-as-variant failed", err);
   } finally {
     state.reconcilePending.delete(key);
     await refreshAll();
@@ -1586,6 +1743,16 @@ if (els.discovered) {
       handleImportCandidate(Number(importBtn.dataset.mcpImport));
       return;
     }
+    const linkBtn = event.target.closest("[data-mcp-link]");
+    if (linkBtn) {
+      handleReconcileLink(Number(linkBtn.dataset.mcpLink));
+      return;
+    }
+    const dismissCandidateBtn = event.target.closest("[data-mcp-dismiss-candidate]");
+    if (dismissCandidateBtn) {
+      handleReconcileDismiss(Number(dismissCandidateBtn.dataset.mcpDismissCandidate));
+      return;
+    }
     const reapplyBtn = event.target.closest("[data-mcp-reapply]");
     if (reapplyBtn) {
       handleReconcileReapply(Number(reapplyBtn.dataset.mcpReapply));
@@ -1594,6 +1761,11 @@ if (els.discovered) {
     const adoptBtn = event.target.closest("[data-mcp-adopt]");
     if (adoptBtn) {
       handleReconcileAdopt(Number(adoptBtn.dataset.mcpAdopt));
+      return;
+    }
+    const adoptVariantBtn = event.target.closest("[data-mcp-adopt-variant]");
+    if (adoptVariantBtn) {
+      handleReconcileAdoptVariant(Number(adoptVariantBtn.dataset.mcpAdoptVariant));
     }
   });
 }
