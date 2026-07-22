@@ -313,10 +313,17 @@ async fn build_plan_for_root(
 /// Execute the install for `repo_url`. Returns the `(imported, skipped,
 /// install_root, candidates)` so the caller can hand off to
 /// `enable_imported_skills`.
+///
+/// `selected_source_keys`: `None` installs every candidate found in the
+/// repo; `Some(keys)` installs only the candidates whose source key (path
+/// relative to the install root — the preview plan's `sourceKey`) is in the
+/// list. An empty list or an unknown key is a validation error and nothing
+/// is moved.
 pub async fn install_from_git(
     repo_url: &str,
     git_ref: Option<&str>,
     vault_root: &Path,
+    selected_source_keys: Option<&[String]>,
 ) -> BackendResult<(
     Vec<super::types::ImportedSkill>,
     Vec<super::types::ImportSkipped>,
@@ -327,11 +334,60 @@ pub async fn install_from_git(
     let (temp, install_root) = clone_repo(&source)?;
     // Snapshot candidates BEFORE the import (their `entry_path` lives under
     // the temp clone dir; once moved into the vault the relative path map
-    // would no longer resolve). The import itself walks the same root.
+    // would no longer resolve).
     let candidates = find_import_candidates(&install_root).await?;
-    let (imported, skipped) = import_source(vault_root, &install_root, true).await?;
+
+    let (imported, skipped) = match selected_source_keys {
+        None => import_source(vault_root, &install_root, true).await?,
+        Some(keys) => {
+            if keys.is_empty() {
+                return Err(BackendError::Validation(
+                    "No skills selected".to_string(),
+                ));
+            }
+            let available: HashSet<String> = candidates
+                .iter()
+                .map(|c| source_key_for(c, &install_root))
+                .collect();
+            for key in keys {
+                if !available.contains(key) {
+                    return Err(BackendError::Validation(format!(
+                        "Selected skill not found in repository: {key} (re-run the preview)"
+                    )));
+                }
+            }
+            let selected: HashSet<&str> = keys.iter().map(String::as_str).collect();
+            let mut imported = Vec::new();
+            let mut skipped = Vec::new();
+            for candidate in &candidates {
+                if !selected.contains(source_key_for(candidate, &install_root).as_str()) {
+                    continue;
+                }
+                // Importing the candidate's own directory finds exactly that
+                // one skill (the walker stops at the first SKILL.md), so the
+                // vault collision/dedupe logic runs per selected skill.
+                let (mut i, mut s) =
+                    import_source(vault_root, &candidate.entry_path, true).await?;
+                imported.append(&mut i);
+                skipped.append(&mut s);
+            }
+            (imported, skipped)
+        }
+    };
     drop(temp);
     Ok((imported, skipped, install_root, candidates))
+}
+
+/// Candidate path relative to the install root — the same `sourceKey` the
+/// preview plan exposes and `commands.rs::candidate_source_key` computes
+/// from `ImportedSkill.from`.
+pub fn source_key_for(candidate: &ImportCandidate, install_root: &Path) -> String {
+    candidate
+        .entry_path
+        .strip_prefix(install_root)
+        .unwrap_or(&candidate.entry_path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn short_hash(path: &Path) -> String {
@@ -471,7 +527,7 @@ mod tests {
         std::fs::create_dir_all(&vault_root).unwrap();
 
         let (imported, skipped, _install_root, candidates) =
-            install_from_git(&url_for_path(&bare), None, &vault_root)
+            install_from_git(&url_for_path(&bare), None, &vault_root, None)
                 .await
                 .expect("install");
         assert_eq!(imported.len(), 1);
@@ -479,5 +535,134 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         // Vault has the skill now.
         assert!(vault_root.join("swiftui").join("SKILL.md").is_file());
+    }
+
+    #[tokio::test]
+    async fn install_from_git_with_selection_installs_only_selected() {
+        let dir = TempDir::new().unwrap();
+        let working = dir.path().join("work");
+        let bare = dir.path().join("bare.git");
+        build_fixture_repo(
+            &working,
+            &[
+                (
+                    "skills/rust/SKILL.md",
+                    "---\nname: Rust\ndescription: x\n---\n\nbody\n",
+                ),
+                (
+                    "skills/apollo/SKILL.md",
+                    "---\nname: Apollo\ndescription: y\n---\n\nbody\n",
+                ),
+            ],
+        );
+        clone_to_bare(&working, &bare);
+
+        let vault_root = dir.path().join("vault");
+        std::fs::create_dir_all(&vault_root).unwrap();
+
+        let selection = vec!["skills/rust".to_string()];
+        let (imported, skipped, _install_root, candidates) = install_from_git(
+            &url_for_path(&bare),
+            None,
+            &vault_root,
+            Some(&selection),
+        )
+        .await
+        .expect("install");
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].name, "Rust");
+        assert!(skipped.is_empty());
+        // The candidate snapshot still reports the full repo so the caller
+        // can map source keys for every skill it saw.
+        assert_eq!(candidates.len(), 2);
+        assert!(vault_root.join("rust").join("SKILL.md").is_file());
+        assert!(!vault_root.join("apollo").exists());
+    }
+
+    #[tokio::test]
+    async fn install_from_git_with_unknown_selected_key_errors() {
+        let dir = TempDir::new().unwrap();
+        let working = dir.path().join("work");
+        let bare = dir.path().join("bare.git");
+        build_fixture_repo(
+            &working,
+            &[(
+                "skills/rust/SKILL.md",
+                "---\nname: Rust\ndescription: x\n---\n\nbody\n",
+            )],
+        );
+        clone_to_bare(&working, &bare);
+
+        let vault_root = dir.path().join("vault");
+        std::fs::create_dir_all(&vault_root).unwrap();
+
+        let selection = vec!["skills/nope".to_string()];
+        let err = install_from_git(&url_for_path(&bare), None, &vault_root, Some(&selection))
+            .await
+            .unwrap_err();
+        match err {
+            BackendError::Validation(msg) => assert!(msg.contains("skills/nope")),
+            other => panic!("expected validation error, got {other:?}"),
+        }
+        // Nothing was moved into the vault.
+        assert!(std::fs::read_dir(&vault_root).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
+    async fn install_from_git_with_empty_selection_errors() {
+        let dir = TempDir::new().unwrap();
+        let working = dir.path().join("work");
+        let bare = dir.path().join("bare.git");
+        build_fixture_repo(
+            &working,
+            &[(
+                "skills/rust/SKILL.md",
+                "---\nname: Rust\ndescription: x\n---\n\nbody\n",
+            )],
+        );
+        clone_to_bare(&working, &bare);
+
+        let vault_root = dir.path().join("vault");
+        std::fs::create_dir_all(&vault_root).unwrap();
+
+        let selection: Vec<String> = vec![];
+        let err = install_from_git(&url_for_path(&bare), None, &vault_root, Some(&selection))
+            .await
+            .unwrap_err();
+        match err {
+            BackendError::Validation(msg) => assert!(msg.contains("No skills selected")),
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn install_from_git_selected_duplicate_still_dedupes() {
+        let dir = TempDir::new().unwrap();
+        let working = dir.path().join("work");
+        let bare = dir.path().join("bare.git");
+        let body = "---\nname: Rust\ndescription: x\n---\n\nbody\n";
+        build_fixture_repo(&working, &[("skills/rust/SKILL.md", body)]);
+        clone_to_bare(&working, &bare);
+
+        // Pre-seed the vault with an identical skill so the import dedupes.
+        let vault_root = dir.path().join("vault");
+        std::fs::create_dir_all(vault_root.join("existing-rust")).unwrap();
+        std::fs::write(vault_root.join("existing-rust").join("SKILL.md"), body).unwrap();
+
+        let selection = vec!["skills/rust".to_string()];
+        let (imported, _skipped, _root, _candidates) = install_from_git(
+            &url_for_path(&bare),
+            None,
+            &vault_root,
+            Some(&selection),
+        )
+        .await
+        .expect("install");
+
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].deduped);
+        // No second copy was created.
+        assert!(!vault_root.join("rust").exists());
     }
 }

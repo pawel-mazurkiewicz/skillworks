@@ -1343,7 +1343,7 @@ pub async fn install_from_git_impl(
     }
 
     let (imported, skipped, install_root, candidates) =
-        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root).await?;
+        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root, None).await?;
 
     // Refresh skill discovery so we can map vault destinations back to
     // skill records when enabling them on targets.
