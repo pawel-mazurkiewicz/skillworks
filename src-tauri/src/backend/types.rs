@@ -782,6 +782,59 @@ pub struct DiscoveredMcpEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReconcileTargetRef {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportCandidate {
+    pub key: String,
+    pub suggested_spec: super::mcp::spec::McpServerSpec,
+    pub found_in: Vec<ReconcileTargetRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches_library_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDriftEntry {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub diff: Vec<super::mcp::reconcile::FieldDiff>,
+    /// The library spec with its drifted fields replaced by what is on disk —
+    /// ready for the "adopt config → update library" PATCH. Only meaningful when
+    /// `adoptable` is true.
+    pub observed_spec: super::mcp::spec::McpServerSpec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+    /// Label of the variant controlling this target's effective invocation, if
+    /// any. When set, the drift is against the variant — not the canonical
+    /// fields — so a canonical adopt would be wrong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_label: Option<String>,
+    /// False when a variant controls this target: the UI disables "Adopt into
+    /// library" and points the user at the variant instead.
+    pub adoptable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpReconcileResponse {
+    pub imports: Vec<McpImportCandidate>,
+    pub conflicts: Vec<McpDriftEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpLibraryResponse {
     pub servers: Vec<super::mcp::spec::McpServerSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -807,4 +860,3 @@ pub struct McpUrlParseResponse {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
-

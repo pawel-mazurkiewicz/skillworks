@@ -1,6 +1,7 @@
 //! Generic MCP config engine: canonical invocation → harness dialect, plus
 //! (Task 4/5) file-level read/insert/remove for JSON and TOML configs.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{json, Value};
@@ -10,6 +11,223 @@ use super::super::fs_atomic::{backup_existing, write_bytes_atomic, write_json_at
 use super::super::state::{BackendError, BackendResult};
 use super::adapters::{CommandStyle, ConfigFormat, Discriminator, McpAdapter, RemoteUrlField};
 use super::spec::{EffectiveInvocation, McpTransport};
+
+/// The canonical invocation observed in an on-disk config entry — the inverse
+/// of `render_entry_*`. `unmapped` records keys we do not model (timeout,
+/// disabled, autoApprove, …) so callers can surface them without losing them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObservedInvocation {
+    pub transport: McpTransport,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub url: Option<String>,
+    pub headers: BTreeMap<String, String>,
+    /// OpenCode's renderer-owned `enabled` discriminant. `Some` only for the
+    /// opencode dialect (a missing key on disk means enabled → `Some(true)`);
+    /// `None` for every other harness so it never contributes to drift there.
+    pub enabled: Option<bool>,
+    /// Copilot's renderer-owned `tools` allow-list. `Some` only for the copilot
+    /// dialect (a missing key on disk defaults to `["*"]`); `None` elsewhere.
+    pub tools: Option<Vec<String>>,
+    pub unmapped: Vec<String>,
+}
+
+fn json_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if let Some(Value::Object(map)) = value {
+        for (k, v) in map {
+            let s = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            out.insert(k.clone(), s);
+        }
+    }
+    out
+}
+
+fn json_string_vec(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn infer_transport(
+    command: &Option<String>,
+    adapter: &McpAdapter,
+    obj: &serde_json::Map<String, Value>,
+) -> McpTransport {
+    if command.is_some() {
+        return McpTransport::Stdio;
+    }
+    if adapter.remote_url_field == RemoteUrlField::GeminiSplit {
+        if obj.contains_key("httpUrl") {
+            return McpTransport::Http;
+        }
+        if obj.contains_key("url") {
+            return McpTransport::Sse;
+        }
+    }
+    McpTransport::Http
+}
+
+/// Deterministic inverse of `render_entry_*`. `value` is an entry as produced
+/// by `read_entries` (TOML is already normalized to JSON there, and via
+/// `render_entry_value` here), so a single JSON-shaped parser covers both
+/// formats.
+pub fn parse_entry(adapter: &McpAdapter, value: &Value) -> BackendResult<ObservedInvocation> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| BackendError::Validation("MCP config entry is not an object".into()))?;
+
+    let headers_key = if adapter.format == ConfigFormat::Toml {
+        "http_headers"
+    } else {
+        "headers"
+    };
+    let env_key = adapter.env_field;
+
+    let mut consumed: Vec<&str> = vec!["type", "enabled", env_key, headers_key];
+    if adapter.harness_id == "copilot" {
+        consumed.push("tools");
+    }
+
+    let mut command: Option<String> = None;
+    let mut args: Vec<String> = Vec::new();
+    match adapter.command_style {
+        CommandStyle::SeparateArgs => {
+            if let Some(Value::String(c)) = obj.get("command") {
+                command = Some(c.clone());
+            }
+            args = json_string_vec(obj.get("args"));
+            consumed.push("command");
+            consumed.push("args");
+        }
+        CommandStyle::ArgvArray => {
+            match obj.get("command") {
+                Some(Value::Array(_)) => {
+                    let all = json_string_vec(obj.get("command"));
+                    let mut it = all.into_iter();
+                    command = it.next();
+                    args = it.collect();
+                }
+                Some(Value::String(c)) => command = Some(c.clone()),
+                _ => {}
+            }
+            consumed.push("command");
+        }
+    }
+
+    let env = json_string_map(obj.get(env_key));
+    let headers = json_string_map(obj.get(headers_key));
+
+    let url: Option<String> = match adapter.remote_url_field {
+        RemoteUrlField::GeminiSplit => {
+            consumed.push("httpUrl");
+            consumed.push("url");
+            obj.get("httpUrl")
+                .or_else(|| obj.get("url"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        }
+        RemoteUrlField::Url => {
+            consumed.push("url");
+            obj.get("url").and_then(|v| v.as_str()).map(str::to_string)
+        }
+    };
+
+    let type_str = obj.get("type").and_then(|v| v.as_str());
+    let transport = match adapter.discriminator {
+        Discriminator::ClaudeTypes => match type_str {
+            Some("http") => McpTransport::Http,
+            Some("sse") => McpTransport::Sse,
+            Some("stdio") => McpTransport::Stdio,
+            _ => infer_transport(&command, adapter, obj),
+        },
+        Discriminator::OpenCodeTypes => match type_str {
+            Some("remote") => McpTransport::Http,
+            Some("local") => McpTransport::Stdio,
+            _ => infer_transport(&command, adapter, obj),
+        },
+        Discriminator::CopilotTypes => match type_str {
+            Some("http") => McpTransport::Http,
+            Some("sse") => McpTransport::Sse,
+            Some("local") => McpTransport::Stdio,
+            _ => infer_transport(&command, adapter, obj),
+        },
+        Discriminator::None => infer_transport(&command, adapter, obj),
+    };
+
+    match transport {
+        McpTransport::Stdio if command.as_deref().unwrap_or("").is_empty() => {
+            return Err(BackendError::Validation(
+                "stdio config entry has no command".into(),
+            ));
+        }
+        McpTransport::Http | McpTransport::Sse if url.as_deref().unwrap_or("").is_empty() => {
+            return Err(BackendError::Validation(
+                "remote config entry has no url".into(),
+            ));
+        }
+        _ => {}
+    }
+
+    let unmapped: Vec<String> = obj
+        .keys()
+        .filter(|k| !consumed.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    // Renderer-owned discriminant fields are significant: surfacing a divergence
+    // is how the user learns their on-disk `enabled`/`tools` no longer match the
+    // library's rendered form. A missing key maps to the harness default so the
+    // common (key-absent) case doesn't read as false drift.
+    let enabled = if adapter.discriminator == Discriminator::OpenCodeTypes {
+        Some(obj.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+    } else {
+        None
+    };
+    let tools = if adapter.harness_id == "copilot" {
+        Some(
+            obj.get("tools")
+                .map(|v| json_string_vec(Some(v)))
+                .unwrap_or_else(|| vec!["*".to_string()]),
+        )
+    } else {
+        None
+    };
+
+    Ok(ObservedInvocation {
+        transport,
+        command,
+        args,
+        env,
+        url,
+        headers,
+        enabled,
+        tools,
+        unmapped,
+    })
+}
+
+/// Render an effective invocation to the JSON value shape that `read_entries`
+/// yields for this adapter (TOML normalized via `toml_item_to_json`). Used to
+/// compute the "expected" observed invocation for drift comparison so both
+/// sides pass through identical normalization.
+pub fn render_entry_value(adapter: &McpAdapter, inv: &EffectiveInvocation) -> Value {
+    match adapter.format {
+        ConfigFormat::Json => render_entry_json(adapter, inv),
+        ConfigFormat::Toml => toml_item_to_json(&toml_edit::Item::Table(render_entry_toml(inv))),
+    }
+}
 
 fn discriminator_value(d: Discriminator, transport: McpTransport) -> Option<&'static str> {
     match (d, transport) {
@@ -136,9 +354,7 @@ async fn read_toml_doc(path: &Path) -> BackendResult<toml_edit::DocumentMut> {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|e| {
             BackendError::Validation(format!("Invalid TOML in {}: {e}", path.display()))
         }),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            Ok(toml_edit::DocumentMut::new())
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(toml_edit::DocumentMut::new()),
         Err(err) => Err(BackendError::Io(err)),
     }
 }
@@ -213,9 +429,9 @@ pub async fn write_entry(
             if !doc.contains_key(root_key) {
                 doc[root_key] = toml_edit::Item::Table(toml_edit::Table::new());
             }
-            let servers = doc[root_key].as_table_mut().ok_or_else(|| {
-                BackendError::Validation(format!("{root_key} is not a table"))
-            })?;
+            let servers = doc[root_key]
+                .as_table_mut()
+                .ok_or_else(|| BackendError::Validation(format!("{root_key} is not a table")))?;
             servers.insert(id, toml_edit::Item::Table(render_entry_toml(inv)));
             backup_existing(path).await?;
             write_bytes_atomic(path, doc.to_string().as_bytes()).await
@@ -224,11 +440,7 @@ pub async fn write_entry(
 }
 
 /// Remove only `id`. Returns true when an entry was actually removed.
-pub async fn remove_entry(
-    path: &Path,
-    adapter: &McpAdapter,
-    id: &str,
-) -> BackendResult<bool> {
+pub async fn remove_entry(path: &Path, adapter: &McpAdapter, id: &str) -> BackendResult<bool> {
     // `try_exists` only maps a `NotFound` metadata error to `Ok(false)`;
     // every other error (e.g. `PermissionDenied` on the file or a parent
     // directory) is returned as-is. The old `.unwrap_or(false)` collapsed
@@ -399,7 +611,11 @@ mod tests {
         let a = adapter_for("copilot").unwrap();
         let local = render_entry_json(a, &stdio_inv());
         assert_eq!(local["type"], "local");
-        assert_eq!(local["tools"], json!(["*"]), "copilot entries default to allow all tools");
+        assert_eq!(
+            local["tools"],
+            json!(["*"]),
+            "copilot entries default to allow all tools"
+        );
         let remote = render_entry_json(a, &http_inv());
         assert_eq!(remote["type"], "http");
         assert_eq!(remote["tools"], json!(["*"]));
@@ -439,7 +655,10 @@ mod tests {
         assert_eq!(t["env"]["K"].as_str(), Some("V"));
         let t = render_entry_toml(&http_inv());
         assert_eq!(t["url"].as_str(), Some("https://x.example/mcp"));
-        assert_eq!(t["http_headers"]["Authorization"].as_str(), Some("Bearer t"));
+        assert_eq!(
+            t["http_headers"]["Authorization"].as_str(),
+            Some("Bearer t")
+        );
     }
 
     use tempfile::TempDir;
@@ -450,13 +669,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let a = adapter_for("cursor").unwrap();
         let path = dir.path().join("mcp.json");
-        fs::write(&path, r#"{"mcpServers":{"other":{"command":"x"}},"custom":1}"#)
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"other":{"command":"x"}},"custom":1}"#,
+        )
+        .await
+        .unwrap();
+
+        write_entry(&path, a, "context7", &stdio_inv())
             .await
             .unwrap();
-
-        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
         // Idempotent re-write.
-        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
+        write_entry(&path, a, "context7", &stdio_inv())
+            .await
+            .unwrap();
 
         let entries = read_entries(&path, a).await.unwrap();
         let ids: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -504,7 +730,10 @@ mod tests {
         let mut found_backup = false;
         let mut rd = fs::read_dir(dir.path()).await.unwrap();
         while let Some(e) = rd.next_entry().await.unwrap() {
-            if e.file_name().to_string_lossy().contains(".skillworks-backup-") {
+            if e.file_name()
+                .to_string_lossy()
+                .contains(".skillworks-backup-")
+            {
                 found_backup = true;
             }
         }
@@ -516,12 +745,19 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let a = adapter_for("codex").unwrap();
         let path = dir.path().join("config.toml");
-        fs::write(&path, "# keep me\nmodel = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"x\"\n")
+        fs::write(
+            &path,
+            "# keep me\nmodel = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"x\"\n",
+        )
+        .await
+        .unwrap();
+
+        write_entry(&path, a, "context7", &stdio_inv())
             .await
             .unwrap();
-
-        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap();
-        write_entry(&path, a, "context7", &stdio_inv()).await.unwrap(); // idempotent
+        write_entry(&path, a, "context7", &stdio_inv())
+            .await
+            .unwrap(); // idempotent
 
         let text = fs::read_to_string(&path).await.unwrap();
         assert!(text.contains("# keep me"));
@@ -543,7 +779,9 @@ mod tests {
     async fn read_entries_missing_file_is_empty() {
         let dir = TempDir::new().unwrap();
         let a = adapter_for("claude").unwrap();
-        let entries = read_entries(&dir.path().join("nope.json"), a).await.unwrap();
+        let entries = read_entries(&dir.path().join("nope.json"), a)
+            .await
+            .unwrap();
         assert!(entries.is_empty());
     }
 
@@ -588,5 +826,103 @@ mod tests {
             matches!(result, Err(BackendError::Io(_))),
             "permission error must propagate, not read as a missing-file no-op: {result:?}"
         );
+    }
+
+    #[test]
+    fn parse_entry_round_trips_render_for_every_adapter() {
+        // Codex is implicit-transport: sse renders as a bare url and reads
+        // back as http, so exercise stdio + http only for the round trip.
+        for id in [
+            "claude", "codex", "cursor", "opencode", "gemini", "copilot", "kiro",
+        ] {
+            let a = adapter_for(id).unwrap();
+            for inv in [stdio_inv(), http_inv()] {
+                let value = render_entry_value(a, &inv);
+                let obs = parse_entry(a, &value).unwrap();
+                assert_eq!(obs.transport, inv.transport, "{id} transport");
+                assert_eq!(obs.command, inv.command, "{id} command");
+                assert_eq!(obs.args, inv.args, "{id} args");
+                assert_eq!(obs.env, inv.env, "{id} env");
+                assert_eq!(obs.url, inv.url, "{id} url");
+                assert_eq!(obs.headers, inv.headers, "{id} headers");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_entry_records_unmapped_keys() {
+        let a = adapter_for("cursor").unwrap();
+        let v = json!({"command": "npx", "args": ["-y", "pkg"], "timeout": 30, "disabled": false});
+        let obs = parse_entry(a, &v).unwrap();
+        assert_eq!(obs.command.as_deref(), Some("npx"));
+        assert!(obs.unmapped.contains(&"timeout".to_string()));
+        assert!(obs.unmapped.contains(&"disabled".to_string()));
+    }
+
+    #[test]
+    fn parse_entry_gemini_sse_uses_url_field() {
+        let a = adapter_for("gemini").unwrap();
+        let obs = parse_entry(a, &json!({"url": "https://x/mcp"})).unwrap();
+        assert_eq!(obs.transport, McpTransport::Sse);
+        let obs = parse_entry(a, &json!({"httpUrl": "https://x/mcp"})).unwrap();
+        assert_eq!(obs.transport, McpTransport::Http);
+    }
+
+    #[test]
+    fn parse_entry_opencode_argv_and_environment() {
+        let a = adapter_for("opencode").unwrap();
+        let v = json!({"type": "local", "command": ["npx", "-y", "pkg"], "environment": {"K": "V"}, "enabled": true});
+        let obs = parse_entry(a, &v).unwrap();
+        assert_eq!(obs.command.as_deref(), Some("npx"));
+        assert_eq!(obs.args, vec!["-y".to_string(), "pkg".to_string()]);
+        assert_eq!(obs.env.get("K").map(String::as_str), Some("V"));
+        assert!(obs.unmapped.is_empty());
+    }
+
+    #[test]
+    fn parse_entry_opencode_enabled_is_significant() {
+        let a = adapter_for("opencode").unwrap();
+        // Explicit disable on disk must surface, not read as in-sync.
+        let disk = json!({"type": "local", "command": ["npx", "-y", "pkg"], "enabled": false});
+        let obs = parse_entry(a, &disk).unwrap();
+        assert_eq!(obs.enabled, Some(false));
+        // A missing key defaults to enabled, matching the rendered library form.
+        let absent = json!({"type": "local", "command": ["npx", "-y", "pkg"]});
+        assert_eq!(parse_entry(a, &absent).unwrap().enabled, Some(true));
+        // Rendered library entry carries enabled: true.
+        let expected = parse_entry(a, &render_entry_value(a, &stdio_inv())).unwrap();
+        assert_eq!(expected.enabled, Some(true));
+    }
+
+    #[test]
+    fn parse_entry_copilot_tools_is_significant() {
+        let a = adapter_for("copilot").unwrap();
+        // A restrictive allow-list on disk must be captured, not ignored.
+        let disk =
+            json!({"type": "local", "command": "npx", "args": ["-y", "pkg"], "tools": ["search"]});
+        let obs = parse_entry(a, &disk).unwrap();
+        assert_eq!(obs.tools, Some(vec!["search".to_string()]));
+        assert!(!obs.unmapped.contains(&"tools".to_string()));
+        // A missing key defaults to the rendered library form's ["*"].
+        let absent = json!({"type": "local", "command": "npx", "args": ["-y", "pkg"]});
+        assert_eq!(
+            parse_entry(a, &absent).unwrap().tools,
+            Some(vec!["*".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_entry_leaves_discriminant_fields_none_for_other_harnesses() {
+        let a = adapter_for("cursor").unwrap();
+        let obs = parse_entry(a, &json!({"command": "npx", "args": ["-y", "pkg"]})).unwrap();
+        assert_eq!(obs.enabled, None);
+        assert_eq!(obs.tools, None);
+    }
+
+    #[test]
+    fn parse_entry_rejects_incoherent_entry() {
+        let a = adapter_for("cursor").unwrap();
+        // stdio-shaped but no command and no url
+        assert!(parse_entry(a, &json!({"args": ["x"]})).is_err());
     }
 }
