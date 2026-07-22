@@ -160,6 +160,29 @@ const RECONCILE_FIXTURE = {
         variants: [],
       },
     },
+    // Coverage-gap fix: a drift entry whose serverId has no match in SERVERS
+    // at all (never adopted, or removed since) — libraryServerName() falls
+    // back to the raw id, and renderConflictEntry has no `server` to build a
+    // variantFromConflict plan from, so "Add as variant" is disabled.
+    {
+      serverId: "ghost-server",
+      harness: "gemini",
+      scope: "global",
+      configPath: "/tmp/gemini-ghost.json",
+      adoptable: true,
+      diff: [{ field: "args", expected: "-y pkg", observed: "-y pkg --x" }],
+      observedSpec: {
+        id: "ghost-server",
+        name: "ghost-server",
+        source: { kind: "manual" },
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "pkg", "--x"],
+        env: {},
+        headers: {},
+        variants: [],
+      },
+    },
   ],
   warnings: [],
 };
@@ -643,6 +666,21 @@ try {
     const row = page.locator("[data-mcp-conflict-row]").nth(1);
     await expect(row.locator("[data-mcp-adopt-variant]")).toHaveText(/Update variant "kiro tweak"/);
     await expect(row.locator("[data-mcp-adopt]")).toBeDisabled();
+  });
+
+  test("drift row for a server not in the library falls back to the raw id and disables Add as variant", async ({
+    page,
+  }) => {
+    await installApiMocks(page, { reconcile: RECONCILE_FIXTURE });
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+
+    // "ghost-server" has no matching entry in SERVERS — libraryServerName()
+    // falls back to the raw serverId, and renderConflictEntry has no
+    // `server` to build a variant plan from.
+    const row = page.locator("[data-mcp-conflict-row]", { hasText: "ghost-server" });
+    await expect(row.locator(".mcp-servers-reconcile-key")).toHaveText("ghost-server");
+    await expect(row.locator("[data-mcp-adopt-variant]")).toBeDisabled();
   });
 
   test("plugin candidate shows managed note and plugin scope label", async ({ page }) => {
