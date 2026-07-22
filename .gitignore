@@ -18,3 +18,6 @@ src-tauri/binaries/skillworks-server-*
 /.gemini/
 /.opencode/
 assets/IMG_0991.jpeg
+
+# Design docs stay local-only (purged from git history 2026-07-23)
+docs/
