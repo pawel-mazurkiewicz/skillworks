@@ -66,6 +66,9 @@ function createClient({ appHome, home, project, harness }) {
     if (response.error) {
       throw new Error(response.error.message);
     }
+    if (response.result && response.result.isError) {
+      throw new Error(response.result.content.map((c) => c.text).join(""));
+    }
     return JSON.parse(response.result.content[0].text);
   }
 
