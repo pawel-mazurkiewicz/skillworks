@@ -330,27 +330,7 @@ async function bootstrap() {
     }
   });
 
-  elements.gitPreviewButton.addEventListener("click", () => runAction(async () => {
-    const repoUrl = elements.gitRepoInput.value.trim();
-    if (!repoUrl) {
-      showToast("Git URL is required");
-      return;
-    }
-    const targetIds = Array.from(
-      elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
-    ).map((input) => input.value);
-    const plan = await api("/api/install-git/preview", {
-      method: "POST",
-      body: {
-        repoUrl,
-        ref: elements.gitRefInput.value.trim(),
-        targetIds,
-        projectPath: elements.projectInput.value,
-      },
-    });
-    renderInstallPreview(plan, { repoUrl });
-    showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
-  }));
+  elements.gitPreviewButton.addEventListener("click", () => runAction(() => runGitPreview()));
 
   elements.gitTargetCheckboxes.addEventListener("change", (event) => {
     if (event.target.matches("input[type=checkbox]")) {
@@ -1175,7 +1155,7 @@ function renderMarketplace() {
 
   elements.marketplaceResults.innerHTML = items.map((skill) => renderMarketplaceSkill(skill)).join("");
   elements.marketplaceResults.querySelectorAll("[data-marketplace-install]").forEach((button) => {
-    button.addEventListener("click", () => installMarketplaceSkill(button.dataset.marketplaceInstall));
+    button.addEventListener("click", () => runAction(() => installMarketplaceSkill(button.dataset.marketplaceInstall)));
   });
   elements.marketplaceResults.querySelectorAll("[data-marketplace-open]").forEach((button) => {
     button.addEventListener("click", () => openExternalUrl(button.dataset.marketplaceOpen));
@@ -1257,6 +1237,35 @@ function isMarketplaceInstalled(skill) {
   });
 }
 
+async function runGitPreview(options = {}) {
+  const repoUrl = elements.gitRepoInput.value.trim();
+  if (!repoUrl) {
+    showToast("Git URL is required");
+    return;
+  }
+  const targetIds = Array.from(
+    elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  ).map((input) => input.value);
+  const plan = await api("/api/install-git/preview", {
+    method: "POST",
+    body: {
+      repoUrl,
+      ref: elements.gitRefInput.value.trim(),
+      targetIds,
+      projectPath: elements.projectInput.value,
+    },
+  });
+  renderInstallPreview(plan, { repoUrl, preselectSlug: options.preselectSlug });
+  showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
+}
+
+function skillSlug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 async function installMarketplaceSkill(id) {
   const skill = (state.marketplace.items || []).find((item) => item.id === id);
   if (!skill || !skill.installUrl) {
@@ -1269,7 +1278,7 @@ async function installMarketplaceSkill(id) {
   state.activeInstallTab = "git";
   renderInstallTabs();
   updateGitTargetSummary();
-  showToast(`Ready in From Git: ${skill.source}`);
+  await runGitPreview({ preselectSlug: skill.slug || "" });
 }
 
 function copyMarketplaceTargetsToGitTargets() {
@@ -1295,11 +1304,34 @@ function renderInstallPreview(plan, options = {}) {
     for (const candidate of installable) {
       perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
     }
+    let selectedKeys = new Set(installable.map((c) => c.sourceKey));
+    const slug = skillSlug(options.preselectSlug);
+    if (slug && installable.length) {
+      const matched = installable.filter((candidate) => {
+        const dirName = String(candidate.sourceKey).split("/").pop();
+        return (
+          skillSlug(dirName) === slug ||
+          skillSlug(candidate.name) === slug ||
+          skillSlug(candidate.linkName) === slug
+        );
+      });
+      if (matched.length) {
+        selectedKeys = new Set(matched.map((c) => c.sourceKey));
+        const others = installable.length - matched.length;
+        showToast(
+          others > 0
+            ? `Selected ${matched[0].name} — ${others} other skill${others === 1 ? "" : "s"} in this repo left unchecked`
+            : `Selected ${matched[0].name}`,
+        );
+      } else {
+        showToast("Couldn't identify that skill in the repo — all skills selected");
+      }
+    }
     state.preview = {
       repoUrl: options.repoUrl || "",
       plan,
       perSkillTargets,
-      selectedKeys: new Set(installable.map((c) => c.sourceKey)),
+      selectedKeys,
     };
   } else if (state.preview) {
     state.preview.plan = plan;
