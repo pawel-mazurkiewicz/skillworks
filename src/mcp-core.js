@@ -247,6 +247,14 @@ function libraryPath(appHome) {
 // Unique-per-call temp suffix (pid + monotonic counter) so concurrent
 // writers in this process never share a temp path, even when targeting the
 // same file. Mirrors the Rust hardening fix in `fs_atomic.rs::unique_tmp_suffix`.
+//
+// NOTE: this only protects against collisions *within* this Node process.
+// There is no cross-process lock, so the Tauri desktop app (Rust) and this
+// Node MCP server can still race on the same servers.json / harness config
+// file — a concurrent edit from the other process can be silently lost
+// (last writer wins). Known limitation, documented in
+// `docs/superpowers/specs/2026-07-22-mcp-management-phase-e-design.md` §9;
+// no locking implemented here.
 let __tmpSeq = 0;
 async function writeFileAtomic(p, text) {
   await fs.mkdir(path.dirname(p), { recursive: true });
