@@ -107,6 +107,22 @@ export function buildMcpRoutes() {
 
     ["POST", /^\/api\/mcp\/servers\/from-url$/, "mcp_add_from_url",
       (_url, body) => ({ url: body && body.url }), undefined, true],
+
+    ["POST", /^\/api\/mcp\/servers\/reconcile\/link$/, "mcp_reconcile_link",
+      (_url, body) => ({
+        id: body && body.id,
+        harness: body && body.harness,
+        scope: body && body.scope,
+        key: body && body.key,
+        projectPath: body && body.projectPath,
+      })],
+
+    ["POST", /^\/api\/mcp\/servers\/reconcile\/dismiss$/, "mcp_reconcile_dismiss",
+      (_url, body) => ({
+        key: body && body.key,
+        fingerprint: body && body.fingerprint,
+        targets: (body && body.targets) || [],
+      })],
   ];
 }
 
@@ -320,7 +336,10 @@ export function foundInSummary(foundIn) {
   return items
     .map((t) => {
       const label = (MCP_HARNESSES.find((h) => h.id === t.harness) || {}).label || t.harness;
-      return `${label} / ${t.scope}`;
+      const scope = String(t.scope || "").startsWith("plugin:")
+        ? `plugin: ${String(t.scope).slice("plugin:".length)}`
+        : t.scope;
+      return `${label} / ${scope}`;
     })
     .join(" · ");
 }

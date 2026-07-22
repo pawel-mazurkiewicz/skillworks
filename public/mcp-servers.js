@@ -1328,19 +1328,30 @@ function libraryServerName(id) {
 
 function renderImportCandidate(candidate, index) {
   const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
-  const matchHint = candidate.matchesLibraryId
+  const matched = Boolean(candidate.matchesLibraryId);
+  const matchHint = matched
     ? `<p class="mcp-servers-hint">Looks like <strong>${escapeHtml(libraryServerName(candidate.matchesLibraryId))}</strong>, already in your library.</p>`
     : "";
+  const managedNote = candidate.managedNote
+    ? `<p class="mcp-servers-trust-note">${escapeHtml(candidate.managedNote)}</p>`
+    : "";
+  const linkPending = state.reconcilePending.has(`link:${index}`);
+  const dismissPending = state.reconcilePending.has(`dismiss:${index}`);
+  const primary = matched
+    ? `<button type="button" class="button primary" data-mcp-link="${index}" ${linkPending ? "disabled" : ""}>${linkPending ? "Linking…" : `Link to ${escapeHtml(libraryServerName(candidate.matchesLibraryId))}`}</button>`
+    : `<button type="button" class="button primary" data-mcp-import="${index}">Import</button>`;
   return `
     <li class="mcp-servers-reconcile-row" data-mcp-import-row="${index}">
       <div class="mcp-servers-reconcile-row-main">
         <span class="mcp-servers-reconcile-key">${escapeHtml(candidate.key)}</span>
         <p class="mcp-servers-hint">Found in: ${escapeHtml(foundInSummary(candidate.foundIn))}</p>
         ${matchHint}
+        ${managedNote}
         ${warnings.length ? `<ul class="mcp-servers-add-warnings">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
       </div>
       <div class="button-row">
-        <button type="button" class="button primary" data-mcp-import="${index}">Import</button>
+        ${primary}
+        <button type="button" class="button ghost" data-mcp-dismiss-candidate="${index}" ${dismissPending ? "disabled" : ""}>${dismissPending ? "Dismissing…" : "Dismiss"}</button>
       </div>
     </li>`;
 }
@@ -1456,6 +1467,63 @@ function handleImportCandidate(index) {
   if (!candidate) return;
   state.add.cards.push(newAddCard(candidate.suggestedSpec, []));
   renderAdd();
+}
+
+async function handleReconcileLink(index) {
+  const candidate = state.imports[index];
+  if (!candidate || !candidate.matchesLibraryId) return;
+  const id = candidate.matchesLibraryId;
+  const name = libraryServerName(id);
+  const pendingKey = `link:${index}`;
+  state.reconcilePending.add(pendingKey);
+  renderReconcile();
+  try {
+    // Link every target the candidate was found in. Sequential on purpose:
+    // parallel writes to different harness configs are safe, but keeping it
+    // simple avoids interleaved error toasts.
+    for (const target of candidate.foundIn || []) {
+      await api("/api/mcp/servers/reconcile/link", {
+        method: "POST",
+        body: {
+          id,
+          harness: target.harness,
+          scope: target.scope,
+          key: candidate.key,
+          projectPath: target.scope === "project" ? projectPath() : undefined,
+        },
+      });
+    }
+    fireToastLocal(`Linked ${candidate.key} to ${name}.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile link failed", err);
+  } finally {
+    state.reconcilePending.delete(pendingKey);
+    await refreshAll();
+  }
+}
+
+async function handleReconcileDismiss(index) {
+  const candidate = state.imports[index];
+  if (!candidate) return;
+  const pendingKey = `dismiss:${index}`;
+  state.reconcilePending.add(pendingKey);
+  renderReconcile();
+  try {
+    await api("/api/mcp/servers/reconcile/dismiss", {
+      method: "POST",
+      body: {
+        key: candidate.key,
+        fingerprint: candidate.fingerprint,
+        targets: (candidate.foundIn || []).map((t) => ({ harness: t.harness, scope: t.scope })),
+      },
+    });
+    fireToastLocal(`Dismissed ${candidate.key}. It'll come back if its config changes.`);
+  } catch (err) {
+    console.error("[mcp-servers] reconcile dismiss failed", err);
+  } finally {
+    state.reconcilePending.delete(pendingKey);
+    await refreshAll();
+  }
 }
 
 async function handleReconcileReapply(index) {
@@ -1584,6 +1652,16 @@ if (els.discovered) {
     const importBtn = event.target.closest("[data-mcp-import]");
     if (importBtn) {
       handleImportCandidate(Number(importBtn.dataset.mcpImport));
+      return;
+    }
+    const linkBtn = event.target.closest("[data-mcp-link]");
+    if (linkBtn) {
+      handleReconcileLink(Number(linkBtn.dataset.mcpLink));
+      return;
+    }
+    const dismissCandidateBtn = event.target.closest("[data-mcp-dismiss-candidate]");
+    if (dismissCandidateBtn) {
+      handleReconcileDismiss(Number(dismissCandidateBtn.dataset.mcpDismissCandidate));
       return;
     }
     const reapplyBtn = event.target.closest("[data-mcp-reapply]");

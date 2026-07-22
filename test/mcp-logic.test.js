@@ -57,10 +57,10 @@ test("slugifyId mirrors the Rust slugify (lowercase, collapse, trim, ascii-only)
   assert.equal(slugifyId("Already-Slugified"), "already-slugified");
 });
 
-test("buildMcpRoutes contains all 10 MCP-servers-tab routes", async () => {
+test("buildMcpRoutes contains all 12 MCP-servers-tab routes", async () => {
   const { buildMcpRoutes } = await loadLogic();
   const routes = buildMcpRoutes();
-  assert.equal(routes.length, 10);
+  assert.equal(routes.length, 12);
   const commands = routes.map((r) => r[2]).sort();
   assert.deepEqual(commands, [
     "mcp_activate",
@@ -70,6 +70,8 @@ test("buildMcpRoutes contains all 10 MCP-servers-tab routes", async () => {
     "mcp_discover",
     "mcp_list_library",
     "mcp_reconcile",
+    "mcp_reconcile_dismiss",
+    "mcp_reconcile_link",
     "mcp_remove_server",
     "mcp_status",
     "mcp_update_server",
@@ -471,6 +473,35 @@ test("foundInSummary lists harness/scope pairs", async () => {
   assert.match(s, /Claude Code/);
   assert.match(s, /global/);
   assert.match(s, /cursor|Cursor/);
+});
+
+test("foundInSummary prettifies plugin pseudo-scope", async () => {
+  const { foundInSummary } = await loadLogic();
+  assert.equal(
+    foundInSummary([{ harness: "claude", scope: "plugin:atlassian" }]),
+    "Claude Code / plugin: atlassian"
+  );
+});
+
+test("buildMcpRoutes exposes reconcile link and dismiss routes", async () => {
+  const { buildMcpRoutes } = await loadLogic();
+  const routes = buildMcpRoutes();
+  const link = routes.find(([, , cmd]) => cmd === "mcp_reconcile_link");
+  const dismiss = routes.find(([, , cmd]) => cmd === "mcp_reconcile_dismiss");
+  assert.ok(link && link[0] === "POST" && link[1].test("/api/mcp/servers/reconcile/link"));
+  assert.ok(dismiss && dismiss[0] === "POST" && dismiss[1].test("/api/mcp/servers/reconcile/dismiss"));
+  assert.deepEqual(
+    link[3](new URL("http://x/api/mcp/servers/reconcile/link"), {
+      id: "unity-mcp", harness: "kiro", scope: "global", key: "unityMCP", projectPath: "/p",
+    }),
+    { id: "unity-mcp", harness: "kiro", scope: "global", key: "unityMCP", projectPath: "/p" }
+  );
+  assert.deepEqual(
+    dismiss[3](new URL("http://x/api/mcp/servers/reconcile/dismiss"), {
+      key: "srv", fingerprint: "fp", targets: [{ harness: "kiro", scope: "global" }],
+    }),
+    { key: "srv", fingerprint: "fp", targets: [{ harness: "kiro", scope: "global" }] }
+  );
 });
 
 test("formatDiffValue renders empty/undefined as an explicit dash", async () => {
