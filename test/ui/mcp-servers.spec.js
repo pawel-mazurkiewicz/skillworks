@@ -340,6 +340,24 @@ try {
     const added = page.locator(".mcp-servers-card-added");
     await expect(added).toBeVisible();
 
+    // The fade must interpolate on the live node — a full re-render would
+    // recreate the article already at opacity 0, snapping straight to
+    // hidden instead of fading. Poll frequently through the linger + fade
+    // window for a moment where the card is mid-transition (is-leaving
+    // class present, computed opacity strictly between 0 and 1).
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const el = document.querySelector(".mcp-servers-draft-card.is-leaving");
+            if (!el) return false;
+            const opacity = Number(getComputedStyle(el).opacity);
+            return opacity > 0 && opacity < 1;
+          }),
+        { timeout: 3500, intervals: [30] },
+      )
+      .toBe(true);
+
     // 2500ms linger + 280ms fade + margin.
     await expect(page.locator(".mcp-servers-draft-card")).toHaveCount(0, { timeout: 5000 });
   });

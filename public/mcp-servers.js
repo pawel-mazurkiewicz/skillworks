@@ -110,8 +110,11 @@ function scheduleAddedCardRemoval(cardKey) {
       removeAddCard(cardKey);
       return;
     }
-    card.leaving = true;
-    renderAdd();
+    // Toggle the class on the live node — a full renderAdd() would recreate
+    // the article already at opacity 0 and the transition would never run.
+    card.leaving = true; // keeps the class through any unrelated mid-fade re-render
+    const el = els.add && els.add.querySelector(`[data-mcp-card="${cssAttrEscape(cardKey)}"]`);
+    if (el) el.classList.add("is-leaving");
     window.setTimeout(() => removeAddCard(cardKey), ADDED_CARD_FADE_MS);
   }, ADDED_CARD_LINGER_MS);
 }
