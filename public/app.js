@@ -427,6 +427,39 @@ async function bootstrap() {
     renderMatrix();
   });
 
+  // Delegated handlers for the skill list. With 1500+ rows, per-row
+  // listeners plus a full list re-render on every click made selection
+  // visibly laggy; these two listeners replace ~3000 per-row bindings.
+  elements.matrixBody.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-select-row]");
+    if (!checkbox) {
+      return;
+    }
+    if (checkbox.checked) {
+      state.selectedSkillIds.add(checkbox.dataset.selectRow);
+    } else {
+      state.selectedSkillIds.delete(checkbox.dataset.selectRow);
+    }
+    syncSelectVisibleCheckbox();
+    renderDetail();
+    renderBulkBar();
+  });
+
+  elements.matrixBody.addEventListener("click", async (event) => {
+    const row = event.target.closest("[data-select-skill]");
+    if (!row || event.target.closest(".row-check")) {
+      return;
+    }
+    const previous = elements.matrixBody.querySelector(".skill-list-item.is-selected");
+    state.selectedSkillId = row.dataset.selectSkill;
+    if (previous && previous !== row) {
+      previous.classList.remove("is-selected");
+    }
+    row.classList.add("is-selected");
+    await renderDetail();
+    scrollDetailIntoViewIfStacked();
+  });
+
   elements.clearSelectionButton.addEventListener("click", () => {
     state.selectedSkillIds.clear();
     renderMatrix();
@@ -2033,32 +2066,16 @@ function renderMatrix() {
     .join("");
 
   bindSelectVisible(visibleSkillIds);
+}
 
-  elements.matrixBody.querySelectorAll("[data-select-row]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      if (checkbox.checked) {
-        state.selectedSkillIds.add(checkbox.dataset.selectRow);
-      } else {
-        state.selectedSkillIds.delete(checkbox.dataset.selectRow);
-      }
-      renderMatrix();
-      renderDetail();
-      renderBulkBar();
-    });
-  });
-
-  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((row) => {
-    row.addEventListener("click", async (event) => {
-      if (event.target.closest("[data-select-row]")) {
-        return;
-      }
-      state.selectedSkillId = row.dataset.selectSkill;
-      renderMatrix();
-      await renderDetail();
-      scrollDetailIntoViewIfStacked();
-    });
-  });
-
+function syncSelectVisibleCheckbox() {
+  const checkbox = document.querySelector("#selectVisibleCheckbox");
+  if (!checkbox) {
+    return;
+  }
+  const visibleIds = filteredSkills().map((skill) => skill.id);
+  checkbox.checked =
+    visibleIds.length > 0 && visibleIds.every((id) => state.selectedSkillIds.has(id));
 }
 
 function scrollDetailIntoViewIfStacked() {

@@ -12,7 +12,7 @@ use tokio::fs;
 
 use super::skills::{read_manifest, read_skill_metadata, MANIFEST_FILE, SKILL_FILE};
 use super::state::BackendResult;
-use super::symlinks::{is_symlink_to, list_target_entries};
+use super::symlinks::list_target_entries;
 use super::types::{SkillRecord, SkillStatus, TargetRecord, UnmanagedEntry};
 
 /// One entry in the built-in target table.
@@ -355,6 +355,9 @@ pub async fn inspect_target(
         Vec::new()
     };
 
+    let entry_names: std::collections::HashSet<String> =
+        entries.iter().map(|(name, _)| name.clone()).collect();
+
     let mut links_by_real_path: HashMap<PathBuf, LinkInfo> = HashMap::new();
     let mut unmanaged: Vec<UnmanagedEntry> = Vec::new();
 
@@ -468,15 +471,29 @@ pub async fn inspect_target(
         let planned_name = manifest_link_name
             .clone()
             .unwrap_or_else(|| skill.link_name.clone());
-        let planned_path = target_path.join(&planned_name);
-        let planned_exists = fs::symlink_metadata(&planned_path).await.is_ok();
-        let planned_is_link_to_skill = is_symlink_to(&planned_path, &skill_real).await;
-        let conflict = planned_exists && enabled_link.is_none() && !planned_is_link_to_skill;
+        // The readdir above already told us which names exist, and any
+        // symlink resolving to this skill would have populated
+        // `links_by_real_path` — so conflicts are decidable in memory. The
+        // old per-skill `symlink_metadata` + `is_symlink_to` probes cost
+        // 2 fs calls x skills x targets (~78k syscalls on a 1560-skill,
+        // 25-target setup).
+        let planned_occupied = entry_names.contains(&planned_name);
+        let conflict = planned_occupied && enabled_link.is_none();
 
         if enabled_link.is_some() {
             enabled_skill_ids.push(skill.id.clone());
         }
 
+        let stale_manifest = manifest_record.is_some() && enabled_link.is_none();
+
+        // Only interesting statuses are emitted; an absent entry means
+        // "disabled". This keeps the state payload proportional to enabled
+        // links instead of skills x targets (8.8 MB -> ~1 MB at 1560/25).
+        if enabled_link.is_none() && !conflict && !stale_manifest {
+            continue;
+        }
+
+        let planned_path = target_path.join(&planned_name);
         let link_name = enabled_link
             .map(|l| l.name.clone())
             .unwrap_or_else(|| planned_name.clone());
@@ -493,7 +510,7 @@ pub async fn inspect_target(
                 link_name,
                 link_path,
                 conflict,
-                stale_manifest: manifest_record.is_some() && enabled_link.is_none(),
+                stale_manifest,
             },
         );
     }
@@ -684,5 +701,132 @@ mod tests {
         assert_eq!(entry.name, "Foreign");
         assert_eq!(entry.kind, "directory");
         assert!(entry.importable);
+    }
+
+    #[tokio::test]
+    async fn inspect_target_omits_disabled_skill_statuses() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("vault");
+
+        let make_skill = |id: &str, link_name: &str| {
+            let skill_dir = vault.join(id);
+            let id = id.to_string();
+            let link_name = link_name.to_string();
+            async move {
+                fs::create_dir_all(&skill_dir).await.unwrap();
+                fs::write(
+                    skill_dir.join(SKILL_FILE),
+                    "---\nname: Skill\ndescription: x\n---\n",
+                )
+                .await
+                .unwrap();
+                let real_path = fs::canonicalize(&skill_dir).await.unwrap();
+                SkillRecord {
+                    id: id.clone(),
+                    name: format!("Skill {id}"),
+                    description: "x".to_string(),
+                    author: "a".to_string(),
+                    relative_path: id,
+                    type_: String::new(),
+                    path: skill_dir.to_string_lossy().into_owned(),
+                    real_path: real_path.to_string_lossy().into_owned(),
+                    link_name,
+                    tags: Vec::new(),
+                    skill_file: skill_dir.join(SKILL_FILE).to_string_lossy().into_owned(),
+                    size_bytes: 0,
+                    modified_at: String::new(),
+                }
+            }
+        };
+
+        let linked = make_skill("a/linked", "linked").await;
+        let unlinked = make_skill("b/unlinked", "unlinked").await;
+
+        let target_dir = dir.path().join("home/.claude/skills");
+        fs::create_dir_all(&target_dir).await.unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&linked.path, target_dir.join("linked")).unwrap();
+
+        let target = TargetRecord {
+            id: "claude-global".to_string(),
+            label: "Claude global".to_string(),
+            harness: "Claude".to_string(),
+            scope: "global".to_string(),
+            short_label: None,
+            path: target_dir.to_string_lossy().into_owned(),
+            path_parts: Vec::new(),
+            custom: false,
+            exists: false,
+            manifest_path: String::new(),
+            enabled_skill_ids: Vec::new(),
+            skill_statuses: BTreeMap::new(),
+            unmanaged: Vec::new(),
+        };
+
+        let inspected = inspect_target(target, &[linked, unlinked], &vault)
+            .await
+            .unwrap();
+        assert_eq!(inspected.enabled_skill_ids, vec!["a/linked"]);
+        assert!(inspected.skill_statuses.contains_key("a/linked"));
+        // Disabled + no conflict + no manifest record => omitted entirely.
+        assert!(!inspected.skill_statuses.contains_key("b/unlinked"));
+    }
+
+    #[tokio::test]
+    async fn inspect_target_flags_conflict_from_directory_listing() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join("a/taken");
+        fs::create_dir_all(&skill_dir).await.unwrap();
+        fs::write(
+            skill_dir.join(SKILL_FILE),
+            "---\nname: Taken\ndescription: x\n---\n",
+        )
+        .await
+        .unwrap();
+        let real_path = fs::canonicalize(&skill_dir).await.unwrap();
+        let skill = SkillRecord {
+            id: "a/taken".to_string(),
+            name: "Taken".to_string(),
+            description: "x".to_string(),
+            author: "a".to_string(),
+            relative_path: "a/taken".to_string(),
+            type_: String::new(),
+            path: skill_dir.to_string_lossy().into_owned(),
+            real_path: real_path.to_string_lossy().into_owned(),
+            link_name: "taken".to_string(),
+            tags: Vec::new(),
+            skill_file: skill_dir.join(SKILL_FILE).to_string_lossy().into_owned(),
+            size_bytes: 0,
+            modified_at: String::new(),
+        };
+
+        // A foreign file occupies the planned link name.
+        let target_dir = dir.path().join("home/.claude/skills");
+        fs::create_dir_all(&target_dir).await.unwrap();
+        fs::write(target_dir.join("taken"), "not a symlink").await.unwrap();
+
+        let target = TargetRecord {
+            id: "claude-global".to_string(),
+            label: "Claude global".to_string(),
+            harness: "Claude".to_string(),
+            scope: "global".to_string(),
+            short_label: None,
+            path: target_dir.to_string_lossy().into_owned(),
+            path_parts: Vec::new(),
+            custom: false,
+            exists: false,
+            manifest_path: String::new(),
+            enabled_skill_ids: Vec::new(),
+            skill_statuses: BTreeMap::new(),
+            unmanaged: Vec::new(),
+        };
+
+        let inspected = inspect_target(target, std::slice::from_ref(&skill), &vault)
+            .await
+            .unwrap();
+        let status = &inspected.skill_statuses["a/taken"];
+        assert!(!status.enabled);
+        assert!(status.conflict);
     }
 }

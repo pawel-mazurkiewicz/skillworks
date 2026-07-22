@@ -45,6 +45,7 @@ use super::types::{
 
 const APP_CONFIG_DIR: &str = ".skillworks";
 const LEGACY_CONFIG_DIR: &str = ".agent-skill-manager";
+const SKILLS_CACHE_FILE: &str = "skills-cache.json";
 
 /// Build the full state object exposed to the frontend.
 ///
@@ -84,19 +85,37 @@ pub async fn build_state(
     };
 
     // Skills.
-    let skills = discover_skills(&vault_root).await?;
+    let skills = discover_skills(&vault_root, Some(&app_home.join(SKILLS_CACHE_FILE))).await?;
 
     // Custom targets.
     let custom_targets_value = serde_json::Value::Array(config.custom_targets.clone());
     let custom_targets = safe_read_custom_targets(&custom_targets_value);
 
-    // Targets.
+    // Targets, inspected concurrently (each inspection is readdir + symlink
+    // resolution; sequential inspection dominated the old state build).
     let raw_targets = build_targets(&home_dir, &selected_project, &custom_targets);
-    let mut target_states = Vec::with_capacity(raw_targets.len());
-    for target in raw_targets {
-        let inspected = inspect_target(target, &skills, &vault_root).await?;
-        target_states.push(inspected);
+    let skills_shared = std::sync::Arc::new(skills);
+    let mut inspect_set: tokio::task::JoinSet<BackendResult<(usize, TargetRecord)>> =
+        tokio::task::JoinSet::new();
+    for (index, target) in raw_targets.into_iter().enumerate() {
+        let skills_shared = std::sync::Arc::clone(&skills_shared);
+        let vault_root = vault_root.clone();
+        inspect_set.spawn(async move {
+            let inspected = inspect_target(target, &skills_shared, &vault_root).await?;
+            Ok((index, inspected))
+        });
     }
+    let mut indexed_targets = Vec::new();
+    while let Some(joined) = inspect_set.join_next().await {
+        let result = joined
+            .map_err(|err| BackendError::Validation(format!("inspect join error: {err}")))?;
+        indexed_targets.push(result?);
+    }
+    indexed_targets.sort_by_key(|(index, _)| *index);
+    let target_states: Vec<TargetRecord> =
+        indexed_targets.into_iter().map(|(_, target)| target).collect();
+    let skills = std::sync::Arc::try_unwrap(skills_shared)
+        .unwrap_or_else(|shared| (*shared).clone());
 
     // Project list normalized from config.
     let projects_records = normalize_project_records(config.projects.clone());
@@ -180,12 +199,17 @@ pub async fn build_manual_project_record(project_path: &Path) -> ProjectRecord {
 /// to operate against. Built once per command so we don't re-read config
 /// many times within a single bulk op.
 struct CommandContext {
-    #[allow(dead_code)]
     app_home: PathBuf,
     config: Config,
     vault_root: PathBuf,
     home_dir: PathBuf,
     project_path: PathBuf,
+}
+
+impl CommandContext {
+    fn skills_cache_path(&self) -> PathBuf {
+        self.app_home.join(SKILLS_CACHE_FILE)
+    }
 }
 
 async fn load_context(
@@ -407,7 +431,7 @@ pub async fn read_skill_file_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<SkillFileContent> {
     let ctx = load_context(None, app_home_override).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let skill = resolve_skill(&skills, &id)?;
     let skill_file = Path::new(&skill.path).join(SKILL_FILE);
     let content = fs::read_to_string(&skill_file).await?;
@@ -434,7 +458,7 @@ pub async fn save_skill_file_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let skill = resolve_skill(&skills, &id)?;
     let skill_file = Path::new(&skill.path).join(SKILL_FILE);
     fs::write(&skill_file, content).await?;
@@ -513,7 +537,7 @@ pub async fn toggle_skill_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let skill = resolve_skill(&skills, &skill_id)?.clone();
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
@@ -553,7 +577,7 @@ pub async fn bulk_toggle_skills_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
@@ -604,7 +628,7 @@ pub async fn bulk_copy_skills_impl(
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let destination_root = clean_destination(&destination);
     ensure_dir(&destination_root).await?;
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
 
     for skill in &resolved_skills {
@@ -642,7 +666,7 @@ pub async fn bulk_move_skills_impl(
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
     let destination_root = clean_destination(&destination);
     ensure_dir(&destination_root).await?;
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
@@ -680,7 +704,7 @@ pub async fn bulk_delete_skills_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let resolved_skills = resolve_skills_owned(&skills_all, &skill_ids)?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
@@ -701,7 +725,7 @@ pub async fn find_vault_duplicates_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<Vec<DuplicateGroup>> {
     let ctx = load_context(None, app_home_override).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
 
     let mut by_hash: BTreeMap<String, Vec<DuplicateSkillEntry>> = BTreeMap::new();
     for skill in &skills {
@@ -788,7 +812,7 @@ pub async fn dedupe_vault_skills_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<State> {
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
@@ -1355,7 +1379,7 @@ pub async fn install_from_git_impl(
 
     // Refresh skill discovery so we can map vault destinations back to
     // skill records when enabling them on targets.
-    let skills_all = discover_skills(&ctx.vault_root).await?;
+    let skills_all = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let mut errors: Vec<ImportErrorEntry> = Vec::new();
     let mut enabled_count: u32 = 0;
 
@@ -1803,7 +1827,7 @@ pub async fn snapshot_set_impl(
     }
 
     let ctx = load_context(project_path.clone(), app_home_override.clone()).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
@@ -1849,7 +1873,7 @@ pub async fn plan_apply_set_impl(
 ) -> BackendResult<ApplySetPlan> {
     let ctx = load_context(Some(project_path.clone()), app_home_override).await?;
     let set = locate_set(&ctx, &id).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);
@@ -1969,7 +1993,7 @@ pub async fn apply_set_impl(
 ) -> BackendResult<ApplySetResponse> {
     let ctx = load_context(Some(project_path.clone()), app_home_override.clone()).await?;
     let set = locate_set(&ctx, &id).await?;
-    let skills = discover_skills(&ctx.vault_root).await?;
+    let skills = discover_skills(&ctx.vault_root, Some(&ctx.skills_cache_path())).await?;
     let custom =
         safe_read_custom_targets(&serde_json::Value::Array(ctx.config.custom_targets.clone()));
     let targets = build_targets(&ctx.home_dir, &ctx.project_path, &custom);

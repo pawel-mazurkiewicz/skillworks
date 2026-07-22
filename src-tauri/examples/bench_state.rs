@@ -25,10 +25,12 @@ async fn main() {
         .expect("roots");
     println!("find_skill_roots: {} roots in {:?}", roots.len(), t0.elapsed());
 
+    let cache_path = app_home.join("skills-cache.json");
     let t1 = Instant::now();
-    let skills = skillworks_desktop::backend::skills::discover_skills(&vault_root)
-        .await
-        .expect("skills");
+    let skills =
+        skillworks_desktop::backend::skills::discover_skills(&vault_root, Some(&cache_path))
+            .await
+            .expect("skills");
     println!("discover_skills: {} skills in {:?}", skills.len(), t1.elapsed());
 
     let t2 = Instant::now();
