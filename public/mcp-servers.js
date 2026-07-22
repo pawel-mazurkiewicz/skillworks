@@ -1644,7 +1644,6 @@ async function handleReconcileAdopt(index) {
   }
 }
 
-
 async function handleReconcileAdoptVariant(index) {
   const conflict = state.conflicts[index];
   if (!conflict) return;

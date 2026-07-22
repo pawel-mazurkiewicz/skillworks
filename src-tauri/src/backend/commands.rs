@@ -3087,13 +3087,13 @@ pub async fn mcp_reconcile_impl(
     {
         let (plugin_entries, plugin_warnings) = scan_claude_plugin_mcps(&home_dir).await;
         warnings.extend(plugin_warnings);
+        let adapter = adapter_for("claude")?;
         for (key, observed, config_path, scope) in plugin_entries {
             // Suppress when the library already covers it: id match or
             // invocation-equal expected rendering (any library server).
             if library.iter().any(|s| s.id == key) {
                 continue;
             }
-            let adapter = adapter_for("claude")?;
             if library.iter().any(|s| {
                 expected_observed(adapter, s, &scope)
                     .map(|(exp, _)| invocation_eq(&exp, &observed))

@@ -360,7 +360,6 @@ export function splitReconcile(response) {
   };
 }
 
-
 export function uniqueVariantLabel(base, variants) {
   const labels = new Set((variants || []).map((v) => v.label));
   if (!labels.has(base)) return base;
