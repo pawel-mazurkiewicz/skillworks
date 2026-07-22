@@ -2790,6 +2790,47 @@ pub async fn mcp_reconcile(project_path: Option<String>) -> BackendResult<McpRec
     mcp_reconcile_impl(project_path, None, None).await
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDismissTarget {
+    pub harness: String,
+    pub scope: String,
+}
+
+/// Persistently dismiss a reconcile import candidate for the given targets.
+#[tauri::command]
+pub async fn mcp_reconcile_dismiss(
+    key: String,
+    fingerprint: String,
+    targets: Vec<McpDismissTarget>,
+) -> BackendResult<()> {
+    mcp_reconcile_dismiss_impl(key, fingerprint, targets, None).await
+}
+
+pub async fn mcp_reconcile_dismiss_impl(
+    key: String,
+    fingerprint: String,
+    targets: Vec<McpDismissTarget>,
+    app_home_override: Option<PathBuf>,
+) -> BackendResult<()> {
+    use super::mcp::dismissed::{load_dismissed, save_dismissed, DismissedEntry};
+    let app_home = resolve_mcp_app_home(app_home_override).await?;
+    let _guard = MCP_LIBRARY_LOCK.lock().await;
+    let mut entries = load_dismissed(&app_home).await?;
+    for t in targets {
+        let e = DismissedEntry {
+            key: key.clone(),
+            harness: t.harness,
+            scope: t.scope,
+            fingerprint: fingerprint.clone(),
+        };
+        if !entries.contains(&e) {
+            entries.push(e);
+        }
+    }
+    save_dismissed(&app_home, &entries).await
+}
+
 pub async fn mcp_reconcile_impl(
     project_path: Option<String>,
     app_home_override: Option<PathBuf>,
@@ -2797,6 +2838,7 @@ pub async fn mcp_reconcile_impl(
 ) -> BackendResult<McpReconcileResponse> {
     let app_home = resolve_mcp_app_home(app_home_override).await?;
     let library = load_library(&app_home).await?;
+    let dismissed = super::mcp::dismissed::load_dismissed(&app_home).await?;
     let home_dir = resolve_home_dir(home_dir_override)?;
     let project_root = resolve_project_root(project_path)?;
 
@@ -2866,6 +2908,13 @@ pub async fn mcp_reconcile_impl(
                     continue;
                 }
 
+                let fp = super::mcp::dismissed::fingerprint(&observed);
+                if dismissed.iter().any(|d| {
+                    d.key == key && d.harness == adapter.harness_id && d.scope == scope && d.fingerprint == fp
+                }) {
+                    continue;
+                }
+
                 let matches = library.iter().find_map(|s| {
                     expected_observed(adapter, s, scope)
                         .ok()
@@ -2929,6 +2978,7 @@ pub async fn mcp_reconcile_impl(
             found_in: g.found_in,
             matches_library_id: g.matches,
             warnings: cand_warnings,
+            fingerprint: super::mcp::dismissed::fingerprint(&g.observed),
         });
     }
 
@@ -5033,6 +5083,108 @@ mod tests {
         let extra = out.imports.iter().find(|c| c.key == "extra").unwrap();
         assert!(extra.matches_library_id.is_none());
         assert_eq!(extra.suggested_spec.source.kind, "discovered");
+    }
+
+    #[tokio::test]
+    async fn reconcile_dismiss_suppresses_candidate_until_config_changes() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            home.join(".kiro/settings/mcp.json"),
+            r#"{"mcpServers":{"unityMCP":{"command":"npx","args":["-y","unity-mcp"]}}}"#,
+        )
+        .await
+        .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await
+            .unwrap();
+        let cand = out.imports.iter().find(|c| c.key == "unityMCP").unwrap();
+        let fp = cand.fingerprint.clone();
+        assert!(!fp.is_empty());
+
+        mcp_reconcile_dismiss_impl(
+            "unityMCP".into(),
+            fp.clone(),
+            vec![McpDismissTarget {
+                harness: "kiro".into(),
+                scope: "global".into(),
+            }],
+            Some(app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        // Dismissed: candidate no longer surfaces.
+        let out = mcp_reconcile_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await
+            .unwrap();
+        assert!(out.imports.iter().all(|c| c.key != "unityMCP"));
+
+        // Config changes meaningfully -> fingerprint mismatch -> resurfaces.
+        tokio::fs::write(
+            home.join(".kiro/settings/mcp.json"),
+            r#"{"mcpServers":{"unityMCP":{"command":"npx","args":["-y","unity-mcp","--port","9000"]}}}"#,
+        )
+        .await
+        .unwrap();
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        assert!(out.imports.iter().any(|c| c.key == "unityMCP"));
+    }
+
+    #[tokio::test]
+    async fn reconcile_dismiss_is_per_target() {
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let home = dir.path().join("home");
+        tokio::fs::create_dir_all(home.join(".kiro/settings"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
+        // Identical invocation under the same key in two harnesses -> one
+        // grouped candidate with two foundIn targets.
+        let entry = r#"{"mcpServers":{"srv":{"command":"npx","args":["-y","pkg"]}}}"#;
+        tokio::fs::write(home.join(".kiro/settings/mcp.json"), entry)
+            .await
+            .unwrap();
+        tokio::fs::write(home.join(".cursor/mcp.json"), entry)
+            .await
+            .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home.clone()), Some(home.clone()))
+            .await
+            .unwrap();
+        let cand = out.imports.iter().find(|c| c.key == "srv").unwrap();
+        assert_eq!(cand.found_in.len(), 2);
+        let fp = cand.fingerprint.clone();
+
+        // Dismiss only the kiro target.
+        mcp_reconcile_dismiss_impl(
+            "srv".into(),
+            fp,
+            vec![McpDismissTarget {
+                harness: "kiro".into(),
+                scope: "global".into(),
+            }],
+            Some(app_home.clone()),
+        )
+        .await
+        .unwrap();
+
+        let out = mcp_reconcile_impl(None, Some(app_home), Some(home))
+            .await
+            .unwrap();
+        let cand = out.imports.iter().find(|c| c.key == "srv").unwrap();
+        assert_eq!(cand.found_in.len(), 1);
+        assert_eq!(cand.found_in[0].harness, "cursor");
     }
 
     #[tokio::test]

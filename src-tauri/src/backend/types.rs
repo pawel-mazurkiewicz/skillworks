@@ -798,6 +798,10 @@ pub struct McpImportCandidate {
     pub matches_library_id: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Canonical-invocation fingerprint shared by every foundIn target
+    /// (grouping is by invocation equality). Passed back verbatim by the
+    /// frontend when dismissing.
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
