@@ -5770,6 +5770,19 @@ body {
   gap: 10px;
 }
 
+.mcp-servers-draft-card.is-leaving {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 280ms ease, transform 280ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcp-servers-draft-card.is-leaving {
+    transition: none;
+    transform: none;
+  }
+}
+
 .mcp-servers-card-error {
   margin: 0;
   border: 1px solid var(--red);

@@ -90,6 +90,32 @@ function newAddCard(spec, evidence) {
   };
 }
 
+const ADDED_CARD_LINGER_MS = 2500;
+const ADDED_CARD_FADE_MS = 280;
+
+function removeAddCard(cardKey) {
+  const before = state.add.cards.length;
+  state.add.cards = state.add.cards.filter((c) => c.key !== cardKey);
+  if (state.add.cards.length !== before) renderAdd();
+}
+
+// Post-add cards have no buttons (renderDraftCard hides the row once
+// card.added is set), so this timer is their only removal path.
+function scheduleAddedCardRemoval(cardKey) {
+  window.setTimeout(() => {
+    const card = state.add.cards.find((c) => c.key === cardKey);
+    if (!card) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      removeAddCard(cardKey);
+      return;
+    }
+    card.leaving = true;
+    renderAdd();
+    window.setTimeout(() => removeAddCard(cardKey), ADDED_CARD_FADE_MS);
+  }, ADDED_CARD_LINGER_MS);
+}
+
 function blankManualSpec() {
   return {
     id: "",
@@ -1158,7 +1184,7 @@ function renderDraftCard(card) {
     ? card.errorKind === "validation"
     : Boolean(card.error) && /already exists/i.test(card.error);
   return `
-    <article class="mcp-servers-draft-card" data-mcp-card="${card.key}">
+    <article class="mcp-servers-draft-card${card.leaving ? " is-leaving" : ""}" data-mcp-card="${card.key}">
       ${card.added ? `<p class="mcp-servers-card-added">Added to your library.</p>` : ""}
       ${card.error ? `<p class="mcp-servers-card-error" role="alert">${escapeHtml(card.error)}</p>` : ""}
       <div class="field-stack">
@@ -1300,6 +1326,7 @@ async function handleAddCard(card) {
     const servers = Array.isArray(response && response.servers) ? response.servers : state.servers;
     state.servers = servers;
     card.added = true;
+    scheduleAddedCardRemoval(card.key);
     fireToastLocal(`Added ${card.spec.name || card.spec.id} to your library.`);
     await refreshAll();
   } catch (err) {

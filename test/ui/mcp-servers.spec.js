@@ -324,6 +324,26 @@ try {
     await page.screenshot({ path: "test-results/mcp-add-url-draft.png" });
   });
 
+  test("added card auto-dismisses after a short linger", async ({ page }) => {
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+    await expect(page.locator(".mcp-servers-row")).toHaveCount(SERVERS.length);
+
+    await page.locator('[data-mcp-add-url="1"]').fill("https://example.com/some-mcp-readme");
+    await page.locator('.mcp-servers-add-url-row button[type="submit"]').click();
+
+    const card = page.locator(".mcp-servers-draft-card");
+    await expect(card).toHaveCount(1);
+
+    await card.locator("[data-mcp-card-add]").click();
+
+    const added = page.locator(".mcp-servers-card-added");
+    await expect(added).toBeVisible();
+
+    // 2500ms linger + 280ms fade + margin.
+    await expect(page.locator(".mcp-servers-draft-card")).toHaveCount(0, { timeout: 5000 });
+  });
+
   test("toggling a matrix checkbox issues the expected mocked activate request", async ({
     page,
   }) => {
