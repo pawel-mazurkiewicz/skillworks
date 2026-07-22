@@ -262,12 +262,7 @@ async fn build_plan_for_root(
                 .collect()
         };
 
-        let source_key = candidate
-            .entry_path
-            .strip_prefix(install_root)
-            .unwrap_or(&candidate.entry_path)
-            .to_string_lossy()
-            .into_owned();
+        let source_key = source_key_for(candidate, install_root);
 
         plan.push(GitInstallCandidate {
             name: desired_name,
@@ -382,10 +377,15 @@ pub async fn install_from_git(
 /// preview plan exposes and `commands.rs::candidate_source_key` computes
 /// from `ImportedSkill.from`.
 pub fn source_key_for(candidate: &ImportCandidate, install_root: &Path) -> String {
-    candidate
-        .entry_path
-        .strip_prefix(install_root)
-        .unwrap_or(&candidate.entry_path)
+    source_key_for_path(&candidate.entry_path, install_root)
+}
+
+/// Core source-key derivation shared by the preview plan, the install
+/// selection filter, and `commands.rs::candidate_source_key`: the path
+/// relative to `install_root`, falling back to the unstripped path.
+pub fn source_key_for_path(path: &Path, install_root: &Path) -> String {
+    path.strip_prefix(install_root)
+        .unwrap_or(path)
         .to_string_lossy()
         .into_owned()
 }

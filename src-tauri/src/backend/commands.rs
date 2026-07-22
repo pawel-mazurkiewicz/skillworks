@@ -1345,8 +1345,13 @@ pub async fn install_from_git_impl(
         }
     }
 
-    let (imported, skipped, install_root, candidates) =
-        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root, selected_source_keys.as_deref()).await?;
+    let (imported, skipped, install_root, candidates) = git_install_run(
+        &repo_url,
+        git_ref.as_deref(),
+        &ctx.vault_root,
+        selected_source_keys.as_deref(),
+    )
+    .await?;
 
     // Refresh skill discovery so we can map vault destinations back to
     // skill records when enabling them on targets.
@@ -1445,11 +1450,7 @@ fn candidate_source_key(
     install_root: &Path,
     _candidates: &[ImportCandidate],
 ) -> String {
-    let from_path = Path::new(from);
-    from_path
-        .strip_prefix(install_root)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| from.to_string())
+    super::git_install::source_key_for_path(Path::new(from), install_root)
 }
 
 fn build_per_skill_resolver(
