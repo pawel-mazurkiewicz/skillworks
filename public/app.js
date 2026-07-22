@@ -164,6 +164,7 @@ const elements = {
   skillPreview: document.querySelector("#skillPreview"),
   copyPathButton: document.querySelector("#copyPathButton"),
   toast: document.querySelector("#toast"),
+  busyToast: document.querySelector("#busyToast"),
   bulkFloating: document.querySelector("#bulkFloating"),
   manageGrid: document.querySelector("#manageTab .manage-grid"),
   sidebarToggle: document.querySelector('[data-action="sidebar-toggle"]'),
@@ -2665,9 +2666,11 @@ function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.dataset.tone = tone;
   elements.toast.classList.add("visible");
+  positionBusyToast();
   window.clearTimeout(showToast.timeout);
   showToast.timeout = window.setTimeout(() => {
     elements.toast.classList.remove("visible");
+    positionBusyToast();
   }, 2600);
 }
 
@@ -2676,6 +2679,36 @@ function setBusy(isBusy) {
   const busy = setBusy.count > 0;
   elements.appShell.classList.toggle("is-busy", busy);
   elements.appShell.setAttribute("aria-busy", busy ? "true" : "false");
+  if (!elements.busyToast) {
+    return;
+  }
+  if (busy) {
+    // Grace period: instant actions never flash the pill.
+    if (!setBusy.spinnerTimeout && !elements.busyToast.classList.contains("visible")) {
+      setBusy.spinnerTimeout = window.setTimeout(() => {
+        setBusy.spinnerTimeout = null;
+        positionBusyToast();
+        elements.busyToast.classList.add("visible");
+      }, 300);
+    }
+  } else {
+    window.clearTimeout(setBusy.spinnerTimeout);
+    setBusy.spinnerTimeout = null;
+    elements.busyToast.classList.remove("visible");
+  }
+}
+
+// Keeps the busy pill clear of the message toast: both live in the
+// bottom-right corner, so while the toast is visible the pill lifts
+// above it by the toast's measured height.
+function positionBusyToast() {
+  if (!elements.busyToast) {
+    return;
+  }
+  const lifted = elements.toast && elements.toast.classList.contains("visible");
+  elements.busyToast.style.bottom = lifted
+    ? `${18 + elements.toast.offsetHeight + 10}px`
+    : "";
 }
 
 function toastTone(message) {

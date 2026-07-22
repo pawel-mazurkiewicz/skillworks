@@ -1810,6 +1810,62 @@ body.skill-editor-locked {
   transform: translateY(0);
 }
 
+.busy-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--on-ink);
+  padding: 9px 16px;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(20px);
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    bottom 160ms ease;
+}
+
+.busy-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.busy-toast-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--on-ink) 25%, transparent);
+  border-top-color: var(--on-ink);
+}
+
+.busy-toast.visible .busy-toast-spinner {
+  animation: skillworksBusySpin 700ms linear infinite;
+}
+
+@keyframes skillworksBusySpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .busy-toast {
+    transition: none;
+  }
+  .busy-toast.visible .busy-toast-spinner {
+    animation: none;
+  }
+}
+
 .hidden {
   display: none !important;
 }

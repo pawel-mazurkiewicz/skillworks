@@ -156,6 +156,32 @@ try {
       await expect.poll(() => descriptionCalls.length).toBe(1);
       expect(descriptionCalls[0].ids.sort()).toEqual([APOLLO_ID, RUST_ID].sort());
     });
+
+    test("busy toast appears during slow actions and never flashes on fast ones", async ({ page }) => {
+      await openBrowseTab(page);
+      await expect(page.locator(".marketplace-card")).toHaveCount(2);
+
+      // Fast path: the initial load answered from instant mocks, so the
+      // 300ms grace period must have kept the pill hidden.
+      const busyToast = page.locator("#busyToast");
+      await expect(busyToast).not.toHaveClass(/visible/);
+
+      // Slow path: a later-registered route wins in Playwright, so this
+      // delays only the refresh fetch.
+      await page.route("**/api/marketplace/skills*", async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          headers: { "access-control-allow-origin": "*" },
+          body: JSON.stringify(MARKETPLACE),
+        });
+      });
+      await page.locator("#marketplaceRefreshButton").click();
+      await expect(busyToast).toHaveClass(/visible/);
+      // The action completing hides the pill again.
+      await expect(busyToast).not.toHaveClass(/visible/);
+    });
   });
 } catch (error) {
   if (!/Playwright Test did not expect/.test(String(error && error.message))) {
