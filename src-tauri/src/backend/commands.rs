@@ -1292,6 +1292,7 @@ pub async fn install_from_git(
     target_ids: Option<Vec<String>>,
     target_id: Option<String>,
     per_skill_targets: Option<std::collections::HashMap<String, Vec<String>>>,
+    selected_source_keys: Option<Vec<String>>,
     project_path: Option<String>,
 ) -> BackendResult<InstallFromGitResponse> {
     install_from_git_impl(
@@ -1300,6 +1301,7 @@ pub async fn install_from_git(
         target_ids,
         target_id,
         per_skill_targets,
+        selected_source_keys,
         project_path,
         None,
     )
@@ -1312,6 +1314,7 @@ pub async fn install_from_git_impl(
     target_ids: Option<Vec<String>>,
     target_id: Option<String>,
     per_skill_targets: Option<std::collections::HashMap<String, Vec<String>>>,
+    selected_source_keys: Option<Vec<String>>,
     project_path: Option<String>,
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<InstallFromGitResponse> {
@@ -1343,7 +1346,7 @@ pub async fn install_from_git_impl(
     }
 
     let (imported, skipped, install_root, candidates) =
-        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root, None).await?;
+        git_install_run(&repo_url, git_ref.as_deref(), &ctx.vault_root, selected_source_keys.as_deref()).await?;
 
     // Refresh skill discovery so we can map vault destinations back to
     // skill records when enabling them on targets.
@@ -5994,5 +5997,78 @@ mod tests {
             "warnings: {:?}",
             out.warnings
         );
+    }
+
+    #[tokio::test]
+    async fn install_from_git_impl_respects_selected_source_keys() {
+        use git2::{IndexAddOption, Repository, Signature};
+
+        let dir = TempDir::new().unwrap();
+        let app_home = dir.path().join(".skillworks");
+        let vault = app_home.join("vault");
+        fs::create_dir_all(&vault).await.unwrap();
+        let config = Config {
+            vault_root: Some(vault.clone()),
+            recent_projects: vec![],
+            projects: vec![],
+            custom_targets: vec![],
+            hidden_target_ids: vec![],
+            sets: vec![],
+        };
+        config.save(&app_home.join("config.json")).await.unwrap();
+
+        // Two-skill fixture repo.
+        let working = dir.path().join("work");
+        for (rel, body) in [
+            (
+                "skills/rust/SKILL.md",
+                "---\nname: Rust\ndescription: x\n---\n\nbody\n",
+            ),
+            (
+                "skills/apollo/SKILL.md",
+                "---\nname: Apollo\ndescription: y\n---\n\nbody\n",
+            ),
+        ] {
+            let path = working.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, body).unwrap();
+        }
+        let repo = Repository::init(&working).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+        drop(tree);
+
+        let bare = dir.path().join("bare.git");
+        let mut builder = git2::build::RepoBuilder::new();
+        builder.bare(true);
+        builder
+            .clone(working.to_str().unwrap(), &bare)
+            .unwrap();
+
+        let resp = install_from_git_impl(
+            format!("file://{}", bare.to_string_lossy()),
+            None,
+            None,
+            None,
+            None,
+            Some(vec!["skills/rust".to_string()]),
+            None,
+            Some(app_home.clone()),
+        )
+        .await
+        .expect("install");
+
+        assert_eq!(resp.report.imported, 1);
+        assert_eq!(resp.report.errors, 0);
+        assert!(vault.join("rust").join("SKILL.md").is_file());
+        assert!(!vault.join("apollo").exists());
     }
 }

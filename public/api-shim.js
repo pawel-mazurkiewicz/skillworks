@@ -245,6 +245,7 @@ const ROUTES = [
     targetIds: body.targetIds,
     targetId: body.targetId,
     perSkillTargets: body.perSkillTargets,
+    selectedSourceKeys: body.selectedSourceKeys,
     projectPath: body.projectPath,
   })],
 
