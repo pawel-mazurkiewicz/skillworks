@@ -800,7 +800,7 @@ mod tests {
         // Root ignores directory permission bits, so this guard would be
         // meaningless (and would leave a locked-down directory around) when
         // the test runs as root (e.g. some CI/container setups).
-        if unsafe { libc::geteuid() } == 0 {
+        if nix::unistd::Uid::effective().is_root() {
             return;
         }
 
