@@ -48,8 +48,7 @@ pub fn parse(text: &str) -> ParsedFrontmatter {
         let data = if yaml_block.trim().is_empty() {
             serde_yaml::Value::Null
         } else {
-            serde_yaml::from_str::<serde_yaml::Value>(yaml_block)
-                .unwrap_or(serde_yaml::Value::Null)
+            serde_yaml::from_str::<serde_yaml::Value>(yaml_block).unwrap_or(serde_yaml::Value::Null)
         };
 
         ParsedFrontmatter { data, body }

@@ -44,7 +44,10 @@ impl GitSource {
 
 /// Parse a user-supplied repo URL with optional `#ref:subdir` fragment.
 /// Mirrors `server.js::parseGitSource`.
-pub fn parse_git_source(raw_repo_url: &str, explicit_ref: Option<&str>) -> BackendResult<GitSource> {
+pub fn parse_git_source(
+    raw_repo_url: &str,
+    explicit_ref: Option<&str>,
+) -> BackendResult<GitSource> {
     let raw = raw_repo_url.trim();
     if raw.is_empty() {
         return Err(BackendError::Validation(
@@ -219,9 +222,7 @@ async fn build_plan_for_root(
         } else if is_inside_path(vault_root, &candidate.real_path) {
             action = "skip".into();
             skip_reason = "Refusing to move a skill into its own child directory".into();
-        } else if let Some(existing) =
-            find_duplicate_vault_skill(vault_root, candidate).await?
-        {
+        } else if let Some(existing) = find_duplicate_vault_skill(vault_root, candidate).await? {
             action = "dedupe".into();
             will_dedupe = true;
             vault_destination = existing.to_string_lossy().into_owned();
@@ -337,9 +338,7 @@ pub async fn install_from_git(
         None => import_source(vault_root, &install_root, true).await?,
         Some(keys) => {
             if keys.is_empty() {
-                return Err(BackendError::Validation(
-                    "No skills selected".to_string(),
-                ));
+                return Err(BackendError::Validation("No skills selected".to_string()));
             }
             let available: HashSet<String> = candidates
                 .iter()
@@ -362,8 +361,7 @@ pub async fn install_from_git(
                 // Importing the candidate's own directory finds exactly that
                 // one skill (the walker stops at the first SKILL.md), so the
                 // vault collision/dedupe logic runs per selected skill.
-                let (mut i, mut s) =
-                    import_source(vault_root, &candidate.entry_path, true).await?;
+                let (mut i, mut s) = import_source(vault_root, &candidate.entry_path, true).await?;
                 imported.append(&mut i);
                 skipped.append(&mut s);
             }
@@ -453,22 +451,14 @@ mod tests {
 
     #[test]
     fn parse_git_source_explicit_ref_wins() {
-        let s = parse_git_source(
-            "https://github.com/foo/bar#main:pkg",
-            Some("v1.0.0"),
-        )
-        .unwrap();
+        let s = parse_git_source("https://github.com/foo/bar#main:pkg", Some("v1.0.0")).unwrap();
         assert_eq!(s.git_ref, "v1.0.0");
         assert_eq!(s.subdir, "pkg");
     }
 
     #[test]
     fn parse_git_source_rejects_traversal() {
-        let err = parse_git_source(
-            "https://github.com/foo/bar#main:../escape",
-            None,
-        )
-        .unwrap_err();
+        let err = parse_git_source("https://github.com/foo/bar#main:../escape", None).unwrap_err();
         match err {
             BackendError::Validation(msg) => assert!(msg.contains("'..'")),
             other => panic!("expected validation error, got {other:?}"),
@@ -568,14 +558,10 @@ mod tests {
         std::fs::create_dir_all(&vault_root).unwrap();
 
         let selection = vec!["skills/rust".to_string()];
-        let (imported, skipped, _install_root, candidates) = install_from_git(
-            &url_for_path(&bare),
-            None,
-            &vault_root,
-            Some(&selection),
-        )
-        .await
-        .expect("install");
+        let (imported, skipped, _install_root, candidates) =
+            install_from_git(&url_for_path(&bare), None, &vault_root, Some(&selection))
+                .await
+                .expect("install");
 
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].name, "Rust");
@@ -658,14 +644,10 @@ mod tests {
         std::fs::write(vault_root.join("existing-rust").join("SKILL.md"), body).unwrap();
 
         let selection = vec!["skills/rust".to_string()];
-        let (imported, _skipped, _root, _candidates) = install_from_git(
-            &url_for_path(&bare),
-            None,
-            &vault_root,
-            Some(&selection),
-        )
-        .await
-        .expect("install");
+        let (imported, _skipped, _root, _candidates) =
+            install_from_git(&url_for_path(&bare), None, &vault_root, Some(&selection))
+                .await
+                .expect("install");
 
         assert_eq!(imported.len(), 1);
         assert!(imported[0].deduped);

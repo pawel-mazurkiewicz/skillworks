@@ -18,8 +18,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
 
-use super::fs_atomic::write_json_atomic;
 use super::frontmatter;
+use super::fs_atomic::write_json_atomic;
 use super::state::{BackendError, BackendResult};
 use super::types::{Manifest, SkillMetadata, SkillRecord};
 
@@ -41,8 +41,7 @@ pub async fn read_skill_metadata(skill_dir: &Path) -> BackendResult<SkillMetadat
     let parsed = frontmatter::parse(&raw_text);
 
     let name = frontmatter::string_field(&parsed.data, "name").unwrap_or_default();
-    let description =
-        frontmatter::string_field(&parsed.data, "description").unwrap_or_default();
+    let description = frontmatter::string_field(&parsed.data, "description").unwrap_or_default();
     let author = frontmatter::string_field(&parsed.data, "author").unwrap_or_default();
     let version = frontmatter::string_field(&parsed.data, "version");
 
@@ -253,10 +252,7 @@ pub async fn discover_skills(
         JoinSet::new();
 
     for (index, root) in roots.into_iter().enumerate() {
-        let relative = root
-            .strip_prefix(vault_root)
-            .unwrap_or(&root)
-            .to_path_buf();
+        let relative = root.strip_prefix(vault_root).unwrap_or(&root).to_path_buf();
         let id = normalize_path(&relative);
         let cached = cache.entries.get(&id).cloned();
         let semaphore = Arc::clone(&semaphore);
@@ -343,8 +339,8 @@ pub async fn discover_skills(
 
     let mut indexed: Vec<(usize, SkillRecord, SkillCacheEntry)> = Vec::new();
     while let Some(joined) = join_set.join_next().await {
-        let result =
-            joined.map_err(|err| BackendError::Validation(format!("discover join error: {err}")))?;
+        let result = joined
+            .map_err(|err| BackendError::Validation(format!("discover join error: {err}")))?;
         indexed.push(result?);
     }
     // Restore deterministic pre-sort order (root walk order) so the by-name
@@ -408,10 +404,9 @@ pub async fn read_manifest(skill_dir: &Path) -> BackendResult<Manifest> {
             }
             if let Some(managed) = raw.get("managedLinks").and_then(|v| v.as_object()) {
                 for (key, value) in managed {
-                    manifest.managed_links.insert(
-                        key.clone(),
-                        super::types::ManifestEntry(value.clone()),
-                    );
+                    manifest
+                        .managed_links
+                        .insert(key.clone(), super::types::ManifestEntry(value.clone()));
                 }
             }
             Ok(manifest)
@@ -456,9 +451,8 @@ pub fn safe_segment(value: &str) -> String {
     let mut segment = String::with_capacity(lowered.len());
     let mut last_was_dash = false;
     for ch in lowered.chars() {
-        let allowed = ch.is_ascii_lowercase()
-            || ch.is_ascii_digit()
-            || matches!(ch, '.' | '_' | '-');
+        let allowed =
+            ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-');
         if allowed {
             segment.push(ch);
             last_was_dash = ch == '-';
@@ -482,7 +476,10 @@ fn short_hash(value: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(value.as_bytes());
     let result = hasher.finalize();
-    let hex = result.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = result
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     hex.chars().take(8).collect()
 }
 
@@ -495,7 +492,10 @@ fn infer_tags(text: &str) -> Vec<String> {
     // 6 regexes 1500+ times dominated the old discovery profile.
     static RULES: Lazy<Vec<(&'static str, Regex)>> = Lazy::new(|| {
         [
-            ("iOS", r"\b(swift|swiftui|xcode|ios|app intents?|siri|widget)\b"),
+            (
+                "iOS",
+                r"\b(swift|swiftui|xcode|ios|app intents?|siri|widget)\b",
+            ),
             (
                 "Web",
                 r"\b(react|vue|svelte|frontend|tailwind|css|html|browser|vite)\b",
@@ -544,9 +544,7 @@ mod tests {
 
     async fn write_skill(dir: &Path, name: &str, description: &str) {
         fs::create_dir_all(dir).await.unwrap();
-        let body = format!(
-            "---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
-        );
+        let body = format!("---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n");
         fs::write(dir.join(SKILL_FILE), body).await.unwrap();
     }
 
@@ -606,7 +604,9 @@ mod tests {
         )
         .await;
         // Should be skipped:
-        fs::create_dir_all(vault.join("node_modules/foo")).await.unwrap();
+        fs::create_dir_all(vault.join("node_modules/foo"))
+            .await
+            .unwrap();
         fs::write(
             vault.join("node_modules/foo").join(SKILL_FILE),
             "---\nname: Hidden\n---\n",

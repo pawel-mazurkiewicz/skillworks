@@ -512,11 +512,22 @@ mod tests {
         let r = drafts_of(md);
         assert_eq!(r.drafts.len(), 1);
         let d = &r.drafts[0];
-        assert_eq!(d.spec.env.get("GITHUB_TOKEN").map(String::as_str), Some("tok-a"), "first block stays canonical");
-        assert_eq!(d.spec.variants.len(), 1, "the differently-tokened second block must survive as a variant, not be dropped");
+        assert_eq!(
+            d.spec.env.get("GITHUB_TOKEN").map(String::as_str),
+            Some("tok-a"),
+            "first block stays canonical"
+        );
+        assert_eq!(
+            d.spec.variants.len(),
+            1,
+            "the differently-tokened second block must survive as a variant, not be dropped"
+        );
         let v = &d.spec.variants[0];
         assert_eq!(
-            v.env.as_ref().and_then(|e| e.get("GITHUB_TOKEN")).map(String::as_str),
+            v.env
+                .as_ref()
+                .and_then(|e| e.get("GITHUB_TOKEN"))
+                .map(String::as_str),
             Some("tok-b"),
             "second block's distinct env token preserved on the variant"
         );
@@ -534,16 +545,29 @@ mod tests {
             "```sh\ndocker run --rm -i ghcr.io/acme/acme:latest\n```\n",
         );
         let r = drafts_of(md);
-        assert_eq!(r.drafts.len(), 1, "docker image basename collides with the explicit npx name: {:?}", r.warnings);
+        assert_eq!(
+            r.drafts.len(),
+            1,
+            "docker image basename collides with the explicit npx name: {:?}",
+            r.warnings
+        );
         let spec = &r.drafts[0].spec;
-        assert_eq!(spec.env.get("API_KEY").map(String::as_str), Some("secret"), "canonical keeps its env");
+        assert_eq!(
+            spec.env.get("API_KEY").map(String::as_str),
+            Some("secret"),
+            "canonical keeps its env"
+        );
 
         let docker_variant = spec
             .variants
             .iter()
             .find(|v| v.label == "docker")
             .expect("docker variant present");
-        assert_eq!(docker_variant.env, Some(BTreeMap::new()), "variant's env must serialize as an explicit empty override");
+        assert_eq!(
+            docker_variant.env,
+            Some(BTreeMap::new()),
+            "variant's env must serialize as an explicit empty override"
+        );
 
         let effective = resolve_effective(spec, "claude", "global", Some("docker")).unwrap();
         assert!(

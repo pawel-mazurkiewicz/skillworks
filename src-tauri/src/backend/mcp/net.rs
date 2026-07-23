@@ -224,9 +224,9 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
         }
         let parsed = reqwest::Url::parse(&current)
             .map_err(|e| BackendError::Validation(format!("Invalid URL {current}: {e}")))?;
-        let host = parsed.host_str().ok_or_else(|| {
-            BackendError::Validation(format!("URL has no host: {current}"))
-        })?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| BackendError::Validation(format!("URL has no host: {current}")))?;
         let port = parsed.port_or_known_default().unwrap_or(443);
         let addrs = validated_addrs(host, port).await?;
 
@@ -294,8 +294,9 @@ async fn fetch_hops(start_url: &str) -> BackendResult<HopOutcome> {
         {
             push_capped(&mut buf, &chunk, MAX_BODY_BYTES)?;
         }
-        let body = String::from_utf8(buf)
-            .map_err(|e| BackendError::Validation(format!("Fetched document is not valid UTF-8: {e}")))?;
+        let body = String::from_utf8(buf).map_err(|e| {
+            BackendError::Validation(format!("Fetched document is not valid UTF-8: {e}"))
+        })?;
         return Ok(HopOutcome::Fetched { url: current, body });
     }
 }
@@ -345,17 +346,21 @@ async fn fetch_markdown_guarded_inner(
 ) -> BackendResult<(String, String)> {
     match fetch_hops(url).await? {
         HopOutcome::Fetched { url, body } => Ok((url, body)),
-        HopOutcome::NonSuccess { url: url1, status: status1 } => match retry_url {
+        HopOutcome::NonSuccess {
+            url: url1,
+            status: status1,
+        } => match retry_url {
             None => Err(BackendError::Validation(format!(
                 "Fetch failed for {url1} (status {status1})"
             ))),
             Some(alt) => match fetch_hops(alt).await? {
                 HopOutcome::Fetched { url, body } => Ok((url, body)),
-                HopOutcome::NonSuccess { url: url2, status: status2 } => {
-                    Err(BackendError::Validation(format!(
-                        "Fetch failed for {url1} (status {status1}) and {url2} (status {status2})"
-                    )))
-                }
+                HopOutcome::NonSuccess {
+                    url: url2,
+                    status: status2,
+                } => Err(BackendError::Validation(format!(
+                    "Fetch failed for {url1} (status {status1}) and {url2} (status {status2})"
+                ))),
             },
         },
     }
@@ -455,7 +460,10 @@ mod tests {
             .parse()
             .unwrap();
         let next = resolve_redirect(&current, "/other/path").unwrap();
-        assert_eq!(next.as_str(), "https://raw.githubusercontent.com/other/path");
+        assert_eq!(
+            next.as_str(),
+            "https://raw.githubusercontent.com/other/path"
+        );
     }
 
     #[test]

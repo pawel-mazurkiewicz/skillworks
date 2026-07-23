@@ -120,4 +120,3 @@ pub async fn unique_skill_destination(root: &Path, name: &str) -> PathBuf {
     }
     candidate
 }
-

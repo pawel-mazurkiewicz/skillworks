@@ -87,7 +87,10 @@ mod tests {
 
     #[test]
     fn fingerprint_changes_with_canonical_fields() {
-        assert_ne!(fingerprint(&obs(&["-y", "pkg"])), fingerprint(&obs(&["-y", "pkg", "--x"])));
+        assert_ne!(
+            fingerprint(&obs(&["-y", "pkg"])),
+            fingerprint(&obs(&["-y", "pkg", "--x"]))
+        );
         let mut e = obs(&["-y", "pkg"]);
         e.env.insert("TOKEN".into(), "t".into());
         assert_ne!(fingerprint(&obs(&["-y", "pkg"])), fingerprint(&e));

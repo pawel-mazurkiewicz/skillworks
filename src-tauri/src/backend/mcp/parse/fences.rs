@@ -13,7 +13,11 @@ pub(super) fn scan_fences(markdown: &str) -> Vec<Fence> {
         let t = line.trim_start();
         if let Some(rest) = t.strip_prefix("```") {
             match open.take() {
-                Some((info, start, body)) => fences.push(Fence { info, start_line: start, body }),
+                Some((info, start, body)) => fences.push(Fence {
+                    info,
+                    start_line: start,
+                    body,
+                }),
                 None => open = Some((rest.trim().to_ascii_lowercase(), idx + 1, String::new())),
             }
         } else if let Some((_, _, body)) = open.as_mut() {
@@ -39,16 +43,25 @@ pub(super) fn strip_jsonc(text: &str) -> String {
     for (i, &c) in chars.iter().enumerate() {
         if in_str {
             out.push(c);
-            if escaped { escaped = false; }
-            else if c == '\\' { escaped = true; }
-            else if c == '"' { in_str = false; }
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
             continue;
         }
         match c {
-            '"' => { in_str = true; out.push(c); }
+            '"' => {
+                in_str = true;
+                out.push(c);
+            }
             ',' => {
                 let next_sig = chars[i + 1..].iter().find(|ch| !ch.is_whitespace());
-                if !matches!(next_sig, Some('}') | Some(']')) { out.push(c); }
+                if !matches!(next_sig, Some('}') | Some(']')) {
+                    out.push(c);
+                }
             }
             _ => out.push(c),
         }

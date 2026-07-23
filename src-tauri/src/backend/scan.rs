@@ -92,17 +92,10 @@ fn clean_path(p: &Path) -> PathBuf {
 /// `core.js::defaultScanRoots`. The JS version returns the same list on
 /// every platform; we replicate that.
 pub fn default_scan_roots(home_dir: &Path) -> Vec<PathBuf> {
-    [
-        "code",
-        "projects",
-        "dev",
-        "src",
-        "work",
-        "Developer",
-    ]
-    .iter()
-    .map(|name| home_dir.join(name))
-    .collect()
+    ["code", "projects", "dev", "src", "work", "Developer"]
+        .iter()
+        .map(|name| home_dir.join(name))
+        .collect()
 }
 
 /// Resolve and de-dupe scan roots, expanding `~` and falling back to the
@@ -187,11 +180,8 @@ pub fn has_hidden_path_segment(project_root: &Path, home_dir: &Path) -> bool {
     if rel.as_os_str().is_empty() {
         return false;
     }
-    rel.components().any(|c| {
-        c.as_os_str()
-            .to_string_lossy()
-            .starts_with('.')
-    })
+    rel.components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
 }
 
 /// Derive a project root from a `skills` directory. Mirrors
@@ -266,9 +256,7 @@ pub async fn walk_for_projects(
                             .file_name()
                             .map(|s| s.to_string_lossy().into_owned())
                             .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| {
-                                project_key.to_string_lossy().into_owned()
-                            });
+                            .unwrap_or_else(|| project_key.to_string_lossy().into_owned());
                         project_map
                             .entry(project_key.clone())
                             .and_modify(|existing| {
@@ -396,10 +384,7 @@ mod tests {
 
     #[test]
     fn is_inside_path_basic() {
-        assert!(is_inside_path(
-            Path::new("/a/b/c"),
-            Path::new("/a/b"),
-        ));
+        assert!(is_inside_path(Path::new("/a/b/c"), Path::new("/a/b"),));
         assert!(is_inside_path(Path::new("/a/b"), Path::new("/a/b")));
         assert!(!is_inside_path(Path::new("/a/bc"), Path::new("/a/b")));
         assert!(!is_inside_path(Path::new("/x"), Path::new("/a/b")));
@@ -457,9 +442,7 @@ mod tests {
     #[test]
     fn infer_project_root_strips_known_parents() {
         assert_eq!(
-            infer_project_root_from_skill_dir(&PathBuf::from(
-                "/repo/example/.agents/skills"
-            )),
+            infer_project_root_from_skill_dir(&PathBuf::from("/repo/example/.agents/skills")),
             Some(PathBuf::from("/repo/example")),
         );
         assert_eq!(
@@ -501,20 +484,17 @@ mod tests {
         // Project with a git marker and a skill dir.
         let proj = home.join("code").join("proj-a");
         fs::create_dir_all(&proj).await.unwrap();
-        fs::write(proj.join("Cargo.toml"), "[package]\nname=\"x\"\n").await.unwrap();
+        fs::write(proj.join("Cargo.toml"), "[package]\nname=\"x\"\n")
+            .await
+            .unwrap();
         let skill_dir = proj.join("skills").join("hello");
         fs::create_dir_all(&skill_dir).await.unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "---\nname: hello\n---\n").await.unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: hello\n---\n")
+            .await
+            .unwrap();
 
         let roots = vec![home.join("code").to_string_lossy().into_owned()];
-        let report = scan_project_roots(
-            Some(&roots),
-            Some(8),
-            &home,
-            &app_home,
-            &vault,
-        )
-        .await;
+        let report = scan_project_roots(Some(&roots), Some(8), &home, &app_home, &vault).await;
 
         assert_eq!(report.discovered, 1, "should find one project");
         assert_eq!(report.projects[0].path, proj.to_string_lossy());
@@ -533,18 +513,28 @@ mod tests {
         // Real project we want to find.
         let real = home.join("code").join("real");
         fs::create_dir_all(&real).await.unwrap();
-        fs::write(real.join("Cargo.toml"), "[package]\nname=\"r\"\n").await.unwrap();
+        fs::write(real.join("Cargo.toml"), "[package]\nname=\"r\"\n")
+            .await
+            .unwrap();
         let real_skill = real.join("skills").join("a");
         fs::create_dir_all(&real_skill).await.unwrap();
-        fs::write(real_skill.join("SKILL.md"), "---\nname: a\n---\n").await.unwrap();
+        fs::write(real_skill.join("SKILL.md"), "---\nname: a\n---\n")
+            .await
+            .unwrap();
 
         // node_modules sub-project that should be skipped.
-        let nm = home.join("code").join("nm").join("node_modules").join("fake");
+        let nm = home
+            .join("code")
+            .join("nm")
+            .join("node_modules")
+            .join("fake");
         fs::create_dir_all(&nm).await.unwrap();
         fs::write(nm.join("package.json"), "{}").await.unwrap();
         let nm_skill = nm.join("skills").join("x");
         fs::create_dir_all(&nm_skill).await.unwrap();
-        fs::write(nm_skill.join("SKILL.md"), "---\nname: x\n---\n").await.unwrap();
+        fs::write(nm_skill.join("SKILL.md"), "---\nname: x\n---\n")
+            .await
+            .unwrap();
 
         // Hidden dotdir under home that should be skipped.
         let hidden = home.join(".codex").join("plugins").join("cache").join("p");
@@ -552,25 +542,29 @@ mod tests {
         fs::write(hidden.join("package.json"), "{}").await.unwrap();
         let hidden_skill = hidden.join("skills").join("y");
         fs::create_dir_all(&hidden_skill).await.unwrap();
-        fs::write(hidden_skill.join("SKILL.md"), "---\nname: y\n---\n").await.unwrap();
+        fs::write(hidden_skill.join("SKILL.md"), "---\nname: y\n---\n")
+            .await
+            .unwrap();
 
         let roots = vec![home.to_string_lossy().into_owned()];
-        let report = scan_project_roots(
-            Some(&roots),
-            Some(10),
-            &home,
-            &app_home,
-            &vault,
-        )
-        .await;
+        let report = scan_project_roots(Some(&roots), Some(10), &home, &app_home, &vault).await;
 
         let paths: Vec<String> = report.projects.iter().map(|p| p.path.clone()).collect();
-        assert!(paths.iter().any(|p| p == &real.to_string_lossy()),
-            "real project should be discovered, got: {:?}", paths);
-        assert!(!paths.iter().any(|p| p.contains("node_modules")),
-            "node_modules entries must be skipped, got: {:?}", paths);
-        assert!(!paths.iter().any(|p| p.contains("/.codex/")),
-            "hidden plugins cache entries must be skipped, got: {:?}", paths);
+        assert!(
+            paths.iter().any(|p| p == &real.to_string_lossy()),
+            "real project should be discovered, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("node_modules")),
+            "node_modules entries must be skipped, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("/.codex/")),
+            "hidden plugins cache entries must be skipped, got: {:?}",
+            paths
+        );
     }
 
     #[tokio::test]
@@ -590,10 +584,14 @@ mod tests {
             .join("d")
             .join("proj");
         fs::create_dir_all(&deep).await.unwrap();
-        fs::write(deep.join("Cargo.toml"), "[package]\nname=\"d\"\n").await.unwrap();
+        fs::write(deep.join("Cargo.toml"), "[package]\nname=\"d\"\n")
+            .await
+            .unwrap();
         let skill_dir = deep.join("skills").join("x");
         fs::create_dir_all(&skill_dir).await.unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "---\nname: x\n---\n").await.unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: x\n---\n")
+            .await
+            .unwrap();
 
         let roots = vec![home.join("code").to_string_lossy().into_owned()];
 

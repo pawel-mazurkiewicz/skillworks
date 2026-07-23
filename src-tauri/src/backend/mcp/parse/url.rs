@@ -107,15 +107,23 @@ mod tests {
     #[test]
     fn classifies_github_repo_root() {
         let p = source_for_url("https://github.com/upstash/context7-mcp").unwrap();
-        assert_eq!(p.fetch_url, "https://raw.githubusercontent.com/upstash/context7-mcp/HEAD/README.md");
-        assert_eq!(p.retry_url.as_deref(), Some("https://raw.githubusercontent.com/upstash/context7-mcp/master/README.md"));
+        assert_eq!(
+            p.fetch_url,
+            "https://raw.githubusercontent.com/upstash/context7-mcp/HEAD/README.md"
+        );
+        assert_eq!(
+            p.retry_url.as_deref(),
+            Some("https://raw.githubusercontent.com/upstash/context7-mcp/master/README.md")
+        );
         assert_eq!(p.fallback_name, "context7-mcp");
         assert!(p.warnings.is_empty());
     }
 
     #[test]
     fn classifies_github_tree_subdir() {
-        let p = source_for_url("https://github.com/modelcontextprotocol/servers/tree/main/src/fetch").unwrap();
+        let p =
+            source_for_url("https://github.com/modelcontextprotocol/servers/tree/main/src/fetch")
+                .unwrap();
         assert_eq!(p.fetch_url, "https://raw.githubusercontent.com/modelcontextprotocol/servers/main/src/fetch/README.md");
         assert!(p.retry_url.is_none(), "explicit ref: no master retry");
         assert_eq!(p.fallback_name, "fetch");
@@ -124,7 +132,10 @@ mod tests {
     #[test]
     fn classifies_github_blob_md() {
         let p = source_for_url("https://github.com/org/repo/blob/main/docs/INSTALL.md").unwrap();
-        assert_eq!(p.fetch_url, "https://raw.githubusercontent.com/org/repo/main/docs/INSTALL.md");
+        assert_eq!(
+            p.fetch_url,
+            "https://raw.githubusercontent.com/org/repo/main/docs/INSTALL.md"
+        );
         assert_eq!(p.fallback_name, "install");
     }
 
@@ -156,7 +167,10 @@ mod tests {
     #[test]
     fn github_url_with_trailing_slash_and_query() {
         let p = source_for_url("https://github.com/org/repo/?tab=readme-ov-file").unwrap();
-        assert_eq!(p.fetch_url, "https://raw.githubusercontent.com/org/repo/HEAD/README.md");
+        assert_eq!(
+            p.fetch_url,
+            "https://raw.githubusercontent.com/org/repo/HEAD/README.md"
+        );
     }
 
     #[test]

@@ -33,22 +33,19 @@ fn unique_tmp_suffix() -> String {
 /// same directory, fsync the contents to disk, then rename over the target.
 /// The rename is atomic on the same filesystem, so readers either see the
 /// previous file or the new one — never a half-written intermediate.
-pub async fn write_json_atomic<T: Serialize + ?Sized>(
-    path: &Path,
-    value: &T,
-) -> BackendResult<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| BackendError::Validation(format!("path has no parent: {}", path.display())))?;
+pub async fn write_json_atomic<T: Serialize + ?Sized>(path: &Path, value: &T) -> BackendResult<()> {
+    let parent = path.parent().ok_or_else(|| {
+        BackendError::Validation(format!("path has no parent: {}", path.display()))
+    })?;
 
     fs::create_dir_all(parent).await?;
 
     // Suffix the temp filename with the pid + a per-call sequence number so
     // concurrent writers (even within this one process) never share a temp
     // path. See `unique_tmp_suffix` for why the pid alone isn't sufficient.
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| BackendError::Validation(format!("path has no file name: {}", path.display())))?;
+    let file_name = path.file_name().ok_or_else(|| {
+        BackendError::Validation(format!("path has no file name: {}", path.display()))
+    })?;
     let mut tmp_name = file_name.to_os_string();
     tmp_name.push(unique_tmp_suffix());
     let tmp_path = parent.join(&tmp_name);
@@ -74,15 +71,15 @@ pub async fn write_json_atomic<T: Serialize + ?Sized>(
 /// Atomically write raw bytes to `path` using the same temp-then-rename strategy
 /// as [`write_json_atomic`]. Used for non-JSON config files (e.g. TOML).
 pub async fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> BackendResult<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| BackendError::Validation(format!("path has no parent: {}", path.display())))?;
+    let parent = path.parent().ok_or_else(|| {
+        BackendError::Validation(format!("path has no parent: {}", path.display()))
+    })?;
 
     fs::create_dir_all(parent).await?;
 
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| BackendError::Validation(format!("path has no file name: {}", path.display())))?;
+    let file_name = path.file_name().ok_or_else(|| {
+        BackendError::Validation(format!("path has no file name: {}", path.display()))
+    })?;
     let mut tmp_name = file_name.to_os_string();
     tmp_name.push(unique_tmp_suffix());
     let tmp_path = parent.join(&tmp_name);

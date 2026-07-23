@@ -67,10 +67,7 @@ fn clean_path(p: &Path) -> PathBuf {
 
 /// Construct a [`ProjectRecord`] from disk. Mirrors
 /// `core.js::buildProjectRecord`.
-pub async fn build_project_record(
-    project_path: &Path,
-    source: ProjectSource,
-) -> ProjectRecord {
+pub async fn build_project_record(project_path: &Path, source: ProjectSource) -> ProjectRecord {
     let normalized = normalize_project_path(project_path);
     let skill_sources = find_project_skill_sources(&normalized).await;
     let skill_source_count = skill_sources.len() as u32;

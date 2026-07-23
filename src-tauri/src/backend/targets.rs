@@ -27,34 +27,209 @@ pub struct HarnessTargetDef {
 }
 
 static HARNESS_TARGETS: &[HarnessTargetDef] = &[
-    HarnessTargetDef { id: "codex-global",      harness: "Codex",       scope: "global", label: "Codex global",       short_label: "CX G", path_parts: &[".codex", "skills"] },
-    HarnessTargetDef { id: "claude-global",     harness: "Claude",      scope: "global", label: "Claude global",      short_label: "CL G", path_parts: &[".claude", "skills"] },
-    HarnessTargetDef { id: "agents-global",     harness: "Agents",      scope: "global", label: "Agents global",      short_label: "AG G", path_parts: &[".agents", "skills"] },
-    HarnessTargetDef { id: "gemini-global",     harness: "Gemini",      scope: "global", label: "Gemini global",      short_label: "GM G", path_parts: &[".gemini", "skills"] },
-    HarnessTargetDef { id: "copilot-global",    harness: "Copilot",     scope: "global", label: "Copilot global",     short_label: "CP G", path_parts: &[".copilot", "skills"] },
-    HarnessTargetDef { id: "opencode-global",   harness: "OpenCode",    scope: "global", label: "OpenCode global",    short_label: "OC G", path_parts: &[".config", "opencode", "skills"] },
-    HarnessTargetDef { id: "antigravity-global",harness: "Antigravity", scope: "global", label: "Antigravity global", short_label: "AV G", path_parts: &[".gemini", "antigravity", "skills"] },
-    HarnessTargetDef { id: "cursor-global",     harness: "Cursor",      scope: "global", label: "Cursor global",      short_label: "CR G", path_parts: &[".cursor", "skills"] },
-    HarnessTargetDef { id: "kiro-global",       harness: "Kiro",        scope: "global", label: "Kiro global",        short_label: "KR G", path_parts: &[".kiro", "skills"] },
-    HarnessTargetDef { id: "codebuddy-global",  harness: "CodeBuddy",   scope: "global", label: "CodeBuddy global",   short_label: "CB G", path_parts: &[".codebuddy", "skills"] },
-    HarnessTargetDef { id: "openclaw-global",   harness: "OpenClaw",    scope: "global", label: "OpenClaw global",    short_label: "OW G", path_parts: &[".openclaw", "skills"] },
-    HarnessTargetDef { id: "trae-global",       harness: "Trae",        scope: "global", label: "Trae global",        short_label: "TR G", path_parts: &[".trae", "skills"] },
-    HarnessTargetDef { id: "qoder-global",      harness: "Qoder",       scope: "global", label: "Qoder global",       short_label: "QD G", path_parts: &[".qoder", "skills"] },
+    HarnessTargetDef {
+        id: "codex-global",
+        harness: "Codex",
+        scope: "global",
+        label: "Codex global",
+        short_label: "CX G",
+        path_parts: &[".codex", "skills"],
+    },
+    HarnessTargetDef {
+        id: "claude-global",
+        harness: "Claude",
+        scope: "global",
+        label: "Claude global",
+        short_label: "CL G",
+        path_parts: &[".claude", "skills"],
+    },
+    HarnessTargetDef {
+        id: "agents-global",
+        harness: "Agents",
+        scope: "global",
+        label: "Agents global",
+        short_label: "AG G",
+        path_parts: &[".agents", "skills"],
+    },
+    HarnessTargetDef {
+        id: "gemini-global",
+        harness: "Gemini",
+        scope: "global",
+        label: "Gemini global",
+        short_label: "GM G",
+        path_parts: &[".gemini", "skills"],
+    },
+    HarnessTargetDef {
+        id: "copilot-global",
+        harness: "Copilot",
+        scope: "global",
+        label: "Copilot global",
+        short_label: "CP G",
+        path_parts: &[".copilot", "skills"],
+    },
+    HarnessTargetDef {
+        id: "opencode-global",
+        harness: "OpenCode",
+        scope: "global",
+        label: "OpenCode global",
+        short_label: "OC G",
+        path_parts: &[".config", "opencode", "skills"],
+    },
+    HarnessTargetDef {
+        id: "antigravity-global",
+        harness: "Antigravity",
+        scope: "global",
+        label: "Antigravity global",
+        short_label: "AV G",
+        path_parts: &[".gemini", "antigravity", "skills"],
+    },
+    HarnessTargetDef {
+        id: "cursor-global",
+        harness: "Cursor",
+        scope: "global",
+        label: "Cursor global",
+        short_label: "CR G",
+        path_parts: &[".cursor", "skills"],
+    },
+    HarnessTargetDef {
+        id: "kiro-global",
+        harness: "Kiro",
+        scope: "global",
+        label: "Kiro global",
+        short_label: "KR G",
+        path_parts: &[".kiro", "skills"],
+    },
+    HarnessTargetDef {
+        id: "codebuddy-global",
+        harness: "CodeBuddy",
+        scope: "global",
+        label: "CodeBuddy global",
+        short_label: "CB G",
+        path_parts: &[".codebuddy", "skills"],
+    },
+    HarnessTargetDef {
+        id: "openclaw-global",
+        harness: "OpenClaw",
+        scope: "global",
+        label: "OpenClaw global",
+        short_label: "OW G",
+        path_parts: &[".openclaw", "skills"],
+    },
+    HarnessTargetDef {
+        id: "trae-global",
+        harness: "Trae",
+        scope: "global",
+        label: "Trae global",
+        short_label: "TR G",
+        path_parts: &[".trae", "skills"],
+    },
+    HarnessTargetDef {
+        id: "qoder-global",
+        harness: "Qoder",
+        scope: "global",
+        label: "Qoder global",
+        short_label: "QD G",
+        path_parts: &[".qoder", "skills"],
+    },
 ];
 
 static PROJECT_TARGETS: &[HarnessTargetDef] = &[
-    HarnessTargetDef { id: "codex-project",     harness: "Codex",     scope: "project", label: "Codex project",     short_label: "CX P", path_parts: &[".codex", "skills"] },
-    HarnessTargetDef { id: "claude-project",    harness: "Claude",    scope: "project", label: "Claude project",    short_label: "CL P", path_parts: &[".claude", "skills"] },
-    HarnessTargetDef { id: "agents-project",    harness: "Agents",    scope: "project", label: "Agents project",    short_label: "AG P", path_parts: &[".agents", "skills"] },
-    HarnessTargetDef { id: "gemini-project",    harness: "Gemini",    scope: "project", label: "Gemini project",    short_label: "GM P", path_parts: &[".gemini", "skills"] },
-    HarnessTargetDef { id: "copilot-project",   harness: "Copilot",   scope: "project", label: "Copilot project",   short_label: "CP P", path_parts: &[".copilot", "skills"] },
-    HarnessTargetDef { id: "opencode-project",  harness: "OpenCode",  scope: "project", label: "OpenCode project",  short_label: "OC P", path_parts: &[".opencode", "skills"] },
-    HarnessTargetDef { id: "cursor-project",    harness: "Cursor",    scope: "project", label: "Cursor project",    short_label: "CR P", path_parts: &[".cursor", "skills"] },
-    HarnessTargetDef { id: "kiro-project",      harness: "Kiro",      scope: "project", label: "Kiro project",      short_label: "KR P", path_parts: &[".kiro", "skills"] },
-    HarnessTargetDef { id: "codebuddy-project", harness: "CodeBuddy", scope: "project", label: "CodeBuddy project", short_label: "CB P", path_parts: &[".codebuddy", "skills"] },
-    HarnessTargetDef { id: "openclaw-project",  harness: "OpenClaw",  scope: "project", label: "OpenClaw project",  short_label: "OW P", path_parts: &[".openclaw", "skills"] },
-    HarnessTargetDef { id: "trae-project",      harness: "Trae",      scope: "project", label: "Trae project",      short_label: "TR P", path_parts: &[".trae", "skills"] },
-    HarnessTargetDef { id: "qoder-project",     harness: "Qoder",     scope: "project", label: "Qoder project",     short_label: "QD P", path_parts: &[".qoder", "skills"] },
+    HarnessTargetDef {
+        id: "codex-project",
+        harness: "Codex",
+        scope: "project",
+        label: "Codex project",
+        short_label: "CX P",
+        path_parts: &[".codex", "skills"],
+    },
+    HarnessTargetDef {
+        id: "claude-project",
+        harness: "Claude",
+        scope: "project",
+        label: "Claude project",
+        short_label: "CL P",
+        path_parts: &[".claude", "skills"],
+    },
+    HarnessTargetDef {
+        id: "agents-project",
+        harness: "Agents",
+        scope: "project",
+        label: "Agents project",
+        short_label: "AG P",
+        path_parts: &[".agents", "skills"],
+    },
+    HarnessTargetDef {
+        id: "gemini-project",
+        harness: "Gemini",
+        scope: "project",
+        label: "Gemini project",
+        short_label: "GM P",
+        path_parts: &[".gemini", "skills"],
+    },
+    HarnessTargetDef {
+        id: "copilot-project",
+        harness: "Copilot",
+        scope: "project",
+        label: "Copilot project",
+        short_label: "CP P",
+        path_parts: &[".copilot", "skills"],
+    },
+    HarnessTargetDef {
+        id: "opencode-project",
+        harness: "OpenCode",
+        scope: "project",
+        label: "OpenCode project",
+        short_label: "OC P",
+        path_parts: &[".opencode", "skills"],
+    },
+    HarnessTargetDef {
+        id: "cursor-project",
+        harness: "Cursor",
+        scope: "project",
+        label: "Cursor project",
+        short_label: "CR P",
+        path_parts: &[".cursor", "skills"],
+    },
+    HarnessTargetDef {
+        id: "kiro-project",
+        harness: "Kiro",
+        scope: "project",
+        label: "Kiro project",
+        short_label: "KR P",
+        path_parts: &[".kiro", "skills"],
+    },
+    HarnessTargetDef {
+        id: "codebuddy-project",
+        harness: "CodeBuddy",
+        scope: "project",
+        label: "CodeBuddy project",
+        short_label: "CB P",
+        path_parts: &[".codebuddy", "skills"],
+    },
+    HarnessTargetDef {
+        id: "openclaw-project",
+        harness: "OpenClaw",
+        scope: "project",
+        label: "OpenClaw project",
+        short_label: "OW P",
+        path_parts: &[".openclaw", "skills"],
+    },
+    HarnessTargetDef {
+        id: "trae-project",
+        harness: "Trae",
+        scope: "project",
+        label: "Trae project",
+        short_label: "TR P",
+        path_parts: &[".trae", "skills"],
+    },
+    HarnessTargetDef {
+        id: "qoder-project",
+        harness: "Qoder",
+        scope: "project",
+        label: "Qoder project",
+        short_label: "QD P",
+        path_parts: &[".qoder", "skills"],
+    },
 ];
 
 static BUILT_IN_TARGET_IDS: Lazy<std::collections::HashSet<&'static str>> = Lazy::new(|| {
@@ -91,7 +266,9 @@ pub fn safe_read_custom_targets(input: &serde_json::Value) -> Vec<serde_json::Va
 
 /// Validate a JSON list of custom targets and return the normalized objects.
 /// Mirrors `core.js::normalizeCustomTargets`.
-pub fn normalize_custom_targets(input: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
+pub fn normalize_custom_targets(
+    input: &serde_json::Value,
+) -> Result<Vec<serde_json::Value>, String> {
     if input.is_null() {
         return Ok(Vec::new());
     }
@@ -126,7 +303,11 @@ pub fn normalize_custom_targets(input: &serde_json::Value) -> Result<Vec<serde_j
         let scope = match obj.get("scope").and_then(|v| v.as_str()) {
             Some("project") => "project",
             Some("global") => "global",
-            _ => return Err(format!("Custom target {id} requires scope \"global\" or \"project\"")),
+            _ => {
+                return Err(format!(
+                    "Custom target {id} requires scope \"global\" or \"project\""
+                ))
+            }
         };
 
         let mut entry = serde_json::Map::new();
@@ -176,7 +357,9 @@ pub fn normalize_custom_targets(input: &serde_json::Value) -> Result<Vec<serde_j
                 .ok_or_else(|| format!("Global custom target {id} requires an absolute path"))?;
             let resolved = expand_home(Path::new(&raw_path));
             if !resolved.is_absolute() {
-                return Err(format!("Global custom target {id} requires an absolute path"));
+                return Err(format!(
+                    "Global custom target {id} requires an absolute path"
+                ));
             }
             entry.insert(
                 "path".into(),
@@ -195,7 +378,9 @@ pub fn normalize_custom_targets(input: &serde_json::Value) -> Result<Vec<serde_j
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| format!("Project custom target {id} requires a relative path"))?;
             if Path::new(&candidate).is_absolute() || candidate.starts_with('~') {
-                return Err(format!("Project custom target {id} requires a relative path"));
+                return Err(format!(
+                    "Project custom target {id} requires a relative path"
+                ));
             }
             entry.insert("relativePath".into(), serde_json::Value::String(candidate));
         }
@@ -516,7 +701,10 @@ pub async fn inspect_target(
     }
 
     target.exists = target_exists;
-    target.manifest_path = target_path.join(MANIFEST_FILE).to_string_lossy().into_owned();
+    target.manifest_path = target_path
+        .join(MANIFEST_FILE)
+        .to_string_lossy()
+        .into_owned();
     target.enabled_skill_ids = enabled_skill_ids;
     target.skill_statuses = statuses;
     target.unmanaged = unmanaged;
@@ -531,8 +719,12 @@ struct LinkInfo {
 
 fn is_inside_path(candidate: &Path, parent: &Path) -> bool {
     let (Ok(cand), Ok(par)) = (
-        candidate.canonicalize().or_else(|_| Ok::<_, std::io::Error>(candidate.to_path_buf())),
-        parent.canonicalize().or_else(|_| Ok::<_, std::io::Error>(parent.to_path_buf())),
+        candidate
+            .canonicalize()
+            .or_else(|_| Ok::<_, std::io::Error>(candidate.to_path_buf())),
+        parent
+            .canonicalize()
+            .or_else(|_| Ok::<_, std::io::Error>(parent.to_path_buf())),
     ) else {
         return false;
     };
@@ -804,7 +996,9 @@ mod tests {
         // A foreign file occupies the planned link name.
         let target_dir = dir.path().join("home/.claude/skills");
         fs::create_dir_all(&target_dir).await.unwrap();
-        fs::write(target_dir.join("taken"), "not a symlink").await.unwrap();
+        fs::write(target_dir.join("taken"), "not a symlink")
+            .await
+            .unwrap();
 
         let target = TargetRecord {
             id: "claude-global".to_string(),

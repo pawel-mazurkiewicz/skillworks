@@ -165,9 +165,7 @@ pub fn adapter_for(harness_id: &str) -> BackendResult<&'static McpAdapter> {
     ADAPTERS
         .iter()
         .find(|a| a.harness_id == harness_id)
-        .ok_or_else(|| {
-            BackendError::Validation(format!("Unsupported MCP harness: {harness_id}"))
-        })
+        .ok_or_else(|| BackendError::Validation(format!("Unsupported MCP harness: {harness_id}")))
 }
 
 pub fn config_path_for(
@@ -180,9 +178,7 @@ pub fn config_path_for(
         "global" => (home_dir, adapter.global_path_parts),
         "project" => {
             let root = project_root.ok_or_else(|| {
-                BackendError::Validation(
-                    "Project scope requires an active project".to_string(),
-                )
+                BackendError::Validation("Project scope requires an active project".to_string())
             })?;
             (root, adapter.project_path_parts)
         }
@@ -225,12 +221,36 @@ mod tests {
         let proj = Path::new("/repo");
         let cases = [
             ("claude", "/home/u/.claude.json", "/repo/.mcp.json"),
-            ("codex", "/home/u/.codex/config.toml", "/repo/.codex/config.toml"),
-            ("cursor", "/home/u/.cursor/mcp.json", "/repo/.cursor/mcp.json"),
-            ("opencode", "/home/u/.config/opencode/opencode.json", "/repo/opencode.json"),
-            ("gemini", "/home/u/.gemini/settings.json", "/repo/.gemini/settings.json"),
-            ("copilot", "/home/u/.copilot/mcp-config.json", "/repo/.mcp.json"),
-            ("kiro", "/home/u/.kiro/settings/mcp.json", "/repo/.kiro/settings/mcp.json"),
+            (
+                "codex",
+                "/home/u/.codex/config.toml",
+                "/repo/.codex/config.toml",
+            ),
+            (
+                "cursor",
+                "/home/u/.cursor/mcp.json",
+                "/repo/.cursor/mcp.json",
+            ),
+            (
+                "opencode",
+                "/home/u/.config/opencode/opencode.json",
+                "/repo/opencode.json",
+            ),
+            (
+                "gemini",
+                "/home/u/.gemini/settings.json",
+                "/repo/.gemini/settings.json",
+            ),
+            (
+                "copilot",
+                "/home/u/.copilot/mcp-config.json",
+                "/repo/.mcp.json",
+            ),
+            (
+                "kiro",
+                "/home/u/.kiro/settings/mcp.json",
+                "/repo/.kiro/settings/mcp.json",
+            ),
         ];
         for (id, global, project) in cases {
             let a = adapter_for(id).unwrap();

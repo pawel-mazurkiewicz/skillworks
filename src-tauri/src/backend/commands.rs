@@ -108,15 +108,17 @@ pub async fn build_state(
     }
     let mut indexed_targets = Vec::new();
     while let Some(joined) = inspect_set.join_next().await {
-        let result = joined
-            .map_err(|err| BackendError::Validation(format!("inspect join error: {err}")))?;
+        let result =
+            joined.map_err(|err| BackendError::Validation(format!("inspect join error: {err}")))?;
         indexed_targets.push(result?);
     }
     indexed_targets.sort_by_key(|(index, _)| *index);
-    let target_states: Vec<TargetRecord> =
-        indexed_targets.into_iter().map(|(_, target)| target).collect();
-    let skills = std::sync::Arc::try_unwrap(skills_shared)
-        .unwrap_or_else(|shared| (*shared).clone());
+    let target_states: Vec<TargetRecord> = indexed_targets
+        .into_iter()
+        .map(|(_, target)| target)
+        .collect();
+    let skills =
+        std::sync::Arc::try_unwrap(skills_shared).unwrap_or_else(|shared| (*shared).clone());
 
     // Project list normalized from config.
     let projects_records = normalize_project_records(config.projects.clone());
@@ -2851,15 +2853,17 @@ fn adopt_spec(
     s
 }
 
-const PLUGIN_MANAGED_NOTE: &str =
-    "Managed by a Claude Code plugin — Skillworks won't modify it.";
+const PLUGIN_MANAGED_NOTE: &str = "Managed by a Claude Code plugin — Skillworks won't modify it.";
 
 /// Scan Claude Code plugin manifests for MCP servers. Returns
 /// (key, observed, config_path, pseudo_scope) tuples plus warnings.
 /// Import-only by design: callers must not drift-check these entries.
 async fn scan_claude_plugin_mcps(
     home_dir: &std::path::Path,
-) -> (Vec<(String, ObservedInvocation, String, String)>, Vec<String>) {
+) -> (
+    Vec<(String, ObservedInvocation, String, String)>,
+    Vec<String>,
+) {
     let mut found = Vec::new();
     let mut warnings = Vec::new();
     let manifest_path = home_dir.join(".claude/plugins/installed_plugins.json");
@@ -3114,7 +3118,10 @@ pub async fn mcp_reconcile_impl(
 
                 let fp = super::mcp::dismissed::fingerprint(&observed);
                 if dismissed.iter().any(|d| {
-                    d.key == key && d.harness == adapter.harness_id && d.scope == scope && d.fingerprint == fp
+                    d.key == key
+                        && d.harness == adapter.harness_id
+                        && d.scope == scope
+                        && d.fingerprint == fp
                 }) {
                     continue;
                 }
@@ -5514,7 +5521,11 @@ mod tests {
             .await
             .unwrap();
         assert!(after.imports.is_empty(), "imports: {:?}", after.imports);
-        assert!(after.conflicts.is_empty(), "conflicts: {:?}", after.conflicts);
+        assert!(
+            after.conflicts.is_empty(),
+            "conflicts: {:?}",
+            after.conflicts
+        );
     }
 
     #[tokio::test]
@@ -5522,7 +5533,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let app_home = dir.path().join(".skillworks");
         let home = dir.path().join("home");
-        tokio::fs::create_dir_all(home.join(".cursor")).await.unwrap();
+        tokio::fs::create_dir_all(home.join(".cursor"))
+            .await
+            .unwrap();
         seed_library(&app_home, &[test_spec("context7")]).await;
         tokio::fs::write(home.join(".cursor/mcp.json"), r#"{"mcpServers":{}}"#)
             .await
@@ -5972,7 +5985,9 @@ mod tests {
         tokio::fs::create_dir_all(home.join(".claude/plugins"))
             .await
             .unwrap();
-        tokio::fs::write(&manifest_path, doc.to_string()).await.unwrap();
+        tokio::fs::write(&manifest_path, doc.to_string())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -6121,9 +6136,7 @@ mod tests {
         let bare = dir.path().join("bare.git");
         let mut builder = git2::build::RepoBuilder::new();
         builder.bare(true);
-        builder
-            .clone(working.to_str().unwrap(), &bare)
-            .unwrap();
+        builder.clone(working.to_str().unwrap(), &bare).unwrap();
 
         let resp = install_from_git_impl(
             format!("file://{}", bare.to_string_lossy()),

@@ -30,11 +30,24 @@ pub(super) struct Candidate {
 
 const SERVER_MAP_KEYS: &[&str] = &["mcpServers", "mcp_servers", "servers", "mcp"];
 const KNOWN_ENTRY_KEYS: &[&str] = &[
-    "type", "transport", "command", "args", "env", "environment",
-    "url", "httpUrl", "serverUrl", "headers", "http_headers",
+    "type",
+    "transport",
+    "command",
+    "args",
+    "env",
+    "environment",
+    "url",
+    "httpUrl",
+    "serverUrl",
+    "headers",
+    "http_headers",
 ];
 
-pub(super) fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize) -> Option<Candidate> {
+pub(super) fn candidate_from_json(
+    name: &str,
+    v: &serde_json::Value,
+    line: usize,
+) -> Option<Candidate> {
     let obj = v.as_object()?;
     let mut command = None;
     let mut args: Vec<String> = Vec::new();
@@ -42,7 +55,10 @@ pub(super) fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize
         Some(serde_json::Value::String(s)) => {
             command = Some(s.clone());
             if let Some(a) = obj.get("args").and_then(|a| a.as_array()) {
-                args = a.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+                args = a
+                    .iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect();
             }
         }
         Some(serde_json::Value::Array(argv)) => {
@@ -63,9 +79,13 @@ pub(super) fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize
             .unwrap_or_default()
     };
     let mut env = str_map("env");
-    if env.is_empty() { env = str_map("environment"); }
+    if env.is_empty() {
+        env = str_map("environment");
+    }
     let mut headers = str_map("headers");
-    if headers.is_empty() { headers = str_map("http_headers"); }
+    if headers.is_empty() {
+        headers = str_map("http_headers");
+    }
     let url = ["url", "httpUrl", "serverUrl"]
         .iter()
         .find_map(|k| obj.get(*k).and_then(|v| v.as_str()).map(String::from));
@@ -83,7 +103,9 @@ pub(super) fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize
         _ if url.is_some() => McpTransport::Http,
         _ => return None,
     };
-    if command.is_none() && url.is_none() { return None; }
+    if command.is_none() && url.is_none() {
+        return None;
+    }
     let ignored_keys: Vec<String> = obj
         .keys()
         .filter(|k| !KNOWN_ENTRY_KEYS.contains(&k.as_str()))
@@ -92,7 +114,12 @@ pub(super) fn candidate_from_json(name: &str, v: &serde_json::Value, line: usize
     Some(Candidate {
         name: Some(name.to_string()),
         priority: 1,
-        transport, command, args, env, url, headers,
+        transport,
+        command,
+        args,
+        env,
+        url,
+        headers,
         evidence: format!("H1 json block (line {line}): key {name:?}"),
         ignored_keys,
         name_inferred: false,
@@ -106,7 +133,9 @@ fn find_server_maps<'a>(
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
             if SERVER_MAP_KEYS.contains(&k.as_str()) {
-                if let Some(map) = val.as_object() { out.push(map); }
+                if let Some(map) = val.as_object() {
+                    out.push(map);
+                }
             } else {
                 find_server_maps(val, out);
             }
@@ -118,23 +147,36 @@ pub(super) fn extract_h2(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
     let mut candidates = Vec::new();
     let mut warnings = Vec::new();
     for f in fences {
-        if f.info != "toml" || !f.body.contains("mcp_servers") { continue; }
+        if f.info != "toml" || !f.body.contains("mcp_servers") {
+            continue;
+        }
         let doc = match f.body.parse::<toml_edit::DocumentMut>() {
             Ok(d) => d,
             Err(e) => {
-                warnings.push(format!("Skipped unparseable toml block at line {}: {e}", f.start_line));
+                warnings.push(format!(
+                    "Skipped unparseable toml block at line {}: {e}",
+                    f.start_line
+                ));
                 continue;
             }
         };
-        let Some(servers) = doc.get("mcp_servers").and_then(|i| i.as_table()) else { continue };
+        let Some(servers) = doc.get("mcp_servers").and_then(|i| i.as_table()) else {
+            continue;
+        };
         for (name, item) in servers.iter() {
-            let Some(t) = item.as_table_like() else { continue };
+            let Some(t) = item.as_table_like() else {
+                continue;
+            };
             let get_str = |k: &str| t.get(k).and_then(|i| i.as_str()).map(String::from);
             let command = get_str("command");
             let args: Vec<String> = t
                 .get("args")
                 .and_then(|i| i.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             let map_of = |k: &str| -> BTreeMap<String, String> {
                 t.get(k)
@@ -149,14 +191,26 @@ pub(super) fn extract_h2(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
             let env = map_of("env");
             let headers = map_of("http_headers");
             let url = get_str("url");
-            let transport = if command.is_some() { McpTransport::Stdio }
-                else if url.is_some() { McpTransport::Http }
-                else { continue };
+            let transport = if command.is_some() {
+                McpTransport::Stdio
+            } else if url.is_some() {
+                McpTransport::Http
+            } else {
+                continue;
+            };
             candidates.push(Candidate {
                 name: Some(name.to_string()),
                 priority: 2,
-                transport, command, args, env, url, headers,
-                evidence: format!("H2 toml block (line {}): [mcp_servers.{name}]", f.start_line),
+                transport,
+                command,
+                args,
+                env,
+                url,
+                headers,
+                evidence: format!(
+                    "H2 toml block (line {}): [mcp_servers.{name}]",
+                    f.start_line
+                ),
                 ignored_keys: Vec::new(),
                 name_inferred: false,
             });
@@ -175,12 +229,16 @@ fn shell_tokens(line: &str) -> Vec<String> {
             (Some(_), c) => cur.push(c),
             (None, '"') | (None, '\'') => quote = Some(c),
             (None, c) if c.is_whitespace() => {
-                if !cur.is_empty() { out.push(std::mem::take(&mut cur)); }
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
             }
             (None, c) => cur.push(c),
         }
     }
-    if !cur.is_empty() { out.push(cur); }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
     out
 }
 
@@ -203,28 +261,39 @@ const SHELL_INFOS: &[&str] = &["bash", "sh", "shell", "zsh", "console", "text", 
 /// picking `helper` as the image instead of the real one that follows it).
 const DOCKER_VALUE_FLAGS: &[&str] = &[
     "--name",
-    "-v", "--volume",
-    "-p", "--publish",
-    "-w", "--workdir",
+    "-v",
+    "--volume",
+    "-p",
+    "--publish",
+    "-w",
+    "--workdir",
     "--network",
-    "-u", "--user",
+    "-u",
+    "--user",
     "--entrypoint",
-    "-h", "--hostname",
-    "--memory", "-m",
+    "-h",
+    "--hostname",
+    "--memory",
+    "-m",
     "--cpus",
-    "-l", "--label",
+    "-l",
+    "--label",
     "--mount",
     "--restart",
     "--add-host",
     "--dns",
     "--env-file",
-    "--cap-add", "--cap-drop",
+    "--cap-add",
+    "--cap-drop",
     "--platform",
 ];
 
 fn strip_prompt(line: &str) -> String {
     let t = line.trim_start();
-    let t = t.strip_prefix('$').or_else(|| t.strip_prefix('>')).unwrap_or(t);
+    let t = t
+        .strip_prefix('$')
+        .or_else(|| t.strip_prefix('>'))
+        .unwrap_or(t);
     t.trim_start().to_string()
 }
 
@@ -238,20 +307,36 @@ pub(super) fn extract_h3(markdown: &str, fences: &[Fence]) -> Vec<Candidate> {
     // inline code spans only; prose without backtick spans contributes nothing
     let mut in_fence = false;
     for line in markdown.lines() {
-        if line.trim_start().starts_with("```") { in_fence = !in_fence; continue; }
-        if in_fence { continue; }
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         let parts: Vec<&str> = line.split('`').collect();
         for (i, part) in parts.iter().enumerate() {
-            if i % 2 == 1 { lines.push(part.to_string()); }
+            if i % 2 == 1 {
+                lines.push(part.to_string());
+            }
         }
     }
 
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut seen: Vec<(Option<String>, Option<String>, Vec<String>, Option<String>)> = Vec::new();
     for line in &lines {
-        let Some(c) = parse_command_line(line) else { continue };
-        let key = (c.name.clone(), c.command.clone(), c.args.clone(), c.url.clone());
-        if seen.contains(&key) { continue; }
+        let Some(c) = parse_command_line(line) else {
+            continue;
+        };
+        let key = (
+            c.name.clone(),
+            c.command.clone(),
+            c.args.clone(),
+            c.url.clone(),
+        );
+        if seen.contains(&key) {
+            continue;
+        }
         seen.push(key);
         candidates.push(c);
     }
@@ -271,7 +356,10 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
             let mut positional: Vec<String> = Vec::new();
             while i < toks.len() {
                 match toks[i].as_str() {
-                    "--transport" => { transport = toks.get(i + 1).cloned(); i += 2; }
+                    "--transport" => {
+                        transport = toks.get(i + 1).cloned();
+                        i += 2;
+                    }
                     "--env" | "-e" => {
                         if let Some((k, v)) = toks.get(i + 1).and_then(|s| s.split_once('=')) {
                             env.insert(k.to_string(), v.to_string());
@@ -293,12 +381,22 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                         }
                         i += 2;
                     }
-                    "--scope" | "-s" => { i += 2; }
-                    "--" => { positional.extend(toks[i + 1..].iter().cloned()); break; }
-                    t if t.starts_with('-') => { i += 1; }
+                    "--scope" | "-s" => {
+                        i += 2;
+                    }
+                    "--" => {
+                        positional.extend(toks[i + 1..].iter().cloned());
+                        break;
+                    }
+                    t if t.starts_with('-') => {
+                        i += 1;
+                    }
                     t => {
-                        if name.is_none() { name = Some(t.to_string()); }
-                        else { positional.push(t.to_string()); }
+                        if name.is_none() {
+                            name = Some(t.to_string());
+                        } else {
+                            positional.push(t.to_string());
+                        }
                         i += 1;
                     }
                 }
@@ -307,11 +405,20 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
             match transport.as_deref() {
                 Some("http") | Some("sse") => {
                     let url = positional.first()?.clone();
-                    let transport = if transport.as_deref() == Some("sse") { McpTransport::Sse } else { McpTransport::Http };
+                    let transport = if transport.as_deref() == Some("sse") {
+                        McpTransport::Sse
+                    } else {
+                        McpTransport::Http
+                    };
                     return Some(Candidate {
-                        name: Some(name), priority: 3, transport,
-                        command: None, args: Vec::new(), env: BTreeMap::new(),
-                        url: Some(url), headers,
+                        name: Some(name),
+                        priority: 3,
+                        transport,
+                        command: None,
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
+                        url: Some(url),
+                        headers,
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
                         name_inferred: false,
@@ -320,9 +427,14 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                 _ => {
                     let command = positional.first()?.clone();
                     return Some(Candidate {
-                        name: Some(name), priority: 3, transport: McpTransport::Stdio,
-                        command: Some(command), args: positional[1..].to_vec(), env,
-                        url: None, headers,
+                        name: Some(name),
+                        priority: 3,
+                        transport: McpTransport::Stdio,
+                        command: Some(command),
+                        args: positional[1..].to_vec(),
+                        env,
+                        url: None,
+                        headers,
                         evidence: format!("H3 command line: {}", line.trim()),
                         ignored_keys: Vec::new(),
                         name_inferred: false,
@@ -350,7 +462,9 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
             let rest = &toks[pos + 1..];
             let mut it = rest.iter();
             let mut args: Vec<String> = Vec::new();
-            if skip_flags { args.push("-y".to_string()); }
+            if skip_flags {
+                args.push("-y".to_string());
+            }
             let pkg = loop {
                 match it.next() {
                     Some(t) if skip_flags && (t == "-y" || t == "--yes") => continue,
@@ -363,9 +477,13 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
             args.extend(it.cloned());
             return Some(Candidate {
                 name: Some(package_basename(&pkg)),
-                priority: 3, transport: McpTransport::Stdio,
-                command: Some(matched), args,
-                env: BTreeMap::new(), url: None, headers: BTreeMap::new(),
+                priority: 3,
+                transport: McpTransport::Stdio,
+                command: Some(matched),
+                args,
+                env: BTreeMap::new(),
+                url: None,
+                headers: BTreeMap::new(),
                 evidence: format!("H3 command line: {}", line.trim()),
                 ignored_keys: Vec::new(),
                 name_inferred: true,
@@ -397,16 +515,22 @@ fn parse_command_line(line: &str) -> Option<Candidate> {
                     // the value is embedded in that one token.
                     t if DOCKER_VALUE_FLAGS.contains(&t) => i += 2,
                     t if t.starts_with('-') => i += 1,
-                    t => { image = Some(t.to_string()); break; }
+                    t => {
+                        image = Some(t.to_string());
+                        break;
+                    }
                 }
             }
             let image = image?;
             return Some(Candidate {
                 name: Some(package_basename(&image)),
-                priority: 3, transport: McpTransport::Stdio,
+                priority: 3,
+                transport: McpTransport::Stdio,
                 command: Some("docker".to_string()),
-                args: rest.to_vec(), env,
-                url: None, headers: BTreeMap::new(),
+                args: rest.to_vec(),
+                env,
+                url: None,
+                headers: BTreeMap::new(),
                 evidence: format!("H3 command line: {}", line.trim()),
                 ignored_keys: Vec::new(),
                 name_inferred: true,
@@ -420,13 +544,20 @@ pub(super) fn extract_h1(fences: &[Fence]) -> (Vec<Candidate>, Vec<String>) {
     let mut candidates = Vec::new();
     let mut warnings = Vec::new();
     for f in fences {
-        if !matches!(f.info.as_str(), "json" | "jsonc" | "json5" | "js" | "") { continue; }
-        if !SERVER_MAP_KEYS.iter().any(|k| f.body.contains(k)) { continue; }
+        if !matches!(f.info.as_str(), "json" | "jsonc" | "json5" | "js" | "") {
+            continue;
+        }
+        if !SERVER_MAP_KEYS.iter().any(|k| f.body.contains(k)) {
+            continue;
+        }
         let cleaned = strip_jsonc(&f.body);
         let parsed: serde_json::Value = match serde_json::from_str(&cleaned) {
             Ok(v) => v,
             Err(e) => {
-                warnings.push(format!("Skipped unparseable json block at line {}: {e}", f.start_line));
+                warnings.push(format!(
+                    "Skipped unparseable json block at line {}: {e}",
+                    f.start_line
+                ));
                 continue;
             }
         };
@@ -514,7 +645,11 @@ mod tests {
         let (cands, warns) = extract_h1(&scan_fences(md));
         assert_eq!(cands.len(), 1);
         assert_eq!(warns.len(), 1);
-        assert!(warns[0].contains("line 2"), "warning cites location: {}", warns[0]);
+        assert!(
+            warns[0].contains("line 2"),
+            "warning cites location: {}",
+            warns[0]
+        );
     }
 
     #[test]
@@ -523,11 +658,17 @@ mod tests {
         let (cands, warns) = extract_h2(&scan_fences(md));
         assert!(warns.is_empty());
         assert_eq!(cands.len(), 2);
-        let c = cands.iter().find(|c| c.name.as_deref() == Some("context7")).unwrap();
+        let c = cands
+            .iter()
+            .find(|c| c.name.as_deref() == Some("context7"))
+            .unwrap();
         assert_eq!(c.priority, 2);
         assert_eq!(c.command.as_deref(), Some("npx"));
         assert_eq!(c.env.get("K").map(String::as_str), Some("V"));
-        let r = cands.iter().find(|c| c.name.as_deref() == Some("remote")).unwrap();
+        let r = cands
+            .iter()
+            .find(|c| c.name.as_deref() == Some("remote"))
+            .unwrap();
         assert_eq!(r.transport, McpTransport::Http);
     }
 
@@ -577,7 +718,10 @@ mod tests {
         let cands = extract_h3(md, &scan_fences(md));
         assert_eq!(cands.len(), 3);
         assert_eq!(cands[0].command.as_deref(), Some("npx"));
-        assert_eq!(cands[0].args, vec!["-y", "@upstash/context7-mcp", "--port", "3000"]);
+        assert_eq!(
+            cands[0].args,
+            vec!["-y", "@upstash/context7-mcp", "--port", "3000"]
+        );
         assert_eq!(cands[0].name.as_deref(), Some("context7-mcp"));
         assert_eq!(cands[1].command.as_deref(), Some("uvx"));
         assert_eq!(cands[1].name.as_deref(), Some("some-mcp-server"));
@@ -586,7 +730,11 @@ mod tests {
         assert_eq!(d.args[0], "run", "docker args preserved verbatim");
         assert!(d.args.contains(&"TOKEN=abc".to_string()));
         assert_eq!(d.name.as_deref(), Some("mcp-img"));
-        assert_eq!(d.env.get("TOKEN").map(String::as_str), Some("abc"), "docker -e also mirrored to env for placeholder checks");
+        assert_eq!(
+            d.env.get("TOKEN").map(String::as_str),
+            Some("abc"),
+            "docker -e also mirrored to env for placeholder checks"
+        );
     }
 
     #[test]
@@ -606,7 +754,11 @@ mod tests {
     fn h3_skips_json_blocks_and_dedups() {
         let md = "```json\n{\"mcpServers\":{\"a\":{\"command\":\"npx\",\"args\":[\"-y\",\"x\"]}}}\n```\n```bash\nnpx -y x\nnpx -y x\n```";
         let cands = extract_h3(md, &scan_fences(md));
-        assert_eq!(cands.len(), 1, "json block lines not scanned; duplicate command deduped");
+        assert_eq!(
+            cands.len(),
+            1,
+            "json block lines not scanned; duplicate command deduped"
+        );
     }
 
     #[test]

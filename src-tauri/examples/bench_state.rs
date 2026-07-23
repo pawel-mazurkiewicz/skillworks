@@ -23,7 +23,11 @@ async fn main() {
     let roots = skillworks_desktop::backend::skills::find_skill_roots(&vault_root)
         .await
         .expect("roots");
-    println!("find_skill_roots: {} roots in {:?}", roots.len(), t0.elapsed());
+    println!(
+        "find_skill_roots: {} roots in {:?}",
+        roots.len(),
+        t0.elapsed()
+    );
 
     let cache_path = app_home.join("skills-cache.json");
     let t1 = Instant::now();
@@ -31,7 +35,11 @@ async fn main() {
         skillworks_desktop::backend::skills::discover_skills(&vault_root, Some(&cache_path))
             .await
             .expect("skills");
-    println!("discover_skills: {} skills in {:?}", skills.len(), t1.elapsed());
+    println!(
+        "discover_skills: {} skills in {:?}",
+        skills.len(),
+        t1.elapsed()
+    );
 
     let t2 = Instant::now();
     let state = skillworks_desktop::backend::commands::build_state(None, None)

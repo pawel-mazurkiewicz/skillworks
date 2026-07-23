@@ -101,11 +101,8 @@ pub fn node_present() -> bool {
     } else {
         vec!["node"]
     };
-    std::env::split_paths(&path_var).any(|dir| {
-        candidates
-            .iter()
-            .any(|name| dir.join(name).is_file())
-    })
+    std::env::split_paths(&path_var)
+        .any(|dir| candidates.iter().any(|name| dir.join(name).is_file()))
 }
 
 /// Report whether `skillworks` is registered for a harness.
@@ -211,12 +208,9 @@ mod tests {
     async fn claude_register_creates_and_preserves_other_servers() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".claude.json");
-        fs::write(
-            &path,
-            r#"{"mcpServers":{"other":{"command":"x"}},"foo":1}"#,
-        )
-        .await
-        .unwrap();
+        fs::write(&path, r#"{"mcpServers":{"other":{"command":"x"}},"foo":1}"#)
+            .await
+            .unwrap();
 
         register(dir.path(), "claude", &invocation()).await.unwrap();
 
@@ -264,7 +258,10 @@ mod tests {
 
         // No pre-existing file -> nothing to back up.
         let backups = backup_files(dir.path(), ".claude.json").await;
-        assert!(backups.is_empty(), "no backup for fresh file; got {backups:?}");
+        assert!(
+            backups.is_empty(),
+            "no backup for fresh file; got {backups:?}"
+        );
     }
 
     async fn backup_files(dir: &Path, base: &str) -> Vec<String> {
@@ -303,7 +300,9 @@ mod tests {
     async fn opencode_register_uses_command_array() {
         let dir = TempDir::new().unwrap();
         let path = config_path(dir.path(), "opencode").unwrap();
-        register(dir.path(), "opencode", &invocation()).await.unwrap();
+        register(dir.path(), "opencode", &invocation())
+            .await
+            .unwrap();
         let doc = read_json_object(&path).await.unwrap();
         let sk = doc.get("mcp").unwrap().get("skillworks").unwrap();
         assert_eq!(sk["type"], "local");
@@ -335,9 +334,18 @@ mod tests {
         register(dir.path(), "codex", &invocation()).await.unwrap();
 
         let text = fs::read_to_string(&path).await.unwrap();
-        assert!(text.contains("# my codex config"), "comment preserved; got:\n{text}");
-        assert!(text.contains("[mcp_servers.other]"), "other server preserved; got:\n{text}");
-        assert!(text.contains("[mcp_servers.skillworks]"), "canonical header; got:\n{text}");
+        assert!(
+            text.contains("# my codex config"),
+            "comment preserved; got:\n{text}"
+        );
+        assert!(
+            text.contains("[mcp_servers.other]"),
+            "other server preserved; got:\n{text}"
+        );
+        assert!(
+            text.contains("[mcp_servers.skillworks]"),
+            "canonical header; got:\n{text}"
+        );
         assert!(text.contains("--harness"), "args written; got:\n{text}");
 
         // The output must re-parse as valid TOML (no duplicate keys).
@@ -351,12 +359,19 @@ mod tests {
         unregister(dir.path(), "codex").await.unwrap();
         assert!(!is_registered(&path, "codex").await.unwrap());
         let text = fs::read_to_string(&path).await.unwrap();
-        assert!(text.contains("[mcp_servers.other]"), "other server kept after unregister");
+        assert!(
+            text.contains("[mcp_servers.other]"),
+            "other server kept after unregister"
+        );
     }
 
     #[tokio::test]
     async fn invocation_includes_identity_and_app_home() {
-        let inv = invocation_for("codex", Path::new("/res/mcp-server.js"), Path::new("/home/.skillworks"));
+        let inv = invocation_for(
+            "codex",
+            Path::new("/res/mcp-server.js"),
+            Path::new("/home/.skillworks"),
+        );
         assert_eq!(inv.command, "node");
         assert!(inv.args.contains(&"--harness".to_string()));
         assert!(inv.args.contains(&"codex".to_string()));
