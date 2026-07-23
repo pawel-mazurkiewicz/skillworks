@@ -5,7 +5,7 @@
 //! constant 1:1 — keep them in lockstep when a new harness is added.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use once_cell::sync::Lazy;
 use tokio::fs;
@@ -377,9 +377,19 @@ pub fn normalize_custom_targets(
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| format!("Project custom target {id} requires a relative path"))?;
-            if Path::new(&candidate).is_absolute() || candidate.starts_with('~') {
+            let candidate_path = Path::new(&candidate);
+            // Reject absolute paths, `~` home-relative paths, and any `..`
+            // traversal (or root/prefix components) so a project custom target
+            // can't be joined onto the project root to escape it.
+            let escapes = candidate_path.components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            });
+            if candidate_path.is_absolute() || candidate.starts_with('~') || escapes {
                 return Err(format!(
-                    "Project custom target {id} requires a relative path"
+                    "Project custom target {id} requires a relative path without '..' traversal"
                 ));
             }
             entry.insert("relativePath".into(), serde_json::Value::String(candidate));
@@ -788,6 +798,21 @@ mod tests {
         assert_eq!(custom.path, "/tmp/project/tools/skills");
     }
 
+    #[test]
+    fn normalize_custom_targets_rejects_parent_dir_traversal() {
+        let input = serde_json::json!([{
+            "id": "custom-escape",
+            "label": "escape",
+            "scope": "project",
+            "relativePath": "../outside",
+        }]);
+        let err = normalize_custom_targets(&input).unwrap_err();
+        assert!(err.contains("relative path"), "unexpected error: {err}");
+    }
+
+    // Enablement is asserted via a symlink the test creates; only Unix has an
+    // unprivileged directory-symlink API, so gate the whole test to Unix.
+    #[cfg(unix)]
     #[tokio::test]
     async fn inspect_target_with_managed_symlinks() {
         let dir = TempDir::new().unwrap();
@@ -895,6 +920,9 @@ mod tests {
         assert!(entry.importable);
     }
 
+    // Creates a directory symlink to assert the enabled path; Unix-only (see
+    // inspect_target_with_managed_symlinks).
+    #[cfg(unix)]
     #[tokio::test]
     async fn inspect_target_omits_disabled_skill_statuses() {
         let dir = TempDir::new().unwrap();

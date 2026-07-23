@@ -30,6 +30,9 @@ export TAURI_SIGNING_PRIVATE_KEY
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
 # ── 1. Tauri build ────────────────────────────────────────────────────────────
+# Clear any prior bundle so the artifact lookup below can't pick up a stale
+# .AppImage/.deb from an earlier (different-version) build via `head -1`.
+rm -rf "$BUNDLE_DIR"
 log "Building Tauri app for x86_64-unknown-linux-gnu..."
 npx tauri build --target x86_64-unknown-linux-gnu
 

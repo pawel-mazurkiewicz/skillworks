@@ -33,9 +33,12 @@ const FETCH_API_ORIGIN = "http://127.0.0.1:5179";
 function modeToEnabled(mode) {
   if (mode === "enable") return true;
   if (mode === "disable") return false;
-  // "toggle" is not supported atomically by the Rust bulk command — flip to
-  // explicit enable for now; the frontend will rerender from the fresh state.
-  return true;
+  // The Rust bulk command takes a single `enabled` for all skills, so it cannot
+  // express a per-skill "toggle" (flip each to the opposite of its current
+  // state). The desktop UI hides the toggle action for that reason; reaching
+  // here means a caller sent an unsupported mode — fail loudly rather than
+  // silently enabling every selected skill.
+  throw new Error(`bulk toggle mode "${mode}" is not supported in the desktop shell`);
 }
 
 function wrapBulkToggleResponse(state, body) {

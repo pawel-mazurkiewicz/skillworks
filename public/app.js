@@ -468,7 +468,16 @@ async function bootstrap() {
 
   elements.bulkEnableButton.addEventListener("click", () => bulkToggle("enable"));
   elements.bulkDisableButton.addEventListener("click", () => bulkToggle("disable"));
-  elements.bulkToggleButton.addEventListener("click", () => bulkToggle("toggle"));
+  // The Rust bulk command can't express a per-skill toggle (it applies one
+  // `enabled` to every selected skill), so "toggle" only works against the
+  // legacy HTTP backend. In the Tauri desktop shell, hide the action rather
+  // than let it silently enable everything.
+  const isDesktopShell = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  if (isDesktopShell && elements.bulkToggleButton) {
+    elements.bulkToggleButton.hidden = true;
+  } else if (elements.bulkToggleButton) {
+    elements.bulkToggleButton.addEventListener("click", () => bulkToggle("toggle"));
+  }
   elements.bulkCopyButton.addEventListener("click", () => bulkCopy());
   elements.bulkMoveButton.addEventListener("click", () => bulkMove());
   elements.bulkDeleteButton.addEventListener("click", () => bulkDelete());

@@ -88,10 +88,10 @@ Make sure the `gh` CLI is installed (`brew install gh` on macOS).
 ### Step 1 — Create the draft (any machine)
 
 ```bash
-./scripts/release/create-release.sh v0.2.0
+./scripts/release/create-release.sh v0.3.0
 ```
 
-This creates a draft GitHub Release tagged `v0.2.0`. The tag must start with `v` and must not already exist.
+This creates a draft GitHub Release tagged `v0.3.0`. The tag must start with `v` and must not already exist.
 
 ---
 
@@ -101,19 +101,19 @@ Run these in any order. They are independent.
 
 **macOS** (on your Mac):
 ```bash
-./scripts/release/release-macos.sh v0.2.0
+./scripts/release/release-macos.sh v0.3.0
 ```
 Builds a Universal binary (arm64 + x64), signs it with your Developer ID, notarizes it with Apple, and uploads the `.dmg` plus updater artifacts. Expect this to take 5–15 minutes — notarization is the slow part.
 
 **Windows** (on a Windows machine):
 ```powershell
-.\scripts\release\release-windows.ps1 v0.2.0
+.\scripts\release\release-windows.ps1 v0.3.0
 ```
 Builds the Windows x64 installer and uploads the `.exe`, `.nsis.zip`, and signature file.
 
 **Linux** (on a Linux machine):
 ```bash
-./scripts/release/release-linux.sh v0.2.0
+./scripts/release/release-linux.sh v0.3.0
 ```
 Builds the Linux x64 `.AppImage` and `.deb` and uploads them with the updater signature.
 
@@ -126,7 +126,7 @@ Builds the Linux x64 `.AppImage` and `.deb` and uploads them with the updater si
 Once all three platforms have uploaded their artifacts:
 
 ```bash
-./scripts/release/create-update-manifest.sh v0.2.0
+./scripts/release/create-update-manifest.sh v0.3.0
 ```
 
 This downloads the `.sig` files from the draft release, assembles `latest.json`, and uploads it. The in-app updater reads this file to detect new versions.

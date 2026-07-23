@@ -1848,10 +1848,10 @@ body.skill-editor-locked {
 }
 
 .busy-toast.visible .busy-toast-spinner {
-  animation: skillworksBusySpin 700ms linear infinite;
+  animation: skillworks-busy-spin 700ms linear infinite;
 }
 
-@keyframes skillworksBusySpin {
+@keyframes skillworks-busy-spin {
   to {
     transform: rotate(360deg);
   }
@@ -5602,16 +5602,14 @@ body {
 
 .mcp-servers-matrix th,
 .mcp-servers-matrix td {
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, white);
+  border-bottom: 1px solid var(--line);
   padding: 12px 14px;
   text-align: left;
   vertical-align: middle;
 }
 
 .mcp-servers-matrix th {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.8), transparent),
-    var(--surface-mute);
+  background: var(--surface-mute);
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 800;
