@@ -27,11 +27,16 @@ pub fn dismissed_path(app_home: &Path) -> PathBuf {
 }
 
 /// Canonical-field fingerprint of an observed invocation. Deliberately the
-/// same field set `invocation_eq` compares (`unmapped` excluded). The JSON
-/// string itself is the fingerprint — deterministic (BTreeMap keys are
-/// sorted, field order is fixed here) and debuggable in dismissed.json.
+/// same field set `invocation_eq` compares (`unmapped` excluded).
+///
+/// Returns a SHA-256 digest of the canonical JSON rather than the JSON itself:
+/// `env`/`headers` can carry secrets (API tokens, auth headers) that must not
+/// be written verbatim to dismissed.json. The digest is still deterministic
+/// (BTreeMap keys sorted, field order fixed here), so a change to any
+/// fingerprinted field yields a different value and the candidate resurfaces.
 pub fn fingerprint(obs: &ObservedInvocation) -> String {
-    serde_json::json!({
+    use sha2::{Digest, Sha256};
+    let canonical = serde_json::json!({
         "transport": format!("{:?}", obs.transport),
         "command": obs.command,
         "args": obs.args,
@@ -41,7 +46,8 @@ pub fn fingerprint(obs: &ObservedInvocation) -> String {
         "enabled": obs.enabled,
         "tools": obs.tools,
     })
-    .to_string()
+    .to_string();
+    hex::encode(Sha256::digest(canonical.as_bytes()))
 }
 
 pub async fn load_dismissed(app_home: &Path) -> BackendResult<Vec<DismissedEntry>> {
@@ -94,5 +100,34 @@ mod tests {
         let mut e = obs(&["-y", "pkg"]);
         e.env.insert("TOKEN".into(), "t".into());
         assert_ne!(fingerprint(&obs(&["-y", "pkg"])), fingerprint(&e));
+    }
+
+    #[test]
+    fn fingerprint_hashes_and_omits_secrets() {
+        let mut secret = obs(&["-y", "pkg"]);
+        secret
+            .env
+            .insert("API_TOKEN".into(), "super-secret-value".into());
+        secret
+            .headers
+            .insert("Authorization".into(), "Bearer secret-header".into());
+        let fp = fingerprint(&secret);
+
+        // The persisted fingerprint must not leak secret material.
+        assert!(!fp.contains("super-secret-value"));
+        assert!(!fp.contains("secret-header"));
+        // It is a hex-encoded SHA-256 digest (64 lowercase hex chars).
+        assert_eq!(fp.len(), 64);
+        assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Changing a fingerprinted field still changes the digest.
+        let mut changed = obs(&["-y", "pkg"]);
+        changed
+            .env
+            .insert("API_TOKEN".into(), "different-value".into());
+        changed
+            .headers
+            .insert("Authorization".into(), "Bearer secret-header".into());
+        assert_ne!(fp, fingerprint(&changed));
     }
 }

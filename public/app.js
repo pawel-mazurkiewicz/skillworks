@@ -339,6 +339,9 @@ async function bootstrap() {
   // so a submit can't silently fall back to install-everything (no
   // selectedSourceKeys) or reuse source keys against a different ref.
   const invalidateGitPreview = () => {
+    // Bump the request generation so any in-flight preview for the previous
+    // URL/ref is treated as superseded and its response ignored.
+    state.gitPreviewGen = (state.gitPreviewGen || 0) + 1;
     if (!state.preview) {
       return;
     }
@@ -1342,6 +1345,11 @@ async function runGitPreview(options = {}) {
   const targetIds = Array.from(
     elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
   ).map((input) => input.value);
+  // Claim this request's generation. A later URL/ref edit (or a newer preview)
+  // bumps state.gitPreviewGen, so a superseded response is dropped rather than
+  // rendered or stored against the wrong repo/ref.
+  const generation = (state.gitPreviewGen || 0) + 1;
+  state.gitPreviewGen = generation;
   const plan = await api("/api/install-git/preview", {
     method: "POST",
     body: {
@@ -1351,6 +1359,9 @@ async function runGitPreview(options = {}) {
       projectPath: elements.projectInput.value,
     },
   });
+  if (state.gitPreviewGen !== generation) {
+    return;
+  }
   renderInstallPreview(plan, { repoUrl, preselectSlug: options.preselectSlug });
   const preselectToastShown =
     Boolean(skillSlug(options.preselectSlug)) &&
