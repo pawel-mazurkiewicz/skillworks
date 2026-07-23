@@ -383,10 +383,14 @@ pub fn source_key_for(candidate: &ImportCandidate, install_root: &Path) -> Strin
 /// selection filter, and `commands.rs::candidate_source_key`: the path
 /// relative to `install_root`, falling back to the unstripped path.
 pub fn source_key_for_path(path: &Path, install_root: &Path) -> String {
+    // Normalize to forward slashes so the key is stable and API-compatible
+    // across platforms: on Windows the stripped path uses `\` separators
+    // (e.g. `skills\rust-best-practices`), but the source-key convention —
+    // shared with skill ids and the frontend selection round-trip — is `/`.
     path.strip_prefix(install_root)
         .unwrap_or(path)
         .to_string_lossy()
-        .into_owned()
+        .replace('\\', "/")
 }
 
 fn short_hash(path: &Path) -> String {
@@ -454,6 +458,26 @@ mod tests {
         let s = parse_git_source("https://github.com/foo/bar#main:pkg", Some("v1.0.0")).unwrap();
         assert_eq!(s.git_ref, "v1.0.0");
         assert_eq!(s.subdir, "pkg");
+    }
+
+    #[test]
+    fn source_key_uses_forward_slashes() {
+        // A relative segment (multi-level) is stripped and kept.
+        assert_eq!(
+            source_key_for_path(Path::new("/root/skills/rust"), Path::new("/root")),
+            "skills/rust"
+        );
+        // Backslash separators in the stripped remainder are normalized to `/`,
+        // mirroring how a Windows path (`skills\rust-best-practices`) must map
+        // to the API-compatible `skills/rust-best-practices` key. (On Unix `\`
+        // is a valid filename char, so this exercises the replace directly.)
+        assert_eq!(
+            source_key_for_path(
+                Path::new("skills\\rust-best-practices"),
+                Path::new("nonexistent-root")
+            ),
+            "skills/rust-best-practices"
+        );
     }
 
     #[test]
