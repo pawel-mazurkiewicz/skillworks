@@ -7,7 +7,9 @@ use std::path::Path;
 use serde_json::{json, Value};
 use tokio::fs;
 
-use super::super::fs_atomic::{backup_existing, write_bytes_atomic, write_json_atomic};
+use super::super::fs_atomic::{
+    backup_existing, with_file_lock, write_bytes_atomic, write_json_atomic,
+};
 use super::super::state::{BackendError, BackendResult};
 use super::adapters::{CommandStyle, ConfigFormat, Discriminator, McpAdapter, RemoteUrlField};
 use super::spec::{EffectiveInvocation, McpTransport};
@@ -415,28 +417,36 @@ pub async fn write_entry(
     id: &str,
     inv: &EffectiveInvocation,
 ) -> BackendResult<()> {
-    match adapter.format {
-        ConfigFormat::Json => {
-            let mut doc = read_json_doc(path).await?;
-            let servers = json_servers_mut(&mut doc, adapter.key_path)?;
-            servers.insert(id.to_string(), render_entry_json(adapter, inv));
-            backup_existing(path).await?;
-            write_json_atomic(path, &Value::Object(doc)).await
-        }
-        ConfigFormat::Toml => {
-            let mut doc = read_toml_doc(path).await?;
-            let root_key = adapter.key_path[0];
-            if !doc.contains_key(root_key) {
-                doc[root_key] = toml_edit::Item::Table(toml_edit::Table::new());
+    // Locked for the whole read-modify-write cycle (not just the final
+    // write) so a concurrent activate/deactivate on this same harness config
+    // file — from another task in this process, or from the Node MCP
+    // server's own read-modify-write on the same path — can't interleave
+    // and silently drop one side's update.
+    with_file_lock(path, || async move {
+        match adapter.format {
+            ConfigFormat::Json => {
+                let mut doc = read_json_doc(path).await?;
+                let servers = json_servers_mut(&mut doc, adapter.key_path)?;
+                servers.insert(id.to_string(), render_entry_json(adapter, inv));
+                backup_existing(path).await?;
+                write_json_atomic(path, &Value::Object(doc)).await
             }
-            let servers = doc[root_key]
-                .as_table_mut()
-                .ok_or_else(|| BackendError::Validation(format!("{root_key} is not a table")))?;
-            servers.insert(id, toml_edit::Item::Table(render_entry_toml(inv)));
-            backup_existing(path).await?;
-            write_bytes_atomic(path, doc.to_string().as_bytes()).await
+            ConfigFormat::Toml => {
+                let mut doc = read_toml_doc(path).await?;
+                let root_key = adapter.key_path[0];
+                if !doc.contains_key(root_key) {
+                    doc[root_key] = toml_edit::Item::Table(toml_edit::Table::new());
+                }
+                let servers = doc[root_key].as_table_mut().ok_or_else(|| {
+                    BackendError::Validation(format!("{root_key} is not a table"))
+                })?;
+                servers.insert(id, toml_edit::Item::Table(render_entry_toml(inv)));
+                backup_existing(path).await?;
+                write_bytes_atomic(path, doc.to_string().as_bytes()).await
+            }
         }
-    }
+    })
+    .await
 }
 
 /// Remove only `id`. Returns true when an entry was actually removed.
@@ -453,36 +463,41 @@ pub async fn remove_entry(path: &Path, adapter: &McpAdapter, id: &str) -> Backen
         Ok(true) => {}
         Err(err) => return Err(err.into()),
     }
-    match adapter.format {
-        ConfigFormat::Json => {
-            let mut doc = read_json_doc(path).await?;
-            let mut current: Option<&mut serde_json::Map<String, Value>> = Some(&mut doc);
-            for key in adapter.key_path {
-                current = current
-                    .and_then(|m| m.get_mut(*key))
-                    .and_then(|v| v.as_object_mut());
+    // Same locking rationale as `write_entry`: hold the lock across the
+    // whole read-modify-write cycle, not just the final write.
+    with_file_lock(path, || async move {
+        match adapter.format {
+            ConfigFormat::Json => {
+                let mut doc = read_json_doc(path).await?;
+                let mut current: Option<&mut serde_json::Map<String, Value>> = Some(&mut doc);
+                for key in adapter.key_path {
+                    current = current
+                        .and_then(|m| m.get_mut(*key))
+                        .and_then(|v| v.as_object_mut());
+                }
+                let removed = current.map(|m| m.remove(id).is_some()).unwrap_or(false);
+                if removed {
+                    backup_existing(path).await?;
+                    write_json_atomic(path, &Value::Object(doc)).await?;
+                }
+                Ok(removed)
             }
-            let removed = current.map(|m| m.remove(id).is_some()).unwrap_or(false);
-            if removed {
-                backup_existing(path).await?;
-                write_json_atomic(path, &Value::Object(doc)).await?;
+            ConfigFormat::Toml => {
+                let mut doc = read_toml_doc(path).await?;
+                let removed = doc
+                    .get_mut(adapter.key_path[0])
+                    .and_then(|i| i.as_table_mut())
+                    .map(|t| t.remove(id).is_some())
+                    .unwrap_or(false);
+                if removed {
+                    backup_existing(path).await?;
+                    write_bytes_atomic(path, doc.to_string().as_bytes()).await?;
+                }
+                Ok(removed)
             }
-            Ok(removed)
         }
-        ConfigFormat::Toml => {
-            let mut doc = read_toml_doc(path).await?;
-            let removed = doc
-                .get_mut(adapter.key_path[0])
-                .and_then(|i| i.as_table_mut())
-                .map(|t| t.remove(id).is_some())
-                .unwrap_or(false);
-            if removed {
-                backup_existing(path).await?;
-                write_bytes_atomic(path, doc.to_string().as_bytes()).await?;
-            }
-            Ok(removed)
-        }
-    }
+    })
+    .await
 }
 
 /// List (id, entry-as-json) pairs in a config. Missing file → empty.

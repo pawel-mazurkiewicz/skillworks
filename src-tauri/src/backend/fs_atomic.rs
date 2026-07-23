@@ -1,8 +1,10 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -129,6 +131,139 @@ pub async fn backup_existing(path: &Path) -> BackendResult<Option<PathBuf>> {
     Ok(Some(backup_path))
 }
 
+// --- Cross-process advisory file locking ---
+//
+// The Tauri desktop app (this process) and the legacy Node MCP stdio server
+// both perform read-modify-write cycles on the same on-disk files (the MCP
+// server library, the dismissed-candidates list, harness config files).
+// Without coordination, two concurrent RMW cycles from the two processes can
+// silently lose one writer's update (last writer wins). This implements a
+// simple advisory lock-file protocol, mirrored byte-for-byte in the Node
+// implementation (`src/mcp-core.js`'s `withFileLock`) so the two processes
+// actually exclude each other:
+//
+//   - The lock for a protected file `P` is `P` + `.lock`, created via
+//     create-new (O_CREAT|O_EXCL) containing JSON `{"pid", "acquiredAt"}`.
+//   - On a create failure because the lock already exists: if the existing
+//     lock's `acquiredAt` is older than 10s, its holder likely crashed
+//     without releasing it — delete it and retry immediately. Otherwise
+//     sleep 50ms and retry, up to a total wait of ~2s, then fail.
+//   - Release = delete the lock file.
+
+const LOCK_STALE_AFTER_MS: u64 = 10_000;
+const LOCK_RETRY_DELAY_MS: u64 = 50;
+const LOCK_MAX_WAIT_MS: u64 = 2_000;
+
+#[derive(Serialize)]
+struct LockPayload {
+    pid: u32,
+    #[serde(rename = "acquiredAt")]
+    acquired_at: u64,
+}
+
+#[derive(Deserialize)]
+struct LockPayloadRead {
+    #[serde(default, rename = "acquiredAt")]
+    acquired_at: u64,
+}
+
+fn lock_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// RAII guard for an advisory cross-process lock on the file passed to
+/// [`with_file_lock`] / [`acquire_file_lock`]. Releases the lock (deletes the
+/// lock file) on drop. Uses a synchronous remove because `Drop::drop` cannot
+/// be async; this is a single small unlink and mirrors the same tradeoff
+/// `tempfile`-style guards make elsewhere.
+pub struct FileLockGuard {
+    lock_path: PathBuf,
+}
+
+impl Drop for FileLockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
+/// Acquire the advisory lock file for `path` (i.e. `<path>.lock`), taking
+/// over a stale lock (see module docs) and retrying with backoff otherwise.
+pub async fn acquire_file_lock(path: &Path) -> BackendResult<FileLockGuard> {
+    let lock_path = lock_path_for(path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+
+    let payload = LockPayload {
+        pid: std::process::id(),
+        acquired_at: now_ms(),
+    };
+    let mut bytes = serde_json::to_vec(&payload)?;
+    bytes.push(b'\n');
+
+    let deadline = Instant::now() + Duration::from_millis(LOCK_MAX_WAIT_MS);
+    loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .await
+        {
+            Ok(mut file) => {
+                file.write_all(&bytes).await?;
+                file.flush().await?;
+                file.sync_all().await?;
+                return Ok(FileLockGuard { lock_path });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if let Ok(existing) = fs::read(&lock_path).await {
+                    if let Ok(parsed) = serde_json::from_slice::<LockPayloadRead>(&existing) {
+                        if now_ms().saturating_sub(parsed.acquired_at) > LOCK_STALE_AFTER_MS {
+                            // Stale — the previous holder likely crashed
+                            // without releasing it. Take it over and retry
+                            // immediately (no backoff sleep).
+                            let _ = fs::remove_file(&lock_path).await;
+                            continue;
+                        }
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return Err(BackendError::Validation(format!(
+                        "could not acquire lock on {}",
+                        path.display()
+                    )));
+                }
+                tokio::time::sleep(Duration::from_millis(LOCK_RETRY_DELAY_MS)).await;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+/// Run `f` while holding the advisory cross-process lock for `path`, so a
+/// whole read-modify-write cycle (load -> mutate -> save) is serialized
+/// against both other tasks in this process and the Node MCP server process.
+/// The lock must wrap the *whole* cycle, not just the final write — locking
+/// only around the save would still let two readers interleave and one's
+/// update silently overwrite the other's.
+pub async fn with_file_lock<T, F, Fut>(path: &Path, f: F) -> BackendResult<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = BackendResult<T>>,
+{
+    let _guard = acquire_file_lock(path).await?;
+    f().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +307,76 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .expect("final file must be valid JSON, not a corrupted interleave");
         assert!(value.get("writer").is_some());
+    }
+
+    /// `with_file_lock` must serialize a whole read-modify-write cycle: many
+    /// concurrent "increment a counter field" cycles through the helper must
+    /// all land, none silently lost to a last-writer-wins race.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn with_file_lock_serializes_concurrent_read_modify_write_cycles() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("counter.json");
+        write_json_atomic(&path, &serde_json::json!({"count": 0}))
+            .await
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..32u32 {
+            let path = path.clone();
+            handles.push(tokio::spawn(async move {
+                with_file_lock(&path, || async {
+                    let bytes = fs::read(&path).await?;
+                    let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
+                    let count = value["count"].as_u64().unwrap();
+                    value["count"] = serde_json::json!(count + 1);
+                    write_json_atomic(&path, &value).await?;
+                    Ok(())
+                })
+                .await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+
+        let bytes = fs::read(&path).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["count"].as_u64().unwrap(),
+            32,
+            "every increment must survive; a lower count means a lock did not \
+             actually serialize two overlapping read-modify-write cycles"
+        );
+    }
+
+    /// A lock file left behind by a holder that crashed without releasing it
+    /// (`acquiredAt` far in the past) must be taken over rather than blocking
+    /// forever.
+    #[tokio::test]
+    async fn stale_lock_is_taken_over() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("target.json");
+        write_json_atomic(&path, &serde_json::json!({"count": 0}))
+            .await
+            .unwrap();
+
+        let lock_path = lock_path_for(&path);
+        let stale_acquired_at = now_ms() - (LOCK_STALE_AFTER_MS + 1_000);
+        let stale_payload = serde_json::json!({"pid": 999_999, "acquiredAt": stale_acquired_at});
+        fs::write(&lock_path, serde_json::to_vec(&stale_payload).unwrap())
+            .await
+            .unwrap();
+
+        // Should take over the stale lock (near-)immediately rather than
+        // waiting out the full ~2s retry budget.
+        let started = Instant::now();
+        let guard = acquire_file_lock(&path).await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "stale lock should be taken over immediately, took {:?}",
+            started.elapsed()
+        );
+        drop(guard);
+        assert!(!fs::try_exists(&lock_path).await.unwrap_or(false));
     }
 }

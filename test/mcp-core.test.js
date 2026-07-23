@@ -709,3 +709,44 @@ test("mcpStatus adds project-scope rows with a trustNote for harnesses that requ
   assert.equal(cursorProjectRow.active, false);
   assert.ok(cursorProjectRow.error, "malformed cursor project config should report an error");
 });
+
+test("withFileLock serializes overlapping read-modify-write cycles", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-lock-"));
+  const p = path.join(dir, "counter.json");
+  await fs.writeFile(p, JSON.stringify({ count: 0 }));
+
+  const increment = () =>
+    mcp.withFileLock(p, async () => {
+      const value = JSON.parse(await fs.readFile(p, "utf8"));
+      // Yield so a concurrent, unlocked increment would have a real chance
+      // to interleave here and clobber this one.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      value.count += 1;
+      await fs.writeFile(p, JSON.stringify(value));
+    });
+
+  await Promise.all(Array.from({ length: 20 }, () => increment()));
+
+  const final = JSON.parse(await fs.readFile(p, "utf8"));
+  assert.equal(final.count, 20, "every increment must survive a lock-serialized read-modify-write cycle");
+});
+
+test("withFileLock takes over a stale lock instead of waiting out the full retry budget", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sw-lock-stale-"));
+  const p = path.join(dir, "target.json");
+  await fs.writeFile(p, JSON.stringify({ count: 0 }));
+
+  const lockPath = `${p}.lock`;
+  const staleAcquiredAt = Date.now() - 11_000; // older than the 10s staleness threshold
+  await fs.writeFile(lockPath, JSON.stringify({ pid: 999999, acquiredAt: staleAcquiredAt }));
+
+  const started = Date.now();
+  await mcp.withFileLock(p, async () => {
+    await fs.writeFile(p, JSON.stringify({ count: 1 }));
+  });
+  const elapsed = Date.now() - started;
+
+  assert.ok(elapsed < 500, `stale lock should be taken over immediately, took ${elapsed}ms`);
+  await assert.rejects(() => fs.access(lockPath), /ENOENT/, "lock file should be released after withFileLock resolves");
+  assert.equal(JSON.parse(await fs.readFile(p, "utf8")).count, 1);
+});

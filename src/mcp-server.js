@@ -420,12 +420,17 @@ function registerMcpTools(server, z) {
       const { appHome } = await resolveMcpHomes();
       const normalized = normalizeMcpServerSpec(spec);
       mcpCore.validateSpec(normalized);
-      const servers = await mcpCore.loadLibrary(appHome);
-      if (servers.some((s) => s.id === normalized.id)) {
-        throw new Error(`A server with id ${JSON.stringify(normalized.id)} already exists in the library`);
-      }
-      servers.push(normalized);
-      await mcpCore.saveLibrary(appHome, servers);
+      // Locked for the whole load -> mutate -> save cycle so a concurrent
+      // edit from the Tauri desktop app (Rust) can't interleave and be
+      // silently lost.
+      await mcpCore.withFileLock(mcpCore.libraryPath(appHome), async () => {
+        const servers = await mcpCore.loadLibrary(appHome);
+        if (servers.some((s) => s.id === normalized.id)) {
+          throw new Error(`A server with id ${JSON.stringify(normalized.id)} already exists in the library`);
+        }
+        servers.push(normalized);
+        await mcpCore.saveLibrary(appHome, servers);
+      });
       return toContent({ server: normalized });
     },
   );
@@ -524,13 +529,18 @@ function registerMcpTools(server, z) {
         .filter((row) => row.serverId === id && row.error)
         .map((row) => ({ harness: row.harness, scope: row.scope, configPath: row.configPath, error: row.error }));
 
-      const servers = await mcpCore.loadLibrary(appHome);
-      const before = servers.length;
-      const remaining = servers.filter((s) => s.id !== id);
-      if (remaining.length === before) {
-        throw new Error(`No library server with id ${JSON.stringify(id)}`);
-      }
-      await mcpCore.saveLibrary(appHome, remaining);
+      // Locked for the whole load -> mutate -> save cycle so a concurrent
+      // edit from the Tauri desktop app (Rust) can't interleave and be
+      // silently lost.
+      await mcpCore.withFileLock(mcpCore.libraryPath(appHome), async () => {
+        const servers = await mcpCore.loadLibrary(appHome);
+        const before = servers.length;
+        const remaining = servers.filter((s) => s.id !== id);
+        if (remaining.length === before) {
+          throw new Error(`No library server with id ${JSON.stringify(id)}`);
+        }
+        await mcpCore.saveLibrary(appHome, remaining);
+      });
       return toContent({ removed: id, stillActiveAt, couldNotCheck });
     },
   );

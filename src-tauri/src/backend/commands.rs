@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use super::config::Config;
+use super::fs_atomic::with_file_lock;
 use super::fs_helpers::{copy_directory, move_directory, unique_skill_destination};
 use super::mcp::adapters::{adapter_for, adapters, config_path_for};
 use super::mcp::engine::{
@@ -21,8 +22,8 @@ use super::mcp::engine::{
 use super::mcp::parse::{placeholder_warnings, slugify};
 use super::mcp::reconcile::{diff_invocation, invocation_eq, spec_from_observed, FieldDiff};
 use super::mcp::spec::{
-    load_library, resolve_effective, resolve_effective_selection, save_library, validate_spec,
-    McpServerSpec, McpTransport,
+    library_path, load_library, resolve_effective, resolve_effective_selection, save_library,
+    validate_spec, McpServerSpec, McpTransport,
 };
 use super::projects::{
     build_project_record, expand_home, merge_project_records, normalize_project_path,
@@ -2383,17 +2384,28 @@ pub async fn mcp_add_manual_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
     validate_spec(&spec)?;
+    // `MCP_LIBRARY_LOCK` serializes concurrent calls within this process;
+    // `with_file_lock` below additionally excludes the Node MCP server
+    // process from racing the same load -> mutate -> save cycle on
+    // servers.json. The lock must wrap the whole cycle, not just the save,
+    // or two readers could still interleave and one's update would
+    // silently overwrite the other's.
     let _guard = MCP_LIBRARY_LOCK.lock().await;
     let app_home = resolve_mcp_app_home(app_home_override).await?;
-    let mut servers = load_library(&app_home).await?;
-    if servers.iter().any(|s| s.id == spec.id) {
-        return Err(BackendError::Validation(format!(
-            "A server with id {:?} already exists in the library",
-            spec.id
-        )));
-    }
-    servers.push(spec);
-    save_library(&app_home, &servers).await?;
+    let path = library_path(&app_home);
+    let servers = with_file_lock(&path, move || async move {
+        let mut servers = load_library(&app_home).await?;
+        if servers.iter().any(|s| s.id == spec.id) {
+            return Err(BackendError::Validation(format!(
+                "A server with id {:?} already exists in the library",
+                spec.id
+            )));
+        }
+        servers.push(spec);
+        save_library(&app_home, &servers).await?;
+        Ok(servers)
+    })
+    .await?;
     Ok(McpLibraryResponse {
         servers,
         warnings: Vec::new(),
@@ -2411,17 +2423,24 @@ pub async fn mcp_update_server_impl(
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
     validate_spec(&spec)?;
+    // See the matching comment in `mcp_add_manual_impl` for why both locks
+    // are needed here.
     let _guard = MCP_LIBRARY_LOCK.lock().await;
     let app_home = resolve_mcp_app_home(app_home_override).await?;
-    let mut servers = load_library(&app_home).await?;
-    let idx = servers
-        .iter()
-        .position(|s| s.id == spec.id)
-        .ok_or_else(|| {
-            BackendError::NotFound(format!("No library server with id {:?}", spec.id))
-        })?;
-    servers[idx] = spec;
-    save_library(&app_home, &servers).await?;
+    let path = library_path(&app_home);
+    let servers = with_file_lock(&path, move || async move {
+        let mut servers = load_library(&app_home).await?;
+        let idx = servers
+            .iter()
+            .position(|s| s.id == spec.id)
+            .ok_or_else(|| {
+                BackendError::NotFound(format!("No library server with id {:?}", spec.id))
+            })?;
+        servers[idx] = spec;
+        save_library(&app_home, &servers).await?;
+        Ok(servers)
+    })
+    .await?;
     Ok(McpLibraryResponse {
         servers,
         warnings: Vec::new(),
@@ -2444,16 +2463,25 @@ pub async fn mcp_remove_server_impl(
     app_home_override: Option<PathBuf>,
     home_dir_override: Option<PathBuf>,
 ) -> BackendResult<McpLibraryResponse> {
+    // See the matching comment in `mcp_add_manual_impl` for why both locks
+    // are needed here.
     let _guard = MCP_LIBRARY_LOCK.lock().await;
     let app_home = resolve_mcp_app_home(app_home_override).await?;
-    let mut servers = load_library(&app_home).await?;
-    let before = servers.len();
-    servers.retain(|s| s.id != id);
-    if servers.len() == before {
-        return Err(BackendError::NotFound(format!(
-            "No library server with id {id:?}"
-        )));
-    }
+    let path = library_path(&app_home);
+    let remove_id = id.clone();
+    let servers = with_file_lock(&path, move || async move {
+        let mut servers = load_library(&app_home).await?;
+        let before = servers.len();
+        servers.retain(|s| s.id != remove_id);
+        if servers.len() == before {
+            return Err(BackendError::NotFound(format!(
+                "No library server with id {remove_id:?}"
+            )));
+        }
+        save_library(&app_home, &servers).await?;
+        Ok(servers)
+    })
+    .await?;
 
     // Warn (do not deactivate) where the entry is still present in configs.
     let home_dir = resolve_home_dir(home_dir_override)?;
@@ -2496,7 +2524,6 @@ pub async fn mcp_remove_server_impl(
         }
     }
 
-    save_library(&app_home, &servers).await?;
     Ok(McpLibraryResponse { servers, warnings })
 }
 
@@ -2929,22 +2956,28 @@ pub async fn mcp_reconcile_dismiss_impl(
     targets: Vec<McpDismissTarget>,
     app_home_override: Option<PathBuf>,
 ) -> BackendResult<()> {
-    use super::mcp::dismissed::{load_dismissed, save_dismissed, DismissedEntry};
+    use super::mcp::dismissed::{dismissed_path, load_dismissed, save_dismissed, DismissedEntry};
     let app_home = resolve_mcp_app_home(app_home_override).await?;
+    // See the matching comment in `mcp_add_manual_impl` for why both locks
+    // are needed here.
     let _guard = MCP_LIBRARY_LOCK.lock().await;
-    let mut entries = load_dismissed(&app_home).await?;
-    for t in targets {
-        let e = DismissedEntry {
-            key: key.clone(),
-            harness: t.harness,
-            scope: t.scope,
-            fingerprint: fingerprint.clone(),
-        };
-        if !entries.contains(&e) {
-            entries.push(e);
+    let path = dismissed_path(&app_home);
+    with_file_lock(&path, move || async move {
+        let mut entries = load_dismissed(&app_home).await?;
+        for t in targets {
+            let e = DismissedEntry {
+                key: key.clone(),
+                harness: t.harness,
+                scope: t.scope,
+                fingerprint: fingerprint.clone(),
+            };
+            if !entries.contains(&e) {
+                entries.push(e);
+            }
         }
-    }
-    save_dismissed(&app_home, &entries).await
+        save_dismissed(&app_home, &entries).await
+    })
+    .await
 }
 
 /// Resolve a matched import candidate: activate the library server on the
