@@ -1086,12 +1086,16 @@ async function handleMatrixToggle(cellKey, wantsOn) {
   renderDetail();
   try {
     if (wantsOn) {
+      // Ticking one checkbox only targets this cell's harness/scope — it
+      // must not force whichever variant happens to be open in the "Activate
+      // as…" picker onto it. Omitting variantLabel lets the backend resolve
+      // this target's own matching variant (or canonical fields) instead,
+      // same as handleReapply.
       await api(`/api/mcp/servers/${encodeURIComponent(server.id)}/activate`, {
         method: "POST",
         body: {
           harness,
           scope,
-          variantLabel: detail.variantLabel || undefined,
           projectPath: scope === "project" ? projectPath() : undefined,
         },
       });
@@ -1123,12 +1127,17 @@ async function handleReapply(server, detail) {
   const results = [];
   for (const target of targets) {
     try {
+      // Reapply pushes the current spec back out to every active target, not
+      // just the one the detail pane's variant editor happens to be showing.
+      // Omitting variantLabel lets the backend resolve each harness/scope's
+      // own matching variant (or canonical fields) instead of forcing
+      // whichever variant is currently selected in the editor onto all of
+      // them.
       await api(`/api/mcp/servers/${encodeURIComponent(server.id)}/activate`, {
         method: "POST",
         body: {
           harness: target.harness,
           scope: target.scope,
-          variantLabel: detail.variantLabel || undefined,
           projectPath: target.scope === "project" ? projectPath() : undefined,
         },
       });

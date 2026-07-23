@@ -469,6 +469,88 @@ try {
     await page.screenshot({ path: "test-results/mcp-matrix-toggle.png" });
   });
 
+  test("Reapply ignores the variant picker's current selection and lets each target auto-resolve its own variant", async ({
+    page,
+  }) => {
+    const activateRequests = [];
+    page.on("request", (req) => {
+      if (/\/api\/mcp\/servers\/.+\/activate$/.test(new URL(req.url()).pathname)) {
+        activateRequests.push(req);
+      }
+    });
+
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+    // "everything" (SERVERS[0]) carries a "kiro tweak" variant scoped to the
+    // "kiro" harness — selecting it in the "Activate as…" picker and then
+    // reapplying must not force it onto every active target (e.g. the
+    // "claude" one below, which the variant doesn't apply to).
+    await page.locator(".mcp-servers-row").first().click();
+
+    const claudeCheckbox = page.locator('input[data-mcp-toggle="claude:global"]');
+    const kiroCheckbox = page.locator('input[data-mcp-toggle="kiro:global"]');
+    await claudeCheckbox.click();
+    await expect(claudeCheckbox).toBeChecked();
+    await kiroCheckbox.click();
+    await expect(kiroCheckbox).toBeChecked();
+
+    // Only the Reapply-triggered requests below matter for the assertion.
+    activateRequests.length = 0;
+
+    await page.locator('select[data-mcp-field="variantLabel"]').selectOption("kiro tweak");
+
+    // Editing + saving with active targets present is what raises the stale
+    // banner (and with it, the Reapply button) — see handleSave, which sets
+    // `detail.staleBanner = activeTargetsOf(...).length > 0` once the save
+    // succeeds.
+    await page.locator('input[data-mcp-field="command"]').fill("npx-edited");
+    await page.locator('[data-mcp-save="1"]').click();
+
+    const reapplyButton = page.locator('[data-mcp-reapply="1"]');
+    await expect(reapplyButton).toBeVisible();
+    await reapplyButton.click();
+
+    await expect.poll(() => activateRequests.length).toBe(2);
+    for (const req of activateRequests) {
+      const body = req.postDataJSON();
+      expect(body.variantLabel).toBeUndefined();
+    }
+
+    // Reapply succeeded on both targets, so the stale banner (and this
+    // button) should clear.
+    await expect(reapplyButton).toHaveCount(0);
+  });
+
+  test("matrix checkbox activation ignores the variant picker's current selection", async ({
+    page,
+  }) => {
+    const activateRequests = [];
+    page.on("request", (req) => {
+      if (/\/api\/mcp\/servers\/.+\/activate$/.test(new URL(req.url()).pathname)) {
+        activateRequests.push(req);
+      }
+    });
+
+    await page.goto("/");
+    await page.locator('[data-top-tab="mcp-servers"]').click();
+    // "everything" (SERVERS[0]) carries a "kiro tweak" variant scoped to the
+    // "kiro" harness — selecting it in the picker must not leak into a
+    // single-checkbox activation for an unrelated harness like "claude".
+    await page.locator(".mcp-servers-row").first().click();
+
+    await page.locator('select[data-mcp-field="variantLabel"]').selectOption("kiro tweak");
+
+    const claudeCheckbox = page.locator('input[data-mcp-toggle="claude:global"]');
+    await claudeCheckbox.click();
+    await expect(claudeCheckbox).toBeChecked();
+
+    await expect.poll(() => activateRequests.length).toBe(1);
+    const body = activateRequests[0].postDataJSON();
+    expect(body.harness).toBe("claude");
+    expect(body.scope).toBe("global");
+    expect(body.variantLabel).toBeUndefined();
+  });
+
   test("keyboard Tab reaches list -> form -> matrix with visible focus", async ({ page }) => {
     await page.goto("/");
     await page.locator('[data-top-tab="mcp-servers"]').click();
