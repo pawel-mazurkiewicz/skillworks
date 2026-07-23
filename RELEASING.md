@@ -66,9 +66,20 @@ Make sure the `gh` CLI is installed (`brew install gh` on macOS).
 
 ## Before each release
 
-1. **Bump the version** in both `package.json` and `src-tauri/tauri.conf.json` to match (e.g. `0.2.0`).
-2. Commit and push the version bump to `main`.
-3. Make sure all three machines have an up-to-date checkout and a filled-in `.env.release`.
+1. **Bump the version** in every version-bearing manifest so they all match (e.g. `0.3.0`):
+   - `package.json`
+   - `package-lock.json` — regenerate with `npm install --package-lock-only` after editing `package.json`
+   - `src-tauri/tauri.conf.json`
+   - `src-tauri/Cargo.toml` — then run `cargo check --manifest-path src-tauri/Cargo.toml` so `Cargo.lock` picks it up
+2. **Run the validation suite** and make sure everything is green:
+   ```bash
+   npm test
+   npm run test:ui
+   cargo test --manifest-path src-tauri/Cargo.toml
+   cargo fmt --manifest-path src-tauri/Cargo.toml --check
+   ```
+3. Commit and push the version bump to `main`.
+4. Make sure all three machines have an up-to-date checkout and a filled-in `.env.release`.
 
 ---
 
