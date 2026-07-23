@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 
+use super::fs_atomic::write_json_atomic;
 use super::state::{BackendError, BackendResult};
 use super::types::{MarketplacePagination, MarketplaceSkill, MarketplaceSkillsResponse};
 
@@ -718,6 +719,13 @@ static SKILL_ID_PATTERN: Lazy<Regex> = Lazy::new(|| {
 
 const MAX_DESCRIPTION_IDS: usize = 100;
 
+/// Serializes the read-modify-write of the on-disk description cache so
+/// overlapping `fetch_marketplace_descriptions_with` calls (e.g. two vault
+/// hydration passes racing on the same cache file) can't drop each other's
+/// insertions by both reading the cache before either writes it back.
+static DESCRIPTION_CACHE_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
+
 /// Pull the `<meta name="description">` content out of a skill detail
 /// page. Handles both attribute orders (Next.js emits name-first today,
 /// but the order is not contractual).
@@ -749,6 +757,11 @@ pub async fn fetch_marketplace_descriptions_with<C: HttpClient + ?Sized>(
     ids: Vec<String>,
     cache_path: &Path,
 ) -> BackendResult<BTreeMap<String, String>> {
+    // Hold the lock across the whole read-modify-write (including the
+    // network calls that populate new entries) so a second concurrent call
+    // can't read the cache before this one writes its insertions back.
+    let _guard = DESCRIPTION_CACHE_LOCK.lock().await;
+
     let mut cache: BTreeMap<String, String> = match tokio::fs::read_to_string(cache_path).await {
         Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
         Err(_) => BTreeMap::new(),
@@ -775,12 +788,7 @@ pub async fn fetch_marketplace_descriptions_with<C: HttpClient + ?Sized>(
     }
 
     if dirty {
-        if let Some(parent) = cache_path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Ok(text) = serde_json::to_string_pretty(&cache) {
-            let _ = tokio::fs::write(cache_path, text).await;
-        }
+        let _ = write_json_atomic(cache_path, &cache).await;
     }
 
     Ok(ids
@@ -1034,6 +1042,49 @@ mod tests {
             .expect("cached fetch");
         assert_eq!(again.get("owner/repo/rust").map(String::as_str), Some("Rust patterns."));
         assert_eq!(client.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn descriptions_concurrent_fetches_dont_drop_each_others_inserts() {
+        // Two overlapping hydration calls for different uncached ids against
+        // the same cache file must both land — the lock around the
+        // read-modify-write must stop the second call's read from missing
+        // the first call's insertion.
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![
+            HttpResponse {
+                status: 200,
+                body: r#"<meta name="description" content="First skill."/>"#.to_string(),
+            },
+            HttpResponse {
+                status: 200,
+                body: r#"<meta name="description" content="Second skill."/>"#.to_string(),
+            },
+        ]);
+
+        let ids_a = vec!["owner/repo/first".to_string()];
+        let ids_b = vec!["owner/repo/second".to_string()];
+
+        let (res_a, res_b) = tokio::join!(
+            fetch_marketplace_descriptions_with(&client, ids_a, &cache_path),
+            fetch_marketplace_descriptions_with(&client, ids_b, &cache_path),
+        );
+        res_a.expect("fetch a");
+        res_b.expect("fetch b");
+
+        let cache: BTreeMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
+        assert!(
+            cache.contains_key("owner/repo/first"),
+            "cache missing first id: {:?}",
+            cache
+        );
+        assert!(
+            cache.contains_key("owner/repo/second"),
+            "cache missing second id: {:?}",
+            cache
+        );
     }
 
     #[tokio::test]

@@ -154,12 +154,17 @@ pub async fn find_skill_roots(dir: &Path) -> BackendResult<Vec<PathBuf>> {
 
 /// Cache-file schema for `<app home>/skills-cache.json`. Each entry stores
 /// the parsed `SKILL.md` frontmatter fields keyed by skill id, fingerprinted
-/// by the file's `{mtimeMs, size}` so edits invalidate exactly one entry.
+/// by the file's `{mtimeNs, size, ino}` so edits invalidate exactly one
+/// entry. Nanosecond mtime + inode (vs. millisecond mtime alone) guards
+/// against a same-size rewrite landing within the same millisecond, which
+/// would otherwise be indistinguishable from an untouched file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SkillCacheEntry {
-    mtime_ms: i64,
+    mtime_ns: i64,
     size: u64,
+    #[serde(default)]
+    ino: u64,
     name: String,
     description: String,
     author: String,
@@ -173,7 +178,10 @@ struct SkillCacheFile {
     entries: BTreeMap<String, SkillCacheEntry>,
 }
 
-const SKILL_CACHE_VERSION: u32 = 1;
+/// Bumped from 1 → 2 for the mtimeMs→mtimeNs + inode fingerprint change;
+/// `load_skill_cache` discards (not errors on) any cache with a mismatched
+/// version, so old v1 caches are simply treated as cold.
+const SKILL_CACHE_VERSION: u32 = 2;
 
 /// Bound on concurrently in-flight per-skill scans. Each scan is 1-3 fs
 /// calls; the bound keeps large vaults from flooding tokio's blocking pool.
@@ -196,20 +204,36 @@ async fn load_skill_cache(cache_path: Option<&Path>) -> SkillCacheFile {
     }
 }
 
-fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
+fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
+        .map(|d| d.as_nanos() as i64)
         .unwrap_or(0)
+}
+
+/// Inode number for the fingerprint, when the platform exposes one. `0` on
+/// non-unix targets, where a same-size-same-millisecond rewrite can't be
+/// distinguished this way but is astronomically rarer than on unix's
+/// coarser-grained filesystems.
+#[cfg(unix)]
+fn inode(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.ino()
+}
+
+#[cfg(not(unix))]
+fn inode(_meta: &std::fs::Metadata) -> u64 {
+    0
 }
 
 /// Discover every skill under `vault_root` and return a sorted list with
 /// disambiguated link names. Ports `discoverSkills` from `core.js`.
 ///
 /// When `cache_path` is set, parsed frontmatter is reused from the JSON
-/// cache for files whose `{mtime, size}` fingerprint is unchanged, and the
-/// cache is rewritten (atomically, best-effort) when anything changed.
+/// cache for files whose `{mtimeNs, size, ino}` fingerprint is unchanged,
+/// and the cache is rewritten (atomically, best-effort) when anything
+/// changed.
 /// Per-skill scans run concurrently; output is byte-identical to the
 /// uncached sequential implementation.
 ///
@@ -245,21 +269,24 @@ pub async fn discover_skills(
 
             let skill_md = root.join(SKILL_FILE);
             let file_meta = fs::metadata(&skill_md).await?;
-            let fingerprint_mtime = mtime_ms(&file_meta);
+            let fingerprint_mtime = mtime_ns(&file_meta);
             let fingerprint_size = file_meta.len();
+            let fingerprint_ino = inode(&file_meta);
 
             let entry = match cached {
                 Some(entry)
-                    if entry.mtime_ms == fingerprint_mtime
-                        && entry.size == fingerprint_size =>
+                    if entry.mtime_ns == fingerprint_mtime
+                        && entry.size == fingerprint_size
+                        && entry.ino == fingerprint_ino =>
                 {
                     entry
                 }
                 _ => {
                     let metadata = read_skill_metadata(&root).await?;
                     SkillCacheEntry {
-                        mtime_ms: fingerprint_mtime,
+                        mtime_ns: fingerprint_mtime,
                         size: fingerprint_size,
+                        ino: fingerprint_ino,
                         name: metadata.name,
                         description: metadata.description,
                         author: metadata.author,
@@ -780,6 +807,6 @@ mod tests {
         // The corrupt file was replaced with a valid cache.
         let bytes = fs::read(&cache_path).await.unwrap();
         let cache: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(cache["version"], 1);
+        assert_eq!(cache["version"], 2);
     }
 }
