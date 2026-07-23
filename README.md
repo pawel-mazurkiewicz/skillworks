@@ -20,9 +20,11 @@ Skillworks is a Tauri 2 desktop app with a **native Rust backend** (`src-tauri/s
 
 The only remaining Node component is `src/mcp-server.js`, an optional **MCP stdio server** used for agent-driven set activation. It runs as a separate process and shares the vault, config, and per-skill manifest files on disk with the desktop app.
 
+Long-running actions show a thin progress line at the top of the window; if one runs long enough, a "Working…" toast with a spinner also appears in the bottom-right corner.
+
 ## Install & Run
 
-Prerequisites: Node.js 20+, Rust stable, and the Tauri build dependencies for your OS (see `docs/tauri-build.md`).
+Prerequisites: Node.js 20+, Rust stable, and the Tauri build dependencies for your OS — see the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) for the per-OS list (Xcode command line tools on macOS, WebView2 on Windows, the WebKitGTK/build-essential packages on Linux).
 
 ```bash
 npm install
@@ -67,6 +69,8 @@ SKILLWORKS_VAULT=/path/to/vault
 ```
 
 Both env vars are honored by the desktop app and the MCP server.
+
+For large vaults, skill discovery is backed by a metadata cache (`skills-cache.json` in the app home, keyed by file mtime/size) and runs discovery and target inspection in parallel, so state builds stay fast as the library grows — on a 1500+ skill vault this cut a full state rebuild from over a second to well under 200ms.
 
 ## Targets
 
@@ -172,6 +176,8 @@ https://github.com/org/repo.git#branch-or-tag:path/inside/repo
 
 HTTPS clones are supported out of the box (libgit2 is bundled with vendored OpenSSL — no system git or TLS stack required).
 
+The preview lists every `SKILL.md` found in the repo as its own card, tagged **New**, **Already installed**, or **Skipped**, with the skill's description alongside it. Each installable card has an **Install**/**Reinstall** pill you can toggle off to leave that skill out of the batch, and a collapsible **Targets** picker so you can choose a different set of targets per skill instead of applying one target list to the whole repo. This makes it practical to pull a single skill out of a multi-skill repo, or install most of a repo while skipping one or two entries.
+
 You can target any combination of the built-in global/project targets, custom targets, or vault-only.
 
 ### Browse the Marketplace
@@ -180,6 +186,8 @@ The Browse sub-tab connects to [skills.sh](https://skills.sh) for discovery.
 
 - **Trending / Hot / All-time / Official** views pull the public listings.
 - **Search** queries hit the skills.sh sitemap (~10k skill URLs) when the auth-walled JSON API is unavailable, giving effective full-catalog search without an API key.
+- Cards for skills already in your vault show a green **Installed** pill.
+- Card descriptions aren't in the listing HTML, so they're fetched lazily from each skill's skills.sh detail page in the background and cached on disk; a card shows a muted placeholder until its description arrives.
 - The **Open** button on a card launches the skill's skills.sh page in your default browser (URLs are scope-allowlisted to `skills.sh` and `github.com`).
 - **Install** populates the From-Git form with the upstream repo so you can choose which targets to link it to before committing.
 
@@ -216,6 +224,21 @@ Scopes:
 **Apply** replaces state only in the targets the set references; targets the set doesn't mention are left alone. Skills missing from the vault are skipped with a warning rather than blocking the apply.
 
 The Sets tab supports creating, editing, snapshotting the current state, and applying. Each project in the Manage tab can pin multiple sets and apply any of them with one click.
+
+## MCP Servers tab
+
+The MCP Servers tab manages the MCP server *definitions* you connect to your agents — a separate concern from the "MCP Server (agent-driven activation)" section below, which is about Skillworks itself being driven by an agent over MCP.
+
+A **server library** (left sidebar) holds harness-agnostic specs: transport (Stdio, HTTP, or SSE), command/args or URL, env or headers, and an optional list of **variants** that override specific fields for one harness/scope pair without touching the canonical spec used everywhere else. Each server's detail view has an activation matrix — one row per harness, with Global and Project columns — for registering it into that harness's config at a given scope.
+
+Add a server by pasting a connection URL to parse, or by filling in the fields manually.
+
+A **Reconcile** panel scans your existing harness configs and splits what it finds into two sections:
+
+- **Unmanaged imports** — servers present in a harness config but not yet tracked in the library. Each import candidate can be **Linked** into the library (added, with its discovered targets attached) or **Dismissed** (ignored until its on-disk config changes again).
+- **Drift** — library servers whose on-disk config no longer matches the spec Skillworks expects. Each drifted target can be **Reapplied** (push the library's spec back over the on-disk config) or **Adopted** (pull the on-disk change into the library). Adopting only changes the fields that actually drifted, and when another target's config already depends on the drifted values, adopt creates a scoped **variant** for that harness/scope instead of overwriting the canonical spec everyone else uses.
+
+MCP servers installed by a Claude Code plugin are surfaced in the import list for visibility, tagged "Managed by a Claude Code plugin — Skillworks won't modify it." They're import-only: Skillworks won't offer to adopt or report drift on them, since the plugin — not the library — owns their configuration.
 
 ## MCP Server (agent-driven activation)
 

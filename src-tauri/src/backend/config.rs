@@ -94,10 +94,7 @@ mod tests {
             sets: vec![serde_json::json!({ "id": "set-1", "name": "Default" })],
         };
 
-        original
-            .save(&config_path)
-            .await
-            .expect("save config");
+        original.save(&config_path).await.expect("save config");
 
         let loaded = Config::load(&config_path).await.expect("load config");
         assert_eq!(loaded, original);

@@ -33,6 +33,7 @@ const state = {
     pagination: null,
     loaded: false,
     error: "",
+    descriptions: {},
   },
   mcp: {
     harnesses: [],
@@ -163,6 +164,7 @@ const elements = {
   skillPreview: document.querySelector("#skillPreview"),
   copyPathButton: document.querySelector("#copyPathButton"),
   toast: document.querySelector("#toast"),
+  busyToast: document.querySelector("#busyToast"),
   bulkFloating: document.querySelector("#bulkFloating"),
   manageGrid: document.querySelector("#manageTab .manage-grid"),
   sidebarToggle: document.querySelector('[data-action="sidebar-toggle"]'),
@@ -191,6 +193,8 @@ async function bootstrap() {
         runAction(() => loadMarketplace());
       } else if (state.activeTopTab === "mcp" && !state.mcp.loaded) {
         runAction(() => loadMcp());
+      } else if (state.activeTopTab === "mcp-servers" && window.McpServers) {
+        runAction(() => window.McpServers.onEnter());
       }
     });
   });
@@ -328,27 +332,25 @@ async function bootstrap() {
     }
   });
 
-  elements.gitPreviewButton.addEventListener("click", () => runAction(async () => {
-    const repoUrl = elements.gitRepoInput.value.trim();
-    if (!repoUrl) {
-      showToast("Git URL is required");
+  elements.gitPreviewButton.addEventListener("click", () => runAction(() => runGitPreview()));
+
+  // A rendered preview (and its skill selection) is only valid for the exact
+  // repo URL + ref it was built from. Editing either input drops the preview
+  // so a submit can't silently fall back to install-everything (no
+  // selectedSourceKeys) or reuse source keys against a different ref.
+  const invalidateGitPreview = () => {
+    // Bump the request generation so any in-flight preview for the previous
+    // URL/ref is treated as superseded and its response ignored.
+    state.gitPreviewGen = (state.gitPreviewGen || 0) + 1;
+    if (!state.preview) {
       return;
     }
-    const targetIds = Array.from(
-      elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
-    ).map((input) => input.value);
-    const plan = await api("/api/install-git/preview", {
-      method: "POST",
-      body: {
-        repoUrl,
-        ref: elements.gitRefInput.value.trim(),
-        targetIds,
-        projectPath: elements.projectInput.value,
-      },
-    });
-    renderInstallPreview(plan, { repoUrl });
-    showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
-  }));
+    state.preview = null;
+    elements.gitPreviewResult.hidden = true;
+    elements.gitPreviewResult.innerHTML = "";
+  };
+  elements.gitRepoInput.addEventListener("input", invalidateGitPreview);
+  elements.gitRefInput.addEventListener("input", invalidateGitPreview);
 
   elements.gitTargetCheckboxes.addEventListener("change", (event) => {
     if (event.target.matches("input[type=checkbox]")) {
@@ -374,7 +376,16 @@ async function bootstrap() {
         projectPath: elements.projectInput.value,
       };
       if (state.preview && state.preview.repoUrl === repoUrl) {
-        body.perSkillTargets = state.preview.perSkillTargets;
+        const selected = Array.from(state.preview.selectedKeys || []);
+        if (!selected.length) {
+          showToast("No skills selected");
+          return;
+        }
+        body.selectedSourceKeys = selected;
+        body.perSkillTargets = {};
+        for (const key of selected) {
+          body.perSkillTargets[key] = state.preview.perSkillTargets[key] || [];
+        }
       }
       const result = await api("/api/install-git", {
         method: "POST",
@@ -419,6 +430,39 @@ async function bootstrap() {
     renderMatrix();
   });
 
+  // Delegated handlers for the skill list. With 1500+ rows, per-row
+  // listeners plus a full list re-render on every click made selection
+  // visibly laggy; these two listeners replace ~3000 per-row bindings.
+  elements.matrixBody.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-select-row]");
+    if (!checkbox) {
+      return;
+    }
+    if (checkbox.checked) {
+      state.selectedSkillIds.add(checkbox.dataset.selectRow);
+    } else {
+      state.selectedSkillIds.delete(checkbox.dataset.selectRow);
+    }
+    syncSelectVisibleCheckbox();
+    renderDetail();
+    renderBulkBar();
+  });
+
+  elements.matrixBody.addEventListener("click", async (event) => {
+    const row = event.target.closest("[data-select-skill]");
+    if (!row || event.target.closest(".row-check")) {
+      return;
+    }
+    const previous = elements.matrixBody.querySelector(".skill-list-item.is-selected");
+    state.selectedSkillId = row.dataset.selectSkill;
+    if (previous && previous !== row) {
+      previous.classList.remove("is-selected");
+    }
+    row.classList.add("is-selected");
+    await renderDetail();
+    scrollDetailIntoViewIfStacked();
+  });
+
   elements.clearSelectionButton.addEventListener("click", () => {
     state.selectedSkillIds.clear();
     renderMatrix();
@@ -427,7 +471,16 @@ async function bootstrap() {
 
   elements.bulkEnableButton.addEventListener("click", () => bulkToggle("enable"));
   elements.bulkDisableButton.addEventListener("click", () => bulkToggle("disable"));
-  elements.bulkToggleButton.addEventListener("click", () => bulkToggle("toggle"));
+  // The Rust bulk command can't express a per-skill toggle (it applies one
+  // `enabled` to every selected skill), so "toggle" only works against the
+  // legacy HTTP backend. In the Tauri desktop shell, hide the action rather
+  // than let it silently enable everything.
+  const isDesktopShell = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  if (isDesktopShell && elements.bulkToggleButton) {
+    elements.bulkToggleButton.hidden = true;
+  } else if (elements.bulkToggleButton) {
+    elements.bulkToggleButton.addEventListener("click", () => bulkToggle("toggle"));
+  }
   elements.bulkCopyButton.addEventListener("click", () => bulkCopy());
   elements.bulkMoveButton.addEventListener("click", () => bulkMove());
   elements.bulkDeleteButton.addEventListener("click", () => bulkDelete());
@@ -516,6 +569,11 @@ async function loadState() {
     // Sets are optional context for Manage tab — ignore failures here.
   }
   render();
+  // Project-change and the global Refresh button both funnel through here —
+  // notify the MCP Servers controller so its own slices stay in sync.
+  if (window.McpServers) {
+    window.McpServers.onWorkspaceChanged();
+  }
 }
 
 function applyState(nextData) {
@@ -1159,10 +1217,43 @@ function renderMarketplace() {
 
   elements.marketplaceResults.innerHTML = items.map((skill) => renderMarketplaceSkill(skill)).join("");
   elements.marketplaceResults.querySelectorAll("[data-marketplace-install]").forEach((button) => {
-    button.addEventListener("click", () => installMarketplaceSkill(button.dataset.marketplaceInstall));
+    button.addEventListener("click", () => runAction(() => installMarketplaceSkill(button.dataset.marketplaceInstall)));
   });
   elements.marketplaceResults.querySelectorAll("[data-marketplace-open]").forEach((button) => {
     button.addEventListener("click", () => openExternalUrl(button.dataset.marketplaceOpen));
+  });
+  hydrateMarketplaceDescriptions(items);
+}
+
+// Fire-and-forget: fetch cached/scraped descriptions for the rendered
+// cards and patch them in place (no re-render, no scroll jump). Failures
+// are silent — the muted placeholder simply stays.
+async function hydrateMarketplaceDescriptions(items) {
+  const ids = items
+    .filter((skill) => skill.id && !skill.description && state.marketplace.descriptions[skill.id] === undefined)
+    .map((skill) => skill.id);
+  if (!ids.length) {
+    return;
+  }
+  let result;
+  try {
+    result = await api("/api/marketplace/descriptions", { method: "POST", body: { ids } });
+  } catch (_error) {
+    return;
+  }
+  for (const id of ids) {
+    if (result && typeof result[id] === "string") {
+      state.marketplace.descriptions[id] = result[id];
+    }
+  }
+  elements.marketplaceResults.querySelectorAll("[data-marketplace-desc]").forEach((node) => {
+    const description = String(
+      state.marketplace.descriptions[node.dataset.marketplaceDesc] || "",
+    ).trim();
+    if (description) {
+      node.textContent = description;
+      node.classList.remove("marketplace-desc-empty");
+    }
   });
 }
 
@@ -1200,14 +1291,18 @@ async function openExternalUrl(url) {
 function renderMarketplaceSkill(skill) {
   const installed = isMarketplaceInstalled(skill);
   const installCount = Number(skill.installs);
+  const description = String(
+    skill.description || state.marketplace.descriptions[skill.id] || "",
+  ).trim();
   return `
     <article class="marketplace-card">
       <div class="marketplace-card-main">
         <header>
           <strong>${escapeHtml(skill.name || skill.slug || skill.id)}</strong>
+          ${installed ? `<span class="marketplace-installed">Installed</span>` : ""}
           <span>${escapeHtml(skill.source || "")}</span>
         </header>
-        <p>${escapeHtml(skill.description || skill.id || "")}</p>
+        <p class="marketplace-desc${description ? "" : " marketplace-desc-empty"}" data-marketplace-desc="${escapeAttr(skill.id)}">${description ? escapeHtml(description) : "No description available."}</p>
         <div class="marketplace-card-meta">
           ${Number.isFinite(installCount) ? `<span>${installCount.toLocaleString()} installs</span>` : ""}
           <span>${escapeHtml(skill.sourceType || "source")}</span>
@@ -1241,6 +1336,48 @@ function isMarketplaceInstalled(skill) {
   });
 }
 
+async function runGitPreview(options = {}) {
+  const repoUrl = elements.gitRepoInput.value.trim();
+  if (!repoUrl) {
+    showToast("Git URL is required");
+    return;
+  }
+  const targetIds = Array.from(
+    elements.gitTargetCheckboxes.querySelectorAll("input[type=checkbox]:checked"),
+  ).map((input) => input.value);
+  // Claim this request's generation. A later URL/ref edit (or a newer preview)
+  // bumps state.gitPreviewGen, so a superseded response is dropped rather than
+  // rendered or stored against the wrong repo/ref.
+  const generation = (state.gitPreviewGen || 0) + 1;
+  state.gitPreviewGen = generation;
+  const plan = await api("/api/install-git/preview", {
+    method: "POST",
+    body: {
+      repoUrl,
+      ref: elements.gitRefInput.value.trim(),
+      targetIds,
+      projectPath: elements.projectInput.value,
+    },
+  });
+  if (state.gitPreviewGen !== generation) {
+    return;
+  }
+  renderInstallPreview(plan, { repoUrl, preselectSlug: options.preselectSlug });
+  const preselectToastShown =
+    Boolean(skillSlug(options.preselectSlug)) &&
+    (plan.candidates || []).some((c) => c.action !== "skip");
+  if (!preselectToastShown) {
+    showToast(`Preview: ${plan.summary.toMove} to move, ${plan.summary.toDedupe} dedupe, ${plan.summary.toSkip} skip`);
+  }
+}
+
+function skillSlug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 async function installMarketplaceSkill(id) {
   const skill = (state.marketplace.items || []).find((item) => item.id === id);
   if (!skill || !skill.installUrl) {
@@ -1253,7 +1390,7 @@ async function installMarketplaceSkill(id) {
   state.activeInstallTab = "git";
   renderInstallTabs();
   updateGitTargetSummary();
-  showToast(`Ready in From Git: ${skill.source}`);
+  await runGitPreview({ preselectSlug: skill.slug || "" });
 }
 
 function copyMarketplaceTargetsToGitTargets() {
@@ -1275,15 +1412,38 @@ function renderInstallPreview(plan, options = {}) {
 
   if (options.resetSelection !== false) {
     const perSkillTargets = {};
-    for (const candidate of plan.candidates) {
-      if (candidate.action !== "skip") {
-        perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
+    const installable = plan.candidates.filter((c) => c.action !== "skip");
+    for (const candidate of installable) {
+      perSkillTargets[candidate.sourceKey] = candidate.targetLinks.map((link) => link.targetId);
+    }
+    let selectedKeys = new Set(installable.map((c) => c.sourceKey));
+    const slug = skillSlug(options.preselectSlug);
+    if (slug && installable.length) {
+      const matched = installable.filter((candidate) => {
+        const dirName = String(candidate.sourceKey).split("/").pop();
+        return (
+          skillSlug(dirName) === slug ||
+          skillSlug(candidate.name) === slug ||
+          skillSlug(candidate.linkName) === slug
+        );
+      });
+      if (matched.length) {
+        selectedKeys = new Set(matched.map((c) => c.sourceKey));
+        const others = installable.length - matched.length;
+        showToast(
+          others > 0
+            ? `Selected ${matched[0].name} — ${others} other skill${others === 1 ? "" : "s"} in this repo left unchecked`
+            : `Selected ${matched[0].name}`,
+        );
+      } else {
+        showToast("Couldn't identify that skill in the repo — all skills selected");
       }
     }
     state.preview = {
       repoUrl: options.repoUrl || "",
       plan,
       perSkillTargets,
+      selectedKeys,
     };
   } else if (state.preview) {
     state.preview.plan = plan;
@@ -1291,14 +1451,39 @@ function renderInstallPreview(plan, options = {}) {
 
   const summary = plan.summary;
   const allTargets = (state.data && state.data.targets) || [];
+  const tagLabels = { move: "New", dedupe: "Already installed", skip: "Skipped" };
+  const pillLabel = (action, selected) => {
+    if (action === "dedupe") {
+      return selected ? "✓ Reinstalling" : "Reinstall";
+    }
+    return selected ? "✓ Installing" : "Install";
+  };
   const rows = plan.candidates
     .map((candidate) => {
-      const actionLabel = candidate.action === "move"
-        ? `Move to <code>${escapeHtml(candidate.vaultDestination)}</code>`
-        : candidate.action === "dedupe"
-          ? `Dedupe against <code>${escapeHtml(candidate.vaultDestination)}</code>`
-          : `Skip: ${escapeHtml(candidate.skipReason || "")}`;
-      let targetGrid = "";
+      const isSelected = Boolean(
+        state.preview && state.preview.selectedKeys && state.preview.selectedKeys.has(candidate.sourceKey),
+      );
+      const installPill = candidate.action === "skip"
+        ? ""
+        : `
+          <button
+            type="button"
+            class="preview-install-pill${isSelected ? " selected" : ""}"
+            data-install-key="${escapeHtml(candidate.sourceKey)}"
+            data-install-action="${escapeHtml(candidate.action)}"
+            aria-pressed="${isSelected ? "true" : "false"}"
+          >${pillLabel(candidate.action, isSelected)}</button>
+        `;
+      const descriptionText = String(candidate.description || "").trim();
+      const description = descriptionText
+        ? `<p class="preview-desc">${escapeHtml(descriptionText)}</p>`
+        : candidate.action === "skip"
+          ? ""
+          : `<p class="preview-desc preview-desc-empty">No description provided.</p>`;
+      const skipLine = candidate.action === "skip"
+        ? `<div class="preview-detail">Skipped: ${escapeHtml(candidate.skipReason || "")}</div>`
+        : "";
+      let targetBlock = "";
       if (candidate.action !== "skip") {
         const checked = new Set(
           (state.preview && state.preview.perSkillTargets[candidate.sourceKey]) || [],
@@ -1313,26 +1498,37 @@ function renderInstallPreview(plan, options = {}) {
                   value="${escapeHtml(target.id)}"
                   data-skill-key="${escapeHtml(candidate.sourceKey)}"
                   ${isChecked}
+                  ${isSelected ? "" : "disabled"}
                 />
                 <span>${escapeHtml(target.label)}</span>
               </label>
             `;
           })
           .join("");
-        targetGrid = `<fieldset class="target-checkboxes preview-target-grid">
-            <legend>Targets for ${escapeHtml(candidate.name)}</legend>
-            ${items || `<p class="empty-copy">No targets configured.</p>`}
-          </fieldset>`;
+        const vaultLine = candidate.action === "dedupe"
+          ? `Reuses existing vault copy at <code>${escapeHtml(candidate.vaultDestination)}</code>`
+          : `Vault: <code>${escapeHtml(candidate.vaultDestination)}</code>`;
+        targetBlock = `<details class="preview-targets">
+            <summary>Targets · <span data-target-count="${escapeHtml(candidate.sourceKey)}">${checked.size} of ${allTargets.length}</span></summary>
+            <div class="preview-vault-line">${vaultLine}</div>
+            <fieldset class="target-checkboxes preview-target-grid">
+              <legend>Targets for ${escapeHtml(candidate.name)}</legend>
+              ${items || `<p class="empty-copy">No targets configured.</p>`}
+            </fieldset>
+          </details>`;
       }
       return `
-        <article class="preview-item" data-source-key="${escapeHtml(candidate.sourceKey)}">
+        <article class="preview-item${candidate.action !== "skip" && !isSelected ? " deselected" : ""}" data-source-key="${escapeHtml(candidate.sourceKey)}">
           <header>
-            <strong>${escapeHtml(candidate.name)}</strong>
-            <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${escapeHtml(candidate.action)}</span>
+            <div class="preview-item-title">
+              <strong>${escapeHtml(candidate.name)}</strong>
+              <span class="preview-action preview-action-${escapeHtml(candidate.action)}">${tagLabels[candidate.action] || escapeHtml(candidate.action)}</span>
+            </div>
+            ${installPill}
           </header>
-          <div class="preview-detail">${actionLabel}</div>
-          <div class="preview-source">From: <code>${escapeHtml(candidate.sourcePath)}</code></div>
-          ${targetGrid}
+          ${description}
+          ${skipLine}
+          ${targetBlock}
         </article>
       `;
     })
@@ -1343,13 +1539,28 @@ function renderInstallPreview(plan, options = {}) {
     <div class="preview-summary">
       <strong>Plan:</strong>
       <span>${summary.candidates} candidate${summary.candidates === 1 ? "" : "s"}</span>
-      <span>${summary.toMove} move</span>
-      <span>${summary.toDedupe} dedupe</span>
-      <span>${summary.toSkip} skip</span>
+      <span>${summary.toMove} new</span>
+      <span>${summary.toDedupe} already installed</span>
+      <span>${summary.toSkip} skipped</span>
+      <span id="previewSelectedCount"></span>
       <button class="button ghost" type="button" id="clearPreviewButton">Clear preview</button>
     </div>
     <div class="preview-list">${rows || `<p class="empty-copy">No skills discovered.</p>`}</div>
   `;
+
+  const updateTargetCount = (key) => {
+    if (!state.preview) {
+      return;
+    }
+    const span = Array.from(
+      elements.gitPreviewResult.querySelectorAll("[data-target-count]"),
+    ).find((el) => el.dataset.targetCount === key);
+    if (!span) {
+      return;
+    }
+    const count = (state.preview.perSkillTargets[key] || []).length;
+    span.textContent = `${count} of ${allTargets.length}`;
+  };
 
   elements.gitPreviewResult.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -1364,8 +1575,36 @@ function renderInstallPreview(plan, options = {}) {
         current.delete(input.value);
       }
       state.preview.perSkillTargets[key] = Array.from(current);
+      updateTargetCount(key);
     });
   });
+
+  elements.gitPreviewResult.querySelectorAll("button[data-install-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!state.preview) {
+        return;
+      }
+      const key = button.dataset.installKey;
+      const selected = !state.preview.selectedKeys.has(key);
+      if (selected) {
+        state.preview.selectedKeys.add(key);
+      } else {
+        state.preview.selectedKeys.delete(key);
+      }
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      button.classList.toggle("selected", selected);
+      button.textContent = pillLabel(button.dataset.installAction, selected);
+      const article = button.closest(".preview-item");
+      if (article) {
+        article.classList.toggle("deselected", !selected);
+        article.querySelectorAll("input[type=checkbox][data-skill-key]").forEach((target) => {
+          target.disabled = !selected;
+        });
+      }
+      updatePreviewSelectedCount();
+    });
+  });
+  updatePreviewSelectedCount();
 
   const clearButton = elements.gitPreviewResult.querySelector("#clearPreviewButton");
   if (clearButton) {
@@ -1375,6 +1614,15 @@ function renderInstallPreview(plan, options = {}) {
       elements.gitPreviewResult.innerHTML = "";
     });
   }
+}
+
+function updatePreviewSelectedCount() {
+  const el = elements.gitPreviewResult.querySelector("#previewSelectedCount");
+  if (!el || !state.preview) {
+    return;
+  }
+  const total = state.preview.plan.candidates.filter((c) => c.action !== "skip").length;
+  el.textContent = `installing ${state.preview.selectedKeys.size} of ${total}`;
 }
 
 function renderBulkTargets() {
@@ -1838,32 +2086,16 @@ function renderMatrix() {
     .join("");
 
   bindSelectVisible(visibleSkillIds);
+}
 
-  elements.matrixBody.querySelectorAll("[data-select-row]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      if (checkbox.checked) {
-        state.selectedSkillIds.add(checkbox.dataset.selectRow);
-      } else {
-        state.selectedSkillIds.delete(checkbox.dataset.selectRow);
-      }
-      renderMatrix();
-      renderDetail();
-      renderBulkBar();
-    });
-  });
-
-  elements.matrixBody.querySelectorAll("[data-select-skill]").forEach((row) => {
-    row.addEventListener("click", async (event) => {
-      if (event.target.closest("[data-select-row]")) {
-        return;
-      }
-      state.selectedSkillId = row.dataset.selectSkill;
-      renderMatrix();
-      await renderDetail();
-      scrollDetailIntoViewIfStacked();
-    });
-  });
-
+function syncSelectVisibleCheckbox() {
+  const checkbox = document.querySelector("#selectVisibleCheckbox");
+  if (!checkbox) {
+    return;
+  }
+  const visibleIds = filteredSkills().map((skill) => skill.id);
+  checkbox.checked =
+    visibleIds.length > 0 && visibleIds.every((id) => state.selectedSkillIds.has(id));
 }
 
 function scrollDetailIntoViewIfStacked() {
@@ -2471,9 +2703,11 @@ function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.dataset.tone = tone;
   elements.toast.classList.add("visible");
+  positionBusyToast();
   window.clearTimeout(showToast.timeout);
   showToast.timeout = window.setTimeout(() => {
     elements.toast.classList.remove("visible");
+    positionBusyToast();
   }, 2600);
 }
 
@@ -2482,6 +2716,36 @@ function setBusy(isBusy) {
   const busy = setBusy.count > 0;
   elements.appShell.classList.toggle("is-busy", busy);
   elements.appShell.setAttribute("aria-busy", busy ? "true" : "false");
+  if (!elements.busyToast) {
+    return;
+  }
+  if (busy) {
+    // Grace period: instant actions never flash the pill.
+    if (!setBusy.spinnerTimeout && !elements.busyToast.classList.contains("visible")) {
+      setBusy.spinnerTimeout = window.setTimeout(() => {
+        setBusy.spinnerTimeout = null;
+        positionBusyToast();
+        elements.busyToast.classList.add("visible");
+      }, 300);
+    }
+  } else {
+    window.clearTimeout(setBusy.spinnerTimeout);
+    setBusy.spinnerTimeout = null;
+    elements.busyToast.classList.remove("visible");
+  }
+}
+
+// Keeps the busy pill clear of the message toast: both live in the
+// bottom-right corner, so while the toast is visible the pill lifts
+// above it by the toast's measured height.
+function positionBusyToast() {
+  if (!elements.busyToast) {
+    return;
+  }
+  const lifted = elements.toast && elements.toast.classList.contains("visible");
+  elements.busyToast.style.bottom = lifted
+    ? `${18 + elements.toast.offsetHeight + 10}px`
+    : "";
 }
 
 function toastTone(message) {

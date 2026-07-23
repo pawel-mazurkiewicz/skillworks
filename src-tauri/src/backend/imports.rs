@@ -83,7 +83,10 @@ async fn walk_for_candidates(
         return Ok(());
     }
 
-    if fs::try_exists(current.join(SKILL_FILE)).await.unwrap_or(false) {
+    if fs::try_exists(current.join(SKILL_FILE))
+        .await
+        .unwrap_or(false)
+    {
         add_candidate(current, "directory", seen, out).await?;
         return Ok(());
     }
@@ -306,9 +309,7 @@ mod tests {
 
     async fn write_skill(dir: &Path, name: &str, description: &str) {
         fs::create_dir_all(dir).await.unwrap();
-        let body = format!(
-            "---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
-        );
+        let body = format!("---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n");
         fs::write(dir.join(SKILL_FILE), body).await.unwrap();
     }
 
@@ -320,12 +321,18 @@ mod tests {
         write_skill(&source.join("nested/b"), "B", "second").await;
         // .git should be skipped.
         fs::create_dir_all(source.join(".git/foo")).await.unwrap();
-        fs::write(source.join(".git/foo").join(SKILL_FILE), "---\nname: gitskill\n---\n")
-            .await
-            .unwrap();
+        fs::write(
+            source.join(".git/foo").join(SKILL_FILE),
+            "---\nname: gitskill\n---\n",
+        )
+        .await
+        .unwrap();
 
         let candidates = find_import_candidates(&source).await.unwrap();
-        let names: Vec<&str> = candidates.iter().map(|c| c.metadata.name.as_str()).collect();
+        let names: Vec<&str> = candidates
+            .iter()
+            .map(|c| c.metadata.name.as_str())
+            .collect();
         assert!(names.contains(&"A"));
         assert!(names.contains(&"B"));
         assert_eq!(candidates.len(), 2, "should skip .git contents");
@@ -346,8 +353,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, source.join("link2")).unwrap();
 
         let candidates = find_import_candidates(&source).await.unwrap();
-        let real_paths: HashSet<PathBuf> =
-            candidates.iter().map(|c| c.real_path.clone()).collect();
+        let real_paths: HashSet<PathBuf> = candidates.iter().map(|c| c.real_path.clone()).collect();
         // One per canonical path: real, direct.
         assert_eq!(real_paths.len(), 2);
     }

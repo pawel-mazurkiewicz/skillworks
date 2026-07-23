@@ -182,9 +182,16 @@
           <button class="top-tab" data-top-tab="mcp" type="button">
             <span class="top-tab-mark">
               <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tool"></use></svg>
-              <span class="top-tab-label">MCP server</span>
+              <span class="top-tab-label">Connector</span>
             </span>
-            <span class="top-tab-hint">Connect agents to Skillworks</span>
+            <span class="top-tab-hint">Let agents drive Skillworks</span>
+          </button>
+          <button class="top-tab" data-top-tab="mcp-servers" type="button">
+            <span class="top-tab-mark">
+              <svg class="icon top-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-harness-custom"></use></svg>
+              <span class="top-tab-label">MCP Servers</span>
+            </span>
+            <span class="top-tab-hint">Connect servers to agents</span>
           </button>
         </nav>
       </header>
@@ -592,6 +599,37 @@
             </section>
           </div>
         </section>
+
+        <section class="tab-content hidden" id="mcpServersTab" data-top-tab-panel="mcp-servers" aria-label="MCP servers">
+          <section class="panel">
+            <div class="section-head">
+              <h2 class="section-title"><svg class="icon section-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-harness-custom"></use></svg><span>MCP Servers</span></h2>
+              <p class="section-sub">Servers your library knows about, with where each one is active.</p>
+            </div>
+            <div class="mcp-servers-layout">
+              <aside class="mcp-servers-sidebar" aria-label="Server library">
+                <div class="mcp-servers-list" id="mcpServersList"></div>
+              </aside>
+              <article class="mcp-servers-detail" id="mcpServersDetail" aria-label="Server details"></article>
+            </div>
+          </section>
+
+          <section class="panel mcp-servers-add-panel">
+            <div class="section-head">
+              <h2 class="section-title">Add server</h2>
+              <p class="section-sub">Paste a URL to parse, or add a server manually.</p>
+            </div>
+            <div class="mcp-servers-add" id="mcpServersAdd"></div>
+          </section>
+
+          <section class="panel mcp-servers-discovered-panel">
+            <div class="section-head">
+              <h2 class="section-title">Reconcile</h2>
+              <p class="section-sub">Servers found in your harness configs that aren't tracked yet, plus any tracked servers whose on-disk config has drifted from your library.</p>
+            </div>
+            <div class="mcp-servers-discovered" id="mcpServersDiscovered"></div>
+          </section>
+        </section>
       </main>
 
       <aside class="bulk-floating" id="bulkFloating" data-bulk-floating hidden aria-label="Bulk actions">
@@ -647,6 +685,7 @@
         </div>
       </aside>
 
+      <div class="busy-toast" id="busyToast" role="status"><span class="busy-toast-spinner" aria-hidden="true"></span><span>Working…</span></div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
@@ -675,6 +714,7 @@
     </dialog>
     </template>
 
+    <script type="module" src="/mcp-servers.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

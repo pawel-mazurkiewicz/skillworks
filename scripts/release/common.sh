@@ -26,7 +26,10 @@ check_cmd() {
   command -v "$1" &>/dev/null || err "Required command not found: $1 — install it and try again"
 }
 
-# Ensure Rust toolchain is in PATH (Homebrew rustup installation)
+# Ensure Rust toolchain is in PATH (Homebrew rustup installation). PATH setup
+# only — cargo presence is validated by the build scripts (release-macos.sh /
+# release-linux.sh), not here, so release creation (create-release.sh) can run
+# on a machine without Rust installed.
 if [[ "$(uname)" == "Darwin" ]]; then
   # Add Homebrew paths to PATH if not already present
   for dir in /opt/homebrew/bin /opt/homebrew/opt/rustup/bin; do
@@ -35,11 +38,6 @@ if [[ "$(uname)" == "Darwin" ]]; then
       *) export PATH="$dir:$PATH" ;;
     esac
   done
-  
-  # Verify cargo is available
-  if ! command -v cargo &>/dev/null; then
-    err "Rust/cargo not found. Install via: brew install rustup"
-  fi
 fi
 
 REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"

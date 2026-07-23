@@ -29,6 +29,7 @@ check_env \
 check_cmd gh
 check_cmd node
 check_cmd npx
+check_cmd cargo
 
 cd "$REPO_ROOT"
 
@@ -45,6 +46,9 @@ export TAURI_SIGNING_PRIVATE_KEY
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
 # ── 1. Tauri build — Tauri signs + notarizes the Rust binary itself ──────────
+# Clear any prior bundle so the artifact lookup below can't pick up a stale
+# .dmg/.app.tar.gz from an earlier (different-version) build via `head -1`.
+rm -rf "$BUNDLE_DIR"
 log "Building Tauri app for universal-apple-darwin (signed + notarized)..."
 npx tauri build --target universal-apple-darwin
 success "App built, signed, and notarized"

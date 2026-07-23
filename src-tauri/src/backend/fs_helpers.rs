@@ -101,7 +101,15 @@ pub async fn move_directory(from: &Path, to: &Path) -> BackendResult<()> {
             if !crosses_devices {
                 return Err(BackendError::Io(err));
             }
-            copy_directory(from, to).await?;
+            // Cross-device: copy then delete the source. If the copy fails
+            // partway, remove the half-written destination so a later retry
+            // isn't blocked by copy_directory's "destination already exists"
+            // guard and no partial skill is left behind. The source is left
+            // untouched until the copy fully succeeds.
+            if let Err(copy_err) = copy_directory(from, to).await {
+                let _ = fs::remove_dir_all(to).await;
+                return Err(copy_err);
+            }
             fs::remove_dir_all(from).await?;
             Ok(())
         }
@@ -120,4 +128,3 @@ pub async fn unique_skill_destination(root: &Path, name: &str) -> PathBuf {
     }
     candidate
 }
-

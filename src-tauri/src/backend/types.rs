@@ -444,6 +444,8 @@ pub struct ImportSuggestedResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GitInstallCandidate {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub source_path: String,
     pub real_source_path: String,
     pub source_key: String,
@@ -736,3 +738,135 @@ pub struct MarketplaceSkillsResponse {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+// ---------------------------------------------------------------------------
+// MCP (Model Context Protocol) DTOs.
+// ---------------------------------------------------------------------------
+
+/// Status of one library server against one harness target.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTargetStatus {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+    /// Set when the target's config file could not be read/parsed; `active`
+    /// is unreliable for such a row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpActivationResult {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+}
+
+/// A server entry found in a harness config that no library spec claims.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredMcpEntry {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub key: String,
+    pub entry: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileTargetRef {
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportCandidate {
+    pub key: String,
+    pub suggested_spec: super::mcp::spec::McpServerSpec,
+    pub found_in: Vec<ReconcileTargetRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches_library_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    /// Canonical-invocation fingerprint shared by every foundIn target
+    /// (grouping is by invocation equality). Passed back verbatim by the
+    /// frontend when dismissing.
+    pub fingerprint: String,
+    /// Present on entries owned by an external manager (e.g. a Claude Code
+    /// plugin). Import-only: no link, no drift, no reapply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDriftEntry {
+    pub server_id: String,
+    pub harness: String,
+    pub scope: String,
+    pub config_path: String,
+    pub diff: Vec<super::mcp::reconcile::FieldDiff>,
+    /// The library spec with its drifted fields replaced by what is on disk —
+    /// ready for the "adopt config → update library" PATCH. Only meaningful when
+    /// `adoptable` is true.
+    pub observed_spec: super::mcp::spec::McpServerSpec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_note: Option<String>,
+    /// Label of the variant controlling this target's effective invocation, if
+    /// any. When set, the drift is against the variant — not the canonical
+    /// fields — so a canonical adopt would be wrong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_label: Option<String>,
+    /// False when a variant controls this target: the UI disables "Adopt into
+    /// library" and points the user at the variant instead.
+    pub adoptable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpReconcileResponse {
+    pub imports: Vec<McpImportCandidate>,
+    pub conflicts: Vec<McpDriftEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpLibraryResponse {
+    pub servers: Vec<super::mcp::spec::McpServerSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// One parsed-from-URL draft: a full spec plus the evidence trail that
+/// produced it. Never persisted by the parser — the caller reviews and
+/// saves via `mcp_add_manual`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDraft {
+    pub spec: super::mcp::spec::McpServerSpec,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpUrlParseResponse {
+    pub source_url: String,
+    pub fetched_url: String,
+    pub drafts: Vec<McpServerDraft>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}

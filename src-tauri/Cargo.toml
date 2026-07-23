@@ -1,6 +1,6 @@
 [package]
 name = "skillworks-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "Skillworks desktop shell"
 authors = ["Paweł Mazurkiewicz"]
 license = "MIT"
@@ -49,4 +49,9 @@ toml_edit = "0.22"
 
 [dev-dependencies]
 wiremock = "0.6"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+# Test-only: used by a cfg(unix) test to detect root. Unix-gated so Windows
+# builds never resolve or compile nix::unistd.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.29", default-features = false, features = ["user"] }

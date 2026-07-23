@@ -8,6 +8,7 @@
 //! can inject a deterministic mock without spinning up a real server.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -15,11 +16,12 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 
+use super::fs_atomic::write_json_atomic;
 use super::state::{BackendError, BackendResult};
 use super::types::{MarketplacePagination, MarketplaceSkill, MarketplaceSkillsResponse};
 
 const BASE_URL: &str = "https://skills.sh";
-const USER_AGENT: &str = "Skillworks/0.1.0";
+pub(crate) const USER_AGENT: &str = "Skillworks/0.1.0";
 
 /// HTTP response surface that the marketplace logic needs from its
 /// underlying client. Mirrors the subset of `fetch`'s behaviour the JS
@@ -43,6 +45,28 @@ impl HttpResponse {
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn get(&self, url: &str, headers: &[(&str, &str)]) -> BackendResult<HttpResponse>;
+
+    /// `get` with a post-fetch size cap. Default impl delegates to `get`
+    /// then rejects oversize bodies — keeps existing mocks/tests working
+    /// unchanged. Real streamed capping (rejecting before the whole body is
+    /// buffered) lives in `mcp::net::fetch_markdown_guarded`, which is used
+    /// by the URL-ingestion command instead of this trait for the
+    /// production fetch path.
+    async fn get_capped(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        max_bytes: usize,
+    ) -> BackendResult<HttpResponse> {
+        let resp = self.get(url, headers).await?;
+        if resp.body.len() > max_bytes {
+            return Err(BackendError::Validation(format!(
+                "Fetched document is too large ({} bytes; limit {max_bytes})",
+                resp.body.len()
+            )));
+        }
+        Ok(resp)
+    }
 }
 
 /// Production HTTP client backed by `reqwest` with rustls-tls (so we never
@@ -116,14 +140,11 @@ pub async fn fetch_marketplace_skills_with<C: HttpClient + ?Sized>(
     } else if view == "official" {
         // Curated has a different shape: `data` is an owner list, not skills.
         // Fetch as raw JSON and reshape before typing.
-        let raw =
-            fetch_skills_json_raw(client, "/api/v1/skills/curated", &BTreeMap::new()).await;
+        let raw = fetch_skills_json_raw(client, "/api/v1/skills/curated", &BTreeMap::new()).await;
         raw.map(reshape_curated)
     } else {
         let mut params = BTreeMap::new();
-        let normalized_view = if ["all-time", "trending", "hot"]
-            .contains(&view.as_str())
-        {
+        let normalized_view = if ["all-time", "trending", "hot"].contains(&view.as_str()) {
             view.clone()
         } else {
             "trending".to_string()
@@ -141,7 +162,12 @@ pub async fn fetch_marketplace_skills_with<C: HttpClient + ?Sized>(
             // sees ~24 results and almost always returns nothing useful. Use
             // the sitemap (broad index of every skill) to actually search.
             if trimmed.len() >= 2 {
-                let limit: u32 = per_page.parse().ok().filter(|n| *n >= 1).unwrap_or(24).min(100);
+                let limit: u32 = per_page
+                    .parse()
+                    .ok()
+                    .filter(|n| *n >= 1)
+                    .unwrap_or(24)
+                    .min(100);
                 match scrape_search_all(client, &trimmed, limit as usize).await {
                     Ok(resp) => Ok(resp),
                     // Sitemap blew up — fall back to the per-page scrape so we
@@ -161,8 +187,7 @@ pub async fn fetch_marketplace_skills_with<C: HttpClient + ?Sized>(
 /// Cached sitemap entries (skill URLs) for the lifetime of the process.
 /// Searches are read-only, so a single `Mutex<Option<...>>` is enough; we
 /// don't need a full RwLock or async cache.
-static SITEMAP_CACHE: Lazy<Mutex<Option<Vec<MarketplaceSkill>>>> =
-    Lazy::new(|| Mutex::new(None));
+static SITEMAP_CACHE: Lazy<Mutex<Option<Vec<MarketplaceSkill>>>> = Lazy::new(|| Mutex::new(None));
 
 /// Broad search across skills.sh. Tries the sitemap first (cheap, indexes
 /// every skill) and falls back to multi-page HTML scraping if the sitemap
@@ -269,7 +294,10 @@ async fn fetch_sitemap_absolute<C: HttpClient + ?Sized>(
     url: &str,
 ) -> BackendResult<String> {
     let resp = client
-        .get(url, &[("accept", "application/xml"), ("user-agent", USER_AGENT)])
+        .get(
+            url,
+            &[("accept", "application/xml"), ("user-agent", USER_AGENT)],
+        )
         .await?;
     if !resp.is_ok() {
         return Err(BackendError::Validation(format!(
@@ -280,9 +308,8 @@ async fn fetch_sitemap_absolute<C: HttpClient + ?Sized>(
     Ok(resp.body)
 }
 
-static LOC_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<loc>\s*([^<]+?)\s*</loc>").expect("valid loc regex")
-});
+static LOC_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<loc>\s*([^<]+?)\s*</loc>").expect("valid loc regex"));
 
 /// Pulls every `<loc>` value out of a sitemap XML doc. Works for both the
 /// sitemap index and per-file sitemaps since they share the same envelope.
@@ -393,9 +420,8 @@ async fn fetch_skills_json_raw<C: HttpClient + ?Sized>(
 
     let resp = client.get(&url, &headers).await?;
     if resp.is_ok() {
-        return serde_json::from_str(&resp.body).map_err(|e| {
-            BackendError::Validation(format!("skills.sh JSON parse failed: {e}"))
-        });
+        return serde_json::from_str(&resp.body)
+            .map_err(|e| BackendError::Validation(format!("skills.sh JSON parse failed: {e}")));
     }
 
     // Try to read the structured error envelope. If body isn't JSON, fall
@@ -522,7 +548,12 @@ async fn scrape_marketplace_skills<C: HttpClient + ?Sized>(
     per_page: &str,
 ) -> BackendResult<MarketplaceSkillsResponse> {
     let current_page: u32 = page.parse().unwrap_or(0);
-    let limit: u32 = per_page.parse().ok().filter(|n| *n >= 1).unwrap_or(24).min(100);
+    let limit: u32 = per_page
+        .parse()
+        .ok()
+        .filter(|n| *n >= 1)
+        .unwrap_or(24)
+        .min(100);
     let page_path = match view {
         "hot" => "/hot",
         "official" => "/official",
@@ -579,10 +610,7 @@ async fn fetch_skills_page<C: HttpClient + ?Sized>(
 ) -> BackendResult<String> {
     let url = format!("{}{}", BASE_URL, page_path);
     let resp = client
-        .get(
-            &url,
-            &[("accept", "text/html"), ("user-agent", USER_AGENT)],
-        )
+        .get(&url, &[("accept", "text/html"), ("user-agent", USER_AGENT)])
         .await?;
     if !resp.is_ok() {
         return Err(BackendError::Validation(format!(
@@ -593,9 +621,8 @@ async fn fetch_skills_page<C: HttpClient + ?Sized>(
     Ok(resp.body)
 }
 
-static LINK_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"href="/([^"?#]+/[^"?#]+/[^"?#]+)""#).expect("valid link regex")
-});
+static LINK_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"href="/([^"?#]+/[^"?#]+/[^"?#]+)""#).expect("valid link regex"));
 
 /// Pulls `<a href="/{owner}/{repo}/{slug}">` triples out of a skills.sh
 /// listing page. Mirrors the JS `extractSkillLinks` regex exactly.
@@ -678,6 +705,103 @@ pub fn decode_html(value: &str) -> String {
         .replace("&gt;", ">")
 }
 
+static META_DESCRIPTION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<meta[^>]*\bname="description"[^>]*\bcontent="([^"]*)""#)
+        .expect("valid meta description regex")
+});
+static META_DESCRIPTION_PATTERN_REVERSED: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<meta[^>]*\bcontent="([^"]*)"[^>]*\bname="description""#)
+        .expect("valid reversed meta description regex")
+});
+static SKILL_ID_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    // Segments must start with an alphanumeric so dot-only segments
+    // (`..`) can never reach the fetch URL.
+    Regex::new(
+        r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    .expect("valid skill id regex")
+});
+
+const MAX_DESCRIPTION_IDS: usize = 100;
+
+/// Serializes the read-modify-write of the on-disk description cache so
+/// overlapping `fetch_marketplace_descriptions_with` calls (e.g. two vault
+/// hydration passes racing on the same cache file) can't drop each other's
+/// insertions by both reading the cache before either writes it back.
+static DESCRIPTION_CACHE_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// Pull the `<meta name="description">` content out of a skill detail
+/// page. Handles both attribute orders (Next.js emits name-first today,
+/// but the order is not contractual).
+pub fn extract_meta_description(html: &str) -> Option<String> {
+    META_DESCRIPTION_PATTERN
+        .captures(html)
+        .or_else(|| META_DESCRIPTION_PATTERN_REVERSED.captures(html))
+        .and_then(|cap| cap.get(1))
+        .map(|m| decode_html(m.as_str()).trim().to_string())
+}
+
+/// Production wrapper for `fetch_marketplace_descriptions_with`.
+pub async fn fetch_marketplace_descriptions(
+    ids: Vec<String>,
+    cache_path: &Path,
+) -> BackendResult<BTreeMap<String, String>> {
+    let client = ReqwestHttpClient::new()?;
+    fetch_marketplace_descriptions_with(&client, ids, cache_path).await
+}
+
+/// Resolve descriptions for skills.sh skill ids (`owner/repo/slug`),
+/// backed by a JSON disk cache so each skill is fetched at most once
+/// ever. A page that yields no meta description caches an empty string
+/// (prevents a refetch loop); a network/HTTP failure caches nothing so a
+/// later call retries. Ids that don't look like `owner/repo/slug` are
+/// skipped without a request.
+pub async fn fetch_marketplace_descriptions_with<C: HttpClient + ?Sized>(
+    client: &C,
+    ids: Vec<String>,
+    cache_path: &Path,
+) -> BackendResult<BTreeMap<String, String>> {
+    // Hold the lock across the whole read-modify-write (including the
+    // network calls that populate new entries) so a second concurrent call
+    // can't read the cache before this one writes its insertions back.
+    let _guard = DESCRIPTION_CACHE_LOCK.lock().await;
+
+    let mut cache: BTreeMap<String, String> = match tokio::fs::read_to_string(cache_path).await {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => BTreeMap::new(),
+    };
+
+    let mut dirty = false;
+    for id in ids.iter().take(MAX_DESCRIPTION_IDS) {
+        if cache.contains_key(id) || !SKILL_ID_PATTERN.is_match(id) {
+            continue;
+        }
+        let url = format!("{}/{}", BASE_URL, id);
+        let response = match client
+            .get(&url, &[("accept", "text/html"), ("user-agent", USER_AGENT)])
+            .await
+        {
+            Ok(response) if response.is_ok() => response,
+            _ => continue,
+        };
+        cache.insert(
+            id.clone(),
+            extract_meta_description(&response.body).unwrap_or_default(),
+        );
+        dirty = true;
+    }
+
+    if dirty {
+        let _ = write_json_atomic(cache_path, &cache).await;
+    }
+
+    Ok(ids
+        .iter()
+        .filter_map(|id| cache.get(id).map(|desc| (id.clone(), desc.clone())))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,11 +825,7 @@ mod tests {
 
     #[async_trait]
     impl HttpClient for MockClient {
-        async fn get(
-            &self,
-            url: &str,
-            _headers: &[(&str, &str)],
-        ) -> BackendResult<HttpResponse> {
+        async fn get(&self, url: &str, _headers: &[(&str, &str)]) -> BackendResult<HttpResponse> {
             self.calls.lock().unwrap().push(url.to_string());
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
@@ -729,15 +849,9 @@ mod tests {
     async fn fetch_marketplace_skills_jsonpath_for_view() {
         // Trending → /api/v1/skills?view=trending&page=0&per_page=24
         let client = MockClient::new(vec![ok_json(r#"{"data":[]}"#)]);
-        fetch_marketplace_skills_with(
-            &client,
-            None,
-            Some("trending".to_string()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        fetch_marketplace_skills_with(&client, None, Some("trending".to_string()), None, None)
+            .await
+            .unwrap();
         let calls = client.calls.lock().unwrap().clone();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].starts_with("https://skills.sh/api/v1/skills?"));
@@ -772,15 +886,10 @@ mod tests {
         let client = MockClient::new(vec![ok_json(
             r#"{"data":[{"owner":{"login":"acme"},"skills":[{"id":"acme/skill-one"}]}],"totalOwners":1,"totalSkills":1,"generatedAt":"2026-05-19T00:00:00Z"}"#,
         )]);
-        let resp = fetch_marketplace_skills_with(
-            &client,
-            None,
-            Some("official".to_string()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let resp =
+            fetch_marketplace_skills_with(&client, None, Some("official".to_string()), None, None)
+                .await
+                .unwrap();
         assert_eq!(
             client.calls.lock().unwrap()[0],
             "https://skills.sh/api/v1/skills/curated"
@@ -828,15 +937,10 @@ mod tests {
                 body: html.to_string(),
             },
         ]);
-        let resp = fetch_marketplace_skills_with(
-            &client,
-            None,
-            Some("trending".to_string()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let resp =
+            fetch_marketplace_skills_with(&client, None, Some("trending".to_string()), None, None)
+                .await
+                .unwrap();
         assert_eq!(resp.scraped, Some(true));
         assert_eq!(resp.data.len(), 2);
         assert_eq!(resp.data[0].id, "acme/repo/skill-one");
@@ -878,6 +982,152 @@ mod tests {
         assert_eq!(decode_html("&lt;tag&gt;"), "<tag>");
         // Anything we don't know about should pass through unchanged.
         assert_eq!(decode_html("&nbsp;"), "&nbsp;");
+    }
+
+    #[test]
+    fn extract_meta_description_handles_both_attribute_orders() {
+        assert_eq!(
+            extract_meta_description(
+                r#"<head><meta name="description" content="Guidance for design &amp; UI."/></head>"#
+            ),
+            Some("Guidance for design & UI.".to_string())
+        );
+        assert_eq!(
+            extract_meta_description(r#"<meta content="Reversed order" name="description"/>"#),
+            Some("Reversed order".to_string())
+        );
+        assert_eq!(
+            extract_meta_description("<head><title>x</title></head>"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn descriptions_fetch_uncached_and_reuse_disk_cache() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir
+            .path()
+            .join("cache")
+            .join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![HttpResponse {
+            status: 200,
+            body: r#"<meta name="description" content="Rust patterns."/>"#.to_string(),
+        }]);
+
+        let ids = vec!["owner/repo/rust".to_string()];
+        let result = fetch_marketplace_descriptions_with(&client, ids.clone(), &cache_path)
+            .await
+            .expect("fetch");
+        assert_eq!(
+            result.get("owner/repo/rust").map(String::as_str),
+            Some("Rust patterns.")
+        );
+        assert_eq!(
+            client.calls.lock().unwrap().as_slice(),
+            ["https://skills.sh/owner/repo/rust"]
+        );
+
+        // Second call: served from the disk cache, no further HTTP calls
+        // (MockClient would error on an unexpected extra call).
+        let again = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("cached fetch");
+        assert_eq!(
+            again.get("owner/repo/rust").map(String::as_str),
+            Some("Rust patterns.")
+        );
+        assert_eq!(client.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn descriptions_concurrent_fetches_dont_drop_each_others_inserts() {
+        // Two overlapping hydration calls for different uncached ids against
+        // the same cache file must both land — the lock around the
+        // read-modify-write must stop the second call's read from missing
+        // the first call's insertion.
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![
+            HttpResponse {
+                status: 200,
+                body: r#"<meta name="description" content="First skill."/>"#.to_string(),
+            },
+            HttpResponse {
+                status: 200,
+                body: r#"<meta name="description" content="Second skill."/>"#.to_string(),
+            },
+        ]);
+
+        let ids_a = vec!["owner/repo/first".to_string()];
+        let ids_b = vec!["owner/repo/second".to_string()];
+
+        let (res_a, res_b) = tokio::join!(
+            fetch_marketplace_descriptions_with(&client, ids_a, &cache_path),
+            fetch_marketplace_descriptions_with(&client, ids_b, &cache_path),
+        );
+        res_a.expect("fetch a");
+        res_b.expect("fetch b");
+
+        let cache: BTreeMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
+        assert!(
+            cache.contains_key("owner/repo/first"),
+            "cache missing first id: {:?}",
+            cache
+        );
+        assert!(
+            cache.contains_key("owner/repo/second"),
+            "cache missing second id: {:?}",
+            cache
+        );
+    }
+
+    #[tokio::test]
+    async fn descriptions_cache_empty_on_parse_miss_but_not_on_http_failure() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![
+            HttpResponse {
+                status: 200,
+                body: "<html>no meta here</html>".to_string(),
+            },
+            HttpResponse {
+                status: 500,
+                body: String::new(),
+            },
+        ]);
+
+        let ids = vec!["o/r/nometa".to_string(), "o/r/failed".to_string()];
+        let result = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("fetch");
+        // Parse miss → cached (and returned) as empty string.
+        assert_eq!(result.get("o/r/nometa").map(String::as_str), Some(""));
+        // HTTP failure → not cached, absent from the result.
+        assert!(!result.contains_key("o/r/failed"));
+
+        let cache: BTreeMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
+        assert!(cache.contains_key("o/r/nometa"));
+        assert!(!cache.contains_key("o/r/failed"));
+    }
+
+    #[tokio::test]
+    async fn descriptions_skip_invalid_ids_without_requests() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_path = dir.path().join("marketplace-descriptions.json");
+        let client = MockClient::new(vec![]);
+
+        let ids = vec![
+            "not-three-segments".to_string(),
+            "owner/repo/slug/extra".to_string(),
+            "owner/../etc".to_string(),
+        ];
+        let result = fetch_marketplace_descriptions_with(&client, ids, &cache_path)
+            .await
+            .expect("fetch");
+        assert!(result.is_empty());
+        assert!(client.calls.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -963,15 +1213,10 @@ mod tests {
     #[ignore = "hits real skills.sh; run with `cargo test -- --ignored`"]
     async fn live_trending_smoke() {
         let client = ReqwestHttpClient::new().unwrap();
-        let resp = fetch_marketplace_skills_with(
-            &client,
-            None,
-            Some("trending".to_string()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let resp =
+            fetch_marketplace_skills_with(&client, None, Some("trending".to_string()), None, None)
+                .await
+                .unwrap();
         assert!(!resp.data.is_empty());
     }
 }
